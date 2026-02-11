@@ -4,14 +4,26 @@ import React, { useState } from 'react';
 interface Props {
     onSearch: (handle: string) => void;
     loading: boolean;
+    placeholder?: string;
+    viewMode?: 'search' | 'library';
 }
 
-export function SearchBar({ onSearch, loading }: Props) {
+export function SearchBar({ onSearch, loading, placeholder, viewMode = 'search' }: Props) {
     const [query, setQuery] = useState('');
+
+    const isLibrary = viewMode === 'library';
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (query.trim()) onSearch(query.trim());
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setQuery(val);
+        if (isLibrary) {
+            onSearch(val);
+        }
     };
 
     return (
@@ -21,19 +33,22 @@ export function SearchBar({ onSearch, loading }: Props) {
                 <input
                     type="text"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search YouTube handle, playlist URL, or video URL"
-                    className="w-full bg-transparent text-white py-4 pl-12 pr-28 focus:outline-none placeholder-gray-500 text-sm"
+                    onChange={handleChange}
+                    placeholder={placeholder || "Search YouTube handle, playlist URL, or video URL"}
+                    className={`w-full bg-transparent text-white py-4 pl-12 focus:outline-none placeholder-gray-500 text-sm ${isLibrary ? 'pr-4' : 'pr-28'}`}
                     disabled={loading}
                 />
-                <button
-                    type="submit"
-                    disabled={loading || !query.trim()}
-                    className="absolute right-0 top-0 bottom-0 px-6 bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold transition-colors disabled:opacity-50 cursor-pointer border-l border-gray-800"
-                >
-                    Search
-                </button>
+                {!isLibrary && (
+                    <button
+                        type="submit"
+                        disabled={loading || !query.trim()}
+                        className="absolute right-0 top-0 bottom-0 px-6 bg-gray-800 hover:bg-gray-700 text-white text-sm font-semibold transition-colors disabled:opacity-50 cursor-pointer border-l border-gray-800"
+                    >
+                        Search
+                    </button>
+                )}
             </div>
         </form>
     );
 }
+

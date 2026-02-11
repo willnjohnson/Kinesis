@@ -1,4 +1,4 @@
-import { Eye, Calendar } from 'lucide-react';
+import { Eye, Calendar, Save, Trash2 } from 'lucide-react';
 import { type Video } from '../api';
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
@@ -6,12 +6,15 @@ import { format } from 'date-fns';
 interface Props {
     videos: Video[];
     onSelect: (video: Video) => void;
+    onSaveAll?: () => void;
+    onDelete?: (video: Video) => void;
+    saveProgress?: string | null;
 }
 
 type SortField = 'popularity' | 'date';
 type SortOrder = 'desc' | 'asc';
 
-export function VideoList({ videos, onSelect }: Props) {
+export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress }: Props) {
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
@@ -57,21 +60,43 @@ export function VideoList({ videos, onSelect }: Props) {
             <div className="flex flex-col sm:flex-row justify-between items-center mb-8 gap-4 px-2">
                 <h3 className="text-xl font-bold text-white tracking-tight">Videos <span className="text-gray-500 font-normal text-sm ml-2">({videos.length})</span></h3>
 
-                <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
-                    <button
-                        onClick={() => toggleSort('date')}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${sortField === 'date' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-                    >
-                        <Calendar className="w-4 h-4" />
-                        Date
-                    </button>
-                    <button
-                        onClick={() => toggleSort('popularity')}
-                        className={`px-4 py-1.5 rounded-md text-sm font-medium flex items-center gap-2 transition-all ${sortField === 'popularity' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-                    >
-                        <Eye className="w-4 h-4" />
-                        Views
-                    </button>
+                <div className="flex items-center gap-3">
+                    {onSaveAll && (
+                        <button
+                            onClick={onSaveAll}
+                            disabled={!!saveProgress}
+                            className="px-4 py-1.5 rounded-md text-sm font-bold cursor-pointer uppercase tracking-wider flex items-center gap-2 transition-all bg-red-900/20 text-red-400 border border-red-900/30 hover:bg-red-900/30 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {saveProgress ? (
+                                <>
+                                    <div className="w-3 h-3 border-2 border-red-400 border-t-transparent rounded-full animate-spin" />
+                                    {saveProgress}
+                                </>
+                            ) : (
+                                <>
+                                    <Save className="w-4 h-4" />
+                                    Save All ({videos.length})
+                                </>
+                            )}
+                        </button>
+                    )}
+
+                    <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-800">
+                        <button
+                            onClick={() => toggleSort('date')}
+                            className={`px-4 py-1.5 rounded-md text-sm font-medium cursor-pointer flex items-center gap-2 transition-all ${sortField === 'date' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                            <Calendar className="w-4 h-4" />
+                            Date
+                        </button>
+                        <button
+                            onClick={() => toggleSort('popularity')}
+                            className={`px-4 py-1.5 rounded-md text-sm font-medium cursor-pointer flex items-center gap-2 transition-all ${sortField === 'popularity' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                        >
+                            <Eye className="w-4 h-4" />
+                            Views
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -79,24 +104,41 @@ export function VideoList({ videos, onSelect }: Props) {
                 {sortedVideos.map((video) => (
                     <div
                         key={video.id}
-                        onClick={() => onSelect(video)}
-                        className="group bg-gray-900/40 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-colors cursor-pointer"
+                        className="group relative bg-gray-900/40 border border-gray-800 rounded-lg overflow-hidden hover:border-gray-700 transition-colors"
                     >
-                        <div className="aspect-video w-full overflow-hidden bg-gray-800">
+                        <div
+                            onClick={() => onSelect(video)}
+                            className="aspect-video w-full overflow-hidden bg-gray-800 cursor-pointer relative"
+                        >
                             <img
                                 src={video.thumbnail}
                                 alt={video.title}
-                                className="w-full h-full object-cover"
+                                className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                                 loading="lazy"
                             />
                         </div>
+
                         <div className="p-4">
-                            <h4 className="text-gray-200 font-medium line-clamp-2 mb-3 group-hover:text-white transition-colors text-sm leading-relaxed h-10">{video.title}</h4>
+                            <h4 className="text-gray-200 font-medium line-clamp-2 mb-3 group-hover:text-white transition-colors text-sm leading-relaxed h-10" title={video.title}>{video.title}</h4>
                             <div className="flex items-center justify-between text-[11px] text-gray-500 font-medium tracking-tight">
                                 <span className="flex items-center gap-1.5 bg-gray-800/30 px-2 py-0.5 rounded">
                                     <Eye className="w-3.5 h-3.5" /> {formatViewCount(video.viewCount)}
                                 </span>
-                                <span className="text-gray-600 uppercase text-[10px] tracking-wider">{formatDate(video.publishedAt)}</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-gray-600 uppercase text-[10px] tracking-wider">{formatDate(video.publishedAt)}</span>
+                                    {onDelete && (
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onDelete(video);
+                                            }}
+                                            className="p-1 hover:bg-red-500/20 hover:text-red-400 text-gray-600 rounded transition-colors"
+                                            title="Delete from Library"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5 cursor-pointer" />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>

@@ -6,6 +6,8 @@ export interface Video {
     thumbnail: string;
     publishedAt: string;
     viewCount: string;
+    author?: string;
+    status?: 'exists' | 'saved';
 }
 
 interface ChannelInfo {
@@ -35,13 +37,9 @@ export async function getUploadsPlaylistId(handle: string): Promise<string> {
  */
 export async function getVideos(id: string, isPlaylist: boolean = false, continuation: string | null = null): Promise<VideoResponse> {
     try {
+        // Python backend fetches all videos for playlist/channel, search is single page.
+        // Continuation logic currently disabled/noop in backend for this implementation.
         const res = await invoke<VideoResponse>('fetch_videos', { id, isPlaylist, continuation });
-
-        // If it's the initial fetch (no continuation), fetch view counts in background
-        if (!continuation) {
-            fetchViewCountsInBackground(res.videos);
-        }
-
         return res;
     } catch (error: any) {
         throw new Error(error || 'Failed to fetch videos');
@@ -49,27 +47,8 @@ export async function getVideos(id: string, isPlaylist: boolean = false, continu
 }
 
 /**
- * Fetch view counts for videos in the background.
- */
-async function fetchViewCountsInBackground(videos: Video[]) {
-    // Only fetch for the first few to avoid rate limiting
-    const videosToFetch = videos.slice(0, 15);
-    for (const video of videosToFetch) {
-        try {
-            const viewCount = await invoke<string>('fetch_view_count', { videoId: video.id });
-            video.viewCount = viewCount;
-            window.dispatchEvent(new CustomEvent('video-updated', {
-                detail: { videoId: video.id, viewCount }
-            }));
-        } catch (e) {
-            // Silently skip
-        }
-        await new Promise(resolve => setTimeout(resolve, 200));
-    }
-}
-
-/**
  * Fetch direct video info for a single ID.
+ * Uses kinesis-cli -i (fast metadata)
  */
 export async function getVideoInfo(videoId: string): Promise<Video> {
     try {
@@ -81,6 +60,7 @@ export async function getVideoInfo(videoId: string): Promise<Video> {
 
 /**
  * Fetch transcript for a video.
+ * Uses manager.py (fetches and caches)
  */
 export async function getTranscript(videoId: string): Promise<string> {
     try {
@@ -89,20 +69,60 @@ export async function getTranscript(videoId: string): Promise<string> {
         return typeof e === 'string' ? e : "Could not load transcript.";
     }
 }
+
 /**
- * Check if the API key exists on the backend.
+ * Save video metadata and transcript to database.
  */
-export async function checkApiKey(): Promise<boolean> {
-    return await invoke<boolean>('check_api_key');
+export async function saveVideo(videoId: string): Promise<Video> {
+    try {
+        return await invoke<Video>('save_video', { videoId });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to save video');
+    }
 }
 
 /**
- * Save the API key to the backend.
+ * Search YouTube videos.
  */
-export async function saveApiKey(key: string): Promise<void> {
+export async function searchVideos(query: string): Promise<VideoResponse> {
     try {
-        await invoke('save_api_key', { key });
+        return await invoke<VideoResponse>('search_videos', { query });
     } catch (error: any) {
-        throw new Error(error || 'Failed to save API key');
+        throw new Error(error || 'Failed to search videos');
     }
 }
+
+export async function getSavedVideos(): Promise<VideoResponse> {
+    try {
+        const res = await invoke<VideoResponse>('fetch_saved_videos');
+        return res;
+    } catch (error: any) {
+        throw new Error(error || 'Failed to fetch saved videos');
+    }
+}
+
+export async function deleteVideo(id: string): Promise<string> {
+    try {
+        return await invoke<string>('delete_video', { videoId: id });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to delete video');
+    }
+}
+
+export async function checkVideoExists(id: string): Promise<boolean> {
+    try {
+        return await invoke<boolean>('check_video_exists', { videoId: id });
+    } catch (error: any) {
+        return false;
+    }
+}
+
+export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
+    try {
+        return await invoke<any[]>('bulk_save_videos', { videoIds: ids });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to bulk save videos');
+    }
+}
+
+
