@@ -1,0 +1,14 @@
+    Checking kinesis v0.1.1 (C:\Users\William\Desktop\Kinesis\src-tauri)
+error[E0282]: type annotations needed for `Vec<_>`
+   --> src\youtube.rs:208:21
+    |
+208 |                 let mut lines = Vec::new();
+    |                     ^^^^^^^^^   ---------- type must be known at this point
+    |
+help: consider giving `lines` an explicit type, where the type for type parameter `T` is specified
+    |
+208 |                 let mut lines: Vec<T> = Vec::new();
+    |                              ++++++++
+
+For more information about this error, try `rustc --explain E0282`.
+error: could not compile `kinesis` (lib) due to 1 previous error

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Kinesis",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "kinesisapp",
   "build": {
     "frontendDist": "../dist",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Kinesis v0.1.1",
+        "title": "Kinesis v0.1.2",
         "width": 800,
         "height": 600,
         "resizable": true,
@@ -30,8 +30,6 @@
       "icons/icon.png",
       "icons/icon.ico"
     ],
-    "resources": [
-      "bin/*"
-    ]
+    "resources": []
   }
 }
