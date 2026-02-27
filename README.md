@@ -21,6 +21,7 @@ A lightweight desktop application for bookmarking and viewing YouTube transcript
 ### Prerequisites
 - Node.js (v18+)
 - Rust toolchain (1.70+)
+- YouTube API Key
 
 ### Development
 1. Clone the repository.

@@ -1,12 +1,14 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { getUploadsPlaylistId, getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, type Video } from "./api";
-import { SearchBar } from "./components/SearchBar";
+import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, type Video } from "./api";
+import { SearchBar, type Facet } from "./components/SearchBar";
 import { VideoList } from "./components/VideoList";
 import { Sidebar } from "./components/Sidebar";
 import KinesisLogo from "./assets/Kinesis.png";
 import { Notification, type NotificationType } from "./components/Notification";
 import { ConfirmDialog } from "./components/ConfirmDialog";
-import { BookOpen, Search, ChevronUp } from "lucide-react";
+import { SettingsModal } from "./components/SettingsModal";
+import { Settings, ChevronUp, ArrowDown } from "lucide-react";
+import { getApiKey } from "./api";
 
 type ViewMode = 'search' | 'library';
 
@@ -15,6 +17,11 @@ function App() {
     const [videos, setVideos] = useState<Video[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Filter states for search results
+    const [searchQuery, setSearchQuery] = useState("");
+    const [activeFacets, setActiveFacets] = useState<Facet[]>([]);
+    const [activeText, setActiveText] = useState("");
 
     // Library Mode State
     const [viewMode, setViewMode] = useState<ViewMode>('search');
@@ -30,7 +37,7 @@ function App() {
     // Pagination states (Search Only)
     const [continuationToken, setContinuationToken] = useState<string | null>(null);
     const [loadingMore, setLoadingMore] = useState(false);
-    const [currentSearch, setCurrentSearch] = useState<{ id: string, isPlaylist: boolean } | null>(null);
+    const [currentSearch, setCurrentSearch] = useState<{ id: string, isPlaylist: boolean, isV3Channel?: boolean } | null>(null);
 
     // Bulk save state (Search Only)
     const [saveProgress, setSaveProgress] = useState<string | null>(null);
@@ -41,6 +48,15 @@ function App() {
 
     // Scroll to top state
     const [showScrollTop, setShowScrollTop] = useState(false);
+    const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+    // Settings state
+    const [showSettings, setShowSettings] = useState(false);
+    const [hasApiKey, setHasApiKey] = useState(false);
+
+    useEffect(() => {
+        getApiKey().then(k => setHasApiKey(!!k));
+    }, []);
 
     // Handle scroll visibility for "Back to Top" button
     useEffect(() => {
@@ -53,6 +69,14 @@ function App() {
 
     const scrollToTop = () => {
         window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+
+    const scrollToBottom = () => {
+        window.scrollTo({
+            top: document.documentElement.scrollHeight,
+            behavior: 'smooth'
+        });
+        setShowScrollBottom(false);
     };
 
 
@@ -72,7 +96,6 @@ function App() {
 
     // Load saved videos when switching to Library mode
     useEffect(() => {
-        setLibrarySearch(""); // Reset filter when switching
         if (viewMode === 'library') {
             refreshLibrary();
         }
@@ -81,7 +104,6 @@ function App() {
 
     const handleSearch = async (query: string) => {
         if (viewMode === 'library') {
-            // In library mode, the search bar just filters locally
             setLibrarySearch(query);
             return;
         }
@@ -92,45 +114,109 @@ function App() {
         setSidebarOpen(false);
         setContinuationToken(null);
         setCurrentSearch(null);
+        setSearchQuery(query);
 
         try {
-            const playlistIdMatch = query.match(/[?&]list=([^#&?]+)/);
-            const videoIdMatch = query.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
-            const isPlaylistPattern = query.match(/^PL[a-zA-Z0-9_-]{16,}$/);
+            // Improved facet parsing: matches type:value or type:"value with spaces"
+            const facetRegex = /([a-z_]+):(?:"([^"]*)"|([^ ]*))/g;
+            let match;
+            let forcedType: 'handle' | 'playlist' | 'video' | null = null;
+            let facetValue: string | null = null;
+            let effectiveQuery = query;
 
-            // Check for various channel URL formats
+            while ((match = facetRegex.exec(query)) !== null) {
+                const type = match[1];
+                const value = match[2] || match[3];
+                if (type === 'handle') { forcedType = 'handle'; facetValue = value; }
+                if (type === 'playlist') { forcedType = 'playlist'; facetValue = value; }
+                if (type === 'video') { forcedType = 'video'; facetValue = value; }
+                effectiveQuery = effectiveQuery.replace(match[0], '').trim();
+            }
+
+            // Fallback: If we have a forced type and effectiveQuery is empty, use the value from the badge
+            const targetId = effectiveQuery || facetValue || "";
+
+            const playlistIdMatch = targetId.match(/[?&]list=([^#&?]+)/);
+            const videoIdMatch = targetId.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
+            const isPlaylistId = /^(PL|UU|LL|RD|OLAK5uy_)[a-zA-Z0-9_-]+$/.test(targetId);
+
             const channelUrlPattern = /(?:youtube\.com\/(?:c\/|channel\/|@|user\/))([^\/\s?]+)|(?:^@([^\/\s?]+))/i;
-            const isChannel = channelUrlPattern.test(query) || query.startsWith('UC');
+            const isChannel = forcedType === 'handle' || channelUrlPattern.test(targetId) || targetId.startsWith('UC');
+            const hasPlaylistId = (playlistIdMatch && playlistIdMatch[1]) || isPlaylistId;
+            const hasVideoId = (videoIdMatch && videoIdMatch[1]);
 
-            if ((playlistIdMatch && playlistIdMatch[1]) || isPlaylistPattern) {
-                // Playlist
-                const playlistId = playlistIdMatch ? playlistIdMatch[1] : query;
+            let mode: 'playlist' | 'video' | 'channel' | 'search' = 'search';
+            if (forcedType) {
+                if (forcedType === 'playlist') mode = 'playlist';
+                else if (forcedType === 'video') mode = 'video';
+                else if (forcedType === 'handle') mode = 'channel';
+            } else if (hasVideoId) {
+                mode = 'video';
+            } else if (hasPlaylistId) {
+                mode = 'playlist';
+            } else if (isChannel) {
+                mode = 'channel';
+            }
+
+            if (mode === 'playlist') {
+                const playlistId = playlistIdMatch ? playlistIdMatch[1] : targetId.trim();
                 const res = await getVideos(playlistId, true);
-                setVideos(res.videos);
+                const seen = new Set();
+                const uniqueVideos = res.videos.filter(v => {
+                    if (seen.has(v.id)) return false;
+                    seen.add(v.id);
+                    return true;
+                });
+                setVideos(uniqueVideos);
                 setContinuationToken(res.continuation);
                 setCurrentSearch({ id: playlistId, isPlaylist: true });
-                if (res.videos.length === 0) setError("No videos found in this playlist.");
-            } else if (videoIdMatch && videoIdMatch[1]) {
-                // Video
-                const videoId = videoIdMatch[1];
-                const videoInfo = await getVideoInfo(videoId);
-                setVideos([videoInfo]);
-                handleSelectVideo(videoInfo);
-            } else if (isChannel) {
-                // Channel
-                const id = await getUploadsPlaylistId(query);
-                const res = await getVideos(id, false);
-                setVideos(res.videos);
-                setContinuationToken(res.continuation);
-                setCurrentSearch({ id, isPlaylist: false });
-                if (res.videos.length === 0) setError("No videos found for this channel.");
+                if (uniqueVideos.length === 0) setError("No videos found in this playlist.");
+            } else if (mode === 'video') {
+                const videoId = videoIdMatch ? videoIdMatch[1] : (targetId.trim().length === 11 ? targetId.trim() : null);
+                try {
+                    if (!videoId) throw new Error("Invalid Video ID");
+                    const videoInfo = await getVideoInfo(videoId);
+                    setVideos([videoInfo]);
+                    handleSelectVideo(videoInfo);
+                    setCurrentSearch({ id: videoId, isPlaylist: false });
+                } catch (err) {
+                    setError("Video not found.");
+                    setVideos([]);
+                    setSidebarOpen(false);
+                }
+            } else if (mode === 'channel') {
+                if (!hasApiKey) {
+                    setError("You must import an API Key to search for channels.");
+                    setVideos([]);
+                } else {
+                    const res = await fetchChannelVideosV3(targetId);
+                    const seen = new Set();
+                    const uniqueVideos = res.videos.filter(v => {
+                        if (seen.has(v.id)) return false;
+                        seen.add(v.id);
+                        return true;
+                    });
+                    setVideos(uniqueVideos);
+                    setContinuationToken(res.continuation);
+                    setCurrentSearch({ id: targetId, isPlaylist: false, isV3Channel: true });
+                    if (uniqueVideos.length === 0) setError("No videos found for this channel.");
+                }
             } else {
-                // Search Query
-                console.log("Searching for:", query);
-                const res = await searchVideos(query);
-                setVideos(res.videos);
-                if (res.videos.length === 0) setError("No videos found for this search.");
+                const res = await searchVideos(targetId);
+                const seen = new Set();
+                const uniqueVideos = res.videos.filter(v => {
+                    if (seen.has(v.id)) return false;
+                    seen.add(v.id);
+                    return true;
+                });
+                setVideos(uniqueVideos);
+                if (uniqueVideos.length === 0) setError("No videos found for this search.");
             }
+
+            // After successful search, switch SearchBar to filter_search:
+            setActiveFacets([{ type: 'filter_search', value: '' }]);
+            setActiveText("");
+            setSearchQuery("filter_search:");
 
         } catch (e: any) {
             console.error(e);
@@ -145,7 +231,12 @@ function App() {
 
         setLoadingMore(true);
         try {
-            const res = await getVideos(currentSearch.id, currentSearch.isPlaylist, continuationToken);
+            let res;
+            if (currentSearch.isV3Channel) {
+                res = await fetchChannelVideosV3(currentSearch.id, continuationToken);
+            } else {
+                res = await getVideos(currentSearch.id, currentSearch.isPlaylist, continuationToken);
+            }
 
             setVideos(prev => {
                 const existingIds = new Set(prev.map(v => v.id));
@@ -161,6 +252,75 @@ function App() {
         }
     };
 
+    const handleLoadAll = async () => {
+        if (!continuationToken || !currentSearch || loadingMore) return;
+
+        setLoadingMore(true);
+        try {
+            let token: string | null = continuationToken;
+            while (token) {
+                let res;
+                if (currentSearch.isV3Channel) {
+                    res = await fetchChannelVideosV3(currentSearch.id, token);
+                } else {
+                    res = await getVideos(currentSearch.id, currentSearch.isPlaylist, token);
+                }
+
+                setVideos(prev => {
+                    const existingIds = new Set(prev.map(v => v.id));
+                    const newUniqueVideos = res.videos.filter(v => !existingIds.has(v.id));
+                    return [...prev, ...newUniqueVideos];
+                });
+
+                token = res.continuation;
+                setContinuationToken(token || null);
+                if (!token) break;
+                // Optional: add a small delay to avoid rate limits
+                await new Promise(r => setTimeout(r, 100));
+            }
+        } catch (e) {
+            console.error("Failed to load all:", e);
+        } finally {
+            setLoadingMore(false);
+        }
+    };
+
+    const filteredVideos = useMemo(() => {
+        const sourceVideos = viewMode === 'library' ? libraryVideos : videos;
+        const queryToUse = (viewMode === 'library' ? librarySearch : searchQuery) || "";
+
+        if (!queryToUse) return sourceVideos;
+
+        const facetRegex = /([a-z_]+):(?:"([^"]*)"|([^ ]*))/g;
+        const facets: { type: string, value: string }[] = [];
+        let match;
+        while ((match = facetRegex.exec(queryToUse)) !== null) {
+            facets.push({
+                type: match[1],
+                value: match[2] || match[3] || ""
+            });
+        }
+
+        const textTerms = queryToUse.replace(facetRegex, '').trim().toLowerCase().split(' ').filter(t => t);
+        const filterBadge = facets.find(f => f.type === 'filter_search');
+
+        // Only filter locally if filter_search badge is active
+        if (!filterBadge) return sourceVideos;
+
+        const badgeValue = filterBadge.value.toLowerCase();
+        const badgeTerms = badgeValue.split(' ').filter(t => t);
+        const allTerms = [...textTerms, ...badgeTerms];
+
+        if (allTerms.length === 0) return sourceVideos;
+
+        return sourceVideos.filter(v =>
+            allTerms.every(term =>
+                v.title.toLowerCase().includes(term) ||
+                (v.author && v.author.toLowerCase().includes(term))
+            )
+        );
+    }, [videos, libraryVideos, searchQuery, librarySearch, viewMode]);
+
     const handleSelectVideo = async (video: Video) => {
         setSelectedVideo(video);
         setSidebarOpen(true);
@@ -169,7 +329,11 @@ function App() {
 
         try {
             const text = await getTranscript(video.id);
-            setTranscript(text);
+            if (text === "API_KEY_MISSING") {
+                setTranscript("No transcript available. API key missing.");
+            } else {
+                setTranscript(text);
+            }
         } catch (e) {
             setTranscript("Failed to load transcript.");
         } finally {
@@ -222,15 +386,15 @@ function App() {
     };
 
     const handleSaveAll = async () => {
-        if (videos.length === 0 || saveProgress) return;
+        if (filteredVideos.length === 0 || saveProgress) return;
 
         let allResults: any[] = [];
         const chunkSize = 10;
 
         try {
-            for (let i = 0; i < videos.length; i += chunkSize) {
-                const chunk = videos.slice(i, i + chunkSize);
-                setSaveProgress(`Saving ${Math.min(i + chunk.length, videos.length)}/${videos.length}...`);
+            for (let i = 0; i < filteredVideos.length; i += chunkSize) {
+                const chunk = filteredVideos.slice(i, i + chunkSize);
+                setSaveProgress(`Saving ${Math.min(i + chunk.length, filteredVideos.length)}/${filteredVideos.length}...`);
 
                 const chunkIds = chunk.map(v => v.id);
                 const results = await bulkSaveVideos(chunkIds);
@@ -266,100 +430,107 @@ function App() {
 
 
 
-    // Filter library videos - memoized to prevent re-filtering on every render
-    const filteredLibraryVideos = useMemo(() => {
-        if (librarySearch === "") return libraryVideos;
-        const searchLower = librarySearch.toLowerCase();
-        return libraryVideos.filter(v =>
-            v.title.toLowerCase().includes(searchLower) ||
-            (v.author && v.author.toLowerCase().includes(searchLower))
-        );
-    }, [libraryVideos, librarySearch]);
-
     return (
-        <div className="min-h-screen bg-gray-950 text-white font-sans selection:bg-red-500 selection:text-white pb-10 select-none">
-            <div className="container mx-auto px-4 py-16">
-                <header className="text-center mb-8 relative z-10 transition-all">
-                    <div className="flex items-center justify-center gap-4 mb-4">
-                        <img src={KinesisLogo} alt="Kinesis" className="w-12 h-12 md:w-14 md:h-14" />
-                        <h1 className="text-5xl md:text-6xl font-black tracking-tighter text-white">
-                            <span className="text-red-500">Kin</span>
-                            <span className="text-white">esis</span>
-                        </h1>
-                    </div>
+        <div className="min-h-screen bg-[#0f0f0f] text-white font-sans selection:bg-red-500/30 selection:text-white pb-20 select-none">
+            <div className="container mx-auto px-4 pt-4">
+                <header className="mb-10 relative z-10 transition-all">
+                    <div className="flex items-center justify-between mb-12 relative max-w-7xl mx-auto border-b border-[#272727] pb-6">
+                        <div className="flex items-center gap-3">
+                            <img src={KinesisLogo} alt="Kinesis" className="w-8 h-8" />
+                            <h1 className="text-2xl font-bold tracking-tighter text-white">
+                                <span className="text-red-500">Kin</span>esis
+                            </h1>
+                        </div>
 
-                    {/* View Toggle */}
-                    <div className="flex justify-center mb-8">
-                        <div className="bg-gray-900 p-1 rounded-lg border border-gray-800 flex gap-1">
+                        {/* View Toggle as Chips */}
+                        <div className="flex gap-3">
                             <button
                                 onClick={() => setViewMode('search')}
-                                className={`flex items-center gap-2 px-6 py-2 rounded-md transition-all font-bold text-sm cursor-pointer ${viewMode === 'search' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                                className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all cursor-pointer ${viewMode === 'search' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
                             >
-                                <Search className="w-4 h-4" />
-                                Search
+                                Home
                             </button>
                             <button
                                 onClick={() => setViewMode('library')}
-                                className={`flex items-center gap-2 px-6 py-2 rounded-md transition-all font-bold text-sm cursor-pointer ${viewMode === 'library' ? 'bg-gray-800 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                                className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all cursor-pointer ${viewMode === 'library' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
                             >
-                                <BookOpen className="w-4 h-4" />
                                 Library
+                            </button>
+                            <button
+                                onClick={() => setShowSettings(true)}
+                                className="p-2 ml-2 text-gray-400 hover:text-white transition-all cursor-pointer"
+                                title="Settings"
+                            >
+                                <Settings className="w-5 h-5" />
                             </button>
                         </div>
                     </div>
+
+                    <SearchBar
+                        key={viewMode}
+                        onSearch={handleSearch}
+                        onLiveFilter={setSearchQuery}
+                        loading={loading}
+                        viewMode={viewMode}
+                        initialFacets={activeFacets}
+                        initialQuery={activeText}
+                        placeholder={viewMode === 'library' ? "Search your library" : "Search YouTube"}
+                    />
                 </header>
-
-                <SearchBar
-                    key={viewMode}
-                    onSearch={handleSearch}
-                    loading={loading}
-                    viewMode={viewMode}
-
-                    placeholder={viewMode === 'library' ? "Search your bookmarks..." : "Search YouTube (URL, @handle, or query)..."}
-                />
-
 
                 {error && (
                     <div className="mt-8 text-center animate-in fade-in duration-300">
-                        <div className="text-red-500 font-medium bg-red-500/10 p-4 rounded-lg border border-red-500/20 inline-block mx-auto">
+                        <div className="text-[#ff4e4e] font-medium bg-[#ff4e4e]/10 px-6 py-3 rounded-lg border border-[#ff4e4e]/20 inline-block mx-auto text-sm">
                             {error}
                         </div>
                     </div>
                 )}
 
-                <div className="mt-16">
+                <div className="mt-8">
                     {/* Conditional Rendering based on ViewMode */}
                     {viewMode === 'search' ? (
                         <>
                             <VideoList
-                                videos={videos}
+                                videos={filteredVideos}
                                 onSelect={handleSelectVideo}
-                                onSaveAll={videos.length > 0 ? handleSaveAll : undefined}
+                                onSaveAll={filteredVideos.length > 0 ? handleSaveAll : undefined}
                                 saveProgress={saveProgress}
                             />
 
                             {continuationToken && (
-                                <div className="mt-12 text-center">
+                                <div className="mt-16 text-center flex justify-center gap-4">
                                     <button
                                         onClick={handleLoadMore}
                                         disabled={loadingMore}
-                                        className="px-8 py-3 bg-gray-900 border border-gray-800 rounded-lg text-sm font-bold uppercase tracking-widest hover:border-gray-600 transition-all disabled:opacity-50 cursor-pointer"
+                                        className="px-10 py-3 bg-[#272727] text-white rounded-full text-sm font-bold hover:bg-[#3f3f3f] transition-all disabled:opacity-50 cursor-pointer"
                                     >
-                                        {loadingMore ? "Loading..." : "Load More"}
+                                        {loadingMore ? (
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                                Loading...
+                                            </div>
+                                        ) : "Load More"}
+                                    </button>
+                                    <button
+                                        onClick={handleLoadAll}
+                                        disabled={loadingMore}
+                                        className="px-10 py-3 bg-white text-black rounded-full text-sm font-bold hover:bg-[#e5e5e5] transition-all disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {loadingMore ? "Loading..." : "Load All"}
                                     </button>
                                 </div>
                             )}
                         </>
                     ) : (
-                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="animate-in fade-in slide-in-from-bottom-2 duration-400">
                             {libraryVideos.length === 0 && !loading ? (
-                                <div className="text-center text-gray-500 py-12">
-                                    <p className="text-lg">No saved transcripts found.</p>
-                                    <p className="text-sm mt-2">Search videos and save them to build your library.</p>
+                                <div className="text-center text-gray-500 py-24">
+                                    <p className="text-xl font-bold text-white mb-2">Build your library</p>
+                                    <p className="text-sm">Find videos you love and save their transcripts here.</p>
                                 </div>
                             ) : (
                                 <VideoList
-                                    videos={filteredLibraryVideos}
+                                    videos={filteredVideos}
                                     onSelect={handleSelectVideo}
                                     onDelete={handleDeleteVideo}
                                 />
@@ -378,6 +549,14 @@ function App() {
                 videoId={selectedVideo?.id}
                 onSave={selectedVideo ? () => handleSaveVideo(selectedVideo) : undefined}
                 onDelete={handleDeleteFromSidebar}
+                onRefetch={selectedVideo ? () => handleSelectVideo(selectedVideo) : undefined}
+                hasApiKey={hasApiKey}
+            />
+
+            <SettingsModal
+                isOpen={showSettings}
+                onClose={() => setShowSettings(false)}
+                onStatusChange={setHasApiKey}
             />
 
             {notification && (
@@ -399,13 +578,25 @@ function App() {
             {/* Back to Top Button */}
             <button
                 onClick={scrollToTop}
-                className={`fixed bottom-12 right-6 p-3 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-lg transition-all duration-300 cursor-pointer z-39 active:scale-95 ${showScrollTop
-                    ? "opacity-100 translate-y-0"
-                    : "opacity-0 translate-y-4 pointer-events-none"
+                className={`fixed bottom-12 right-6 p-3 bg-red-600 hover:bg-red-500 text-white rounded-full shadow-lg transition-opacity duration-200 cursor-pointer z-39 active:scale-95 ${showScrollTop
+                    ? "opacity-100"
+                    : "opacity-0 pointer-events-none"
                     }`}
                 title="Back to Top"
             >
                 <ChevronUp className="w-6 h-6" />
+            </button>
+
+            {/* Scroll to Bottom (Post-Load Hint) */}
+            <button
+                onClick={scrollToBottom}
+                className={`fixed bottom-12 left-6 px-4 py-3 bg-[#121212] border border-[#303030] hover:bg-[#222222] hover:border-[#505050] text-[#aaaaaa] hover:text-white rounded-lg shadow-xl transition-all duration-200 cursor-pointer z-39 flex items-center gap-3 active:scale-95 ${showScrollBottom
+                    ? "opacity-100"
+                    : "opacity-0 pointer-events-none"
+                    }`}
+            >
+                <ArrowDown className="w-4 h-4" />
+                <span className="text-xs font-bold uppercase tracking-widest">Scroll to Bottom</span>
             </button>
         </div>
     );

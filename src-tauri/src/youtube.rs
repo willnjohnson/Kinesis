@@ -111,6 +111,7 @@ impl YouTubeClient {
     }
 }
 
+#[allow(dead_code)]
 pub fn extract_video_id(url_or_id: &str) -> String {
     if url_or_id.contains("v=") {
         let parts: Vec<&str> = url_or_id.split("v=").collect();
@@ -173,11 +174,12 @@ pub async fn extract_channel_id(url_or_handle: &str) -> Result<Option<String>, S
 
     let text = res.text().await.map_err(|e| e.to_string())?;
     
-    // Try multiple regex patterns for channel ID
+    // Try multiple regex patterns for channel ID, prioritizing canonical and meta tags
     let patterns = [
-        r#""channelId":"(UC[^"]+)""#,
-        r#"meta property="og:url" content="https://www.youtube.com/channel/(UC[^"]+)""#,
+        r#"<meta itemprop="identifier" content="(UC[^"]+)">"#,
         r#"link rel="canonical" href="https://www.youtube.com/channel/(UC[^"]+)""#,
+        r#"meta property="og:url" content="https://www.youtube.com/channel/(UC[^"]+)""#,
+        r#""channelId":"(UC[^"]+)""#,
     ];
 
     for pattern in patterns {
@@ -384,12 +386,25 @@ pub fn extract_playlist_video_info(renderer: &Value) -> Option<Value> {
     
     let owner_text = renderer["shortBylineText"]["runs"][0]["text"].as_str().unwrap_or("");
 
+    // Playlist items usually have videoInfo with views and date
+    let mut view_count = String::new();
+    let mut published_at = String::new();
+    
+    if let Some(info) = renderer["videoInfo"]["runs"].as_array() {
+        if info.len() >= 3 {
+             view_count = info[0]["text"].as_str().unwrap_or("").to_string();
+             published_at = info[2]["text"].as_str().unwrap_or("").to_string();
+        } else if !info.is_empty() {
+             view_count = info[0]["text"].as_str().unwrap_or("").to_string();
+        }
+    }
+
     Some(serde_json::json!({
         "id": video_id,
         "title": title,
         "thumbnail": thumbnail,
-        "publishedAt": "",
-        "viewCount": "",
+        "publishedAt": published_at,
+        "viewCount": view_count,
         "author": owner_text
     }))
 }

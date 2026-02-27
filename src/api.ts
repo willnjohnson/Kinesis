@@ -8,6 +8,7 @@ export interface Video {
     viewCount: string;
     author?: string;
     status?: 'exists' | 'saved';
+    dateAdded?: string;
 }
 
 interface ChannelInfo {
@@ -43,6 +44,17 @@ export async function getVideos(id: string, isPlaylist: boolean = false, continu
         return res;
     } catch (error: any) {
         throw new Error(error || 'Failed to fetch videos');
+    }
+}
+
+/**
+ * Fetch channel videos using YouTube Data API v3.
+ */
+export async function fetchChannelVideosV3(query: string, continuation: string | null = null): Promise<VideoResponse> {
+    try {
+        return await invoke<VideoResponse>('fetch_channel_videos_v3', { query, continuation });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to fetch channel videos');
     }
 }
 
@@ -122,6 +134,73 @@ export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
         return await invoke<any[]>('bulk_save_videos', { videoIds: ids });
     } catch (error: any) {
         throw new Error(error || 'Failed to bulk save videos');
+    }
+}
+
+export async function getApiKey(): Promise<string | null> {
+    try {
+        return await invoke<string | null>('get_api_key');
+    } catch {
+        return null;
+    }
+}
+
+export async function setApiKey(apiKey: string): Promise<void> {
+    try {
+        await invoke('set_api_key', { apiKey });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to set API key');
+    }
+}
+
+export async function removeApiKey(): Promise<void> {
+    try {
+        await invoke('remove_api_key');
+    } catch (error: any) {
+        throw new Error(error || 'Failed to remove API key');
+    }
+}
+
+export interface DisplaySettings {
+    resolution: string;
+    fullscreen: boolean;
+}
+
+export interface DbDetails {
+    path: string;
+    size_bytes: number;
+    video_count: number;
+}
+
+export async function openDbLocation(): Promise<void> {
+    try {
+        await invoke('open_db_location');
+    } catch (error: any) {
+        throw new Error(error || 'Failed to open DB location');
+    }
+}
+
+export async function getDbDetails(): Promise<DbDetails> {
+    try {
+        return await invoke<DbDetails>('get_db_details');
+    } catch (error: any) {
+        throw new Error(error || 'Failed to fetch DB details');
+    }
+}
+
+export async function getDisplaySettings(): Promise<DisplaySettings> {
+    try {
+        return await invoke<DisplaySettings>('get_display_settings');
+    } catch (error: any) {
+        throw new Error(error || 'Failed to fetch display settings');
+    }
+}
+
+export async function setDisplaySettings(settings: DisplaySettings): Promise<void> {
+    try {
+        await invoke('set_display_settings', { settings });
+    } catch (error: any) {
+        throw new Error(error || 'Failed to set display settings');
     }
 }
 

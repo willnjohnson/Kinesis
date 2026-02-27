@@ -1,6 +1,6 @@
 [package]
 name = "kinesis"
-version = "0.1.1"
+version = "0.1.3"
 description = "A desktop application for saving and organizing YouTube video transcripts."
 authors = ["William N. Johnson"]
 license = "MIT"
@@ -33,3 +33,4 @@ tauri-plugin-opener = "2"
 tauri-plugin-shell = "2.3.5"
 rusqlite = { version = "0.32", features = ["bundled"] }
 futures = "0.3"
+tokio = { version = "1.49.0", features = ["time"] }

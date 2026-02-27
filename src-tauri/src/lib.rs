@@ -11,16 +11,17 @@ use youtube::{YouTubeClient, ClientType};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Video {
-    id: String,
-    title: String,
-    thumbnail: String,
+    pub id: String,
+    pub title: String,
+    pub thumbnail: String,
     #[serde(rename = "publishedAt")]
-    published_at: String,
+    pub published_at: String,
     #[serde(rename = "viewCount")]
-    view_count: String,
-    author: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<String>,
+    pub view_count: String,
+    pub author: Option<String>,
+    pub status: Option<String>,
+    #[serde(rename = "dateAdded")]
+    pub date_added: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,12 +38,109 @@ pub struct VideoResponse {
     continuation: Option<String>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DisplaySettings {
+    pub resolution: String,
+    pub fullscreen: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DbDetails {
+    pub path: String,
+    pub size_bytes: u64,
+    pub video_count: i64,
+}
+
 fn get_db_path(app: &tauri::AppHandle) -> String {
     let path = app.path().app_data_dir().unwrap_or_else(|_| PathBuf::from("."));
     if !path.exists() {
         let _ = std::fs::create_dir_all(&path);
     }
-    path.join("kinesis_data.db").to_string_lossy().to_string()
+    let db_file_path = path.join("kinesis_data.db").to_string_lossy().to_string();
+    let _ = db::init_db(&db_file_path);
+    db_file_path
+}
+
+#[command]
+fn get_api_key(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let db_path = get_db_path(&app);
+    db::get_setting(&db_path, "api_key").map_err(|e| e.to_string())
+}
+
+#[command]
+fn set_api_key(app: tauri::AppHandle, api_key: String) -> Result<(), String> {
+    let db_path = get_db_path(&app);
+    db::set_setting(&db_path, "api_key", &api_key).map_err(|e| e.to_string())
+}
+
+#[command]
+fn remove_api_key(app: tauri::AppHandle) -> Result<(), String> {
+    let db_path = get_db_path(&app);
+    db::delete_setting(&db_path, "api_key").map_err(|e| e.to_string())
+}
+
+#[command]
+fn open_db_location(app: tauri::AppHandle) -> Result<(), String> {
+    let db_path = get_db_path(&app);
+    if let Some(dir) = PathBuf::from(&db_path).parent() {
+        #[cfg(target_os = "windows")]
+        let _ = std::process::Command::new("explorer").arg(dir).spawn();
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(dir).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
+    Ok(())
+}
+
+#[command]
+fn get_db_details(app: tauri::AppHandle) -> Result<DbDetails, String> {
+    let path = get_db_path(&app);
+    let size_bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    let video_count = db::get_db_stats(&path).map_err(|e| e.to_string())?;
+    
+    Ok(DbDetails {
+        path,
+        size_bytes,
+        video_count,
+    })
+}
+
+#[command]
+fn get_display_settings(app: tauri::AppHandle) -> Result<DisplaySettings, String> {
+    let db_path = get_db_path(&app);
+    let resolution = db::get_setting(&db_path, "resolution")
+        .unwrap_or(None)
+        .unwrap_or_else(|| "1440x900".to_string());
+    let fullscreen = db::get_setting(&db_path, "fullscreen")
+        .unwrap_or(None)
+        .map(|s| s == "true")
+        .unwrap_or(false);
+        
+    Ok(DisplaySettings {
+        resolution,
+        fullscreen,
+    })
+}
+
+#[command]
+fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) -> Result<(), String> {
+    let db_path = get_db_path(&app);
+    db::set_setting(&db_path, "resolution", &settings.resolution).map_err(|e| e.to_string())?;
+    db::set_setting(&db_path, "fullscreen", &settings.fullscreen.to_string()).map_err(|e| e.to_string())?;
+    
+    // Apply immediately if possible
+    if let Some(window) = app.get_webview_window("main") {
+        let parts: Vec<&str> = settings.resolution.split('x').collect();
+        if parts.len() == 2 {
+            if let (Ok(w), Ok(h)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+            }
+        }
+        let _ = window.set_fullscreen(settings.fullscreen);
+    }
+    
+    Ok(())
 }
 
 #[command]
@@ -84,7 +182,8 @@ async fn fetch_videos(
                 for item in items {
                     if let Some(v_renderer) = item.get("playlistVideoRenderer") {
                         if let Some(v_json) = youtube::extract_playlist_video_info(v_renderer) {
-                            if let Ok(v) = serde_json::from_value::<Video>(v_json) {
+                            if let Ok(mut v) = serde_json::from_value::<Video>(v_json) {
+                                v.date_added = None;
                                 videos.push(v);
                             }
                         }
@@ -100,7 +199,8 @@ async fn fetch_videos(
              for item in items {
                 if let Some(v_renderer) = item.get("playlistVideoRenderer") {
                     if let Some(v_json) = youtube::extract_playlist_video_info(v_renderer) {
-                        if let Ok(v) = serde_json::from_value::<Video>(v_json) {
+                        if let Ok(mut v) = serde_json::from_value::<Video>(v_json) {
+                            v.date_added = None;
                             videos.push(v);
                         }
                     }
@@ -112,6 +212,98 @@ async fn fetch_videos(
     Ok(VideoResponse {
         videos,
         continuation: None,
+    })
+}
+
+#[command]
+async fn fetch_channel_videos_v3(
+    app: tauri::AppHandle,
+    query: String,
+    continuation: Option<String>,
+) -> Result<VideoResponse, String> {
+    let db_path = get_db_path(&app);
+    let api_key = db::get_setting(&db_path, "api_key").unwrap_or(None).ok_or("API Key not found")?;
+
+    let channel_id = youtube::extract_channel_id(&query).await?.unwrap_or(query);
+    let client = reqwest::Client::new();
+
+    // 1. Try to get the "Uploads" playlist ID (Usually UC -> UU)
+    let uploads_playlist_id = if channel_id.starts_with("UC") {
+        format!("UU{}", &channel_id[2..])
+    } else {
+        channel_id.clone()
+    };
+
+    // 2. Try the playlistItems endpoint first (supports full history, is more consistent)
+    let mut url = format!("https://youtube.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&maxResults=50&playlistId={}&key={}", uploads_playlist_id, api_key);
+    if let Some(token) = continuation.as_ref() {
+        url = format!("{}&pageToken={}", url, token);
+    }
+
+    let mut res: Value = client.get(&url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+
+    // If playlistItems failed with a 404 or something, fallback to the Search API
+    if res.get("error").is_some() {
+        let mut search_url = format!("https://youtube.googleapis.com/youtube/v3/search?part=snippet&maxResults=50&channelId={}&order=date&type=video&key={}", channel_id, api_key);
+        if let Some(token) = continuation {
+            search_url = format!("{}&pageToken={}", search_url, token);
+        }
+        res = client.get(&search_url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+        
+        if res.get("error").is_some() {
+            return Err(format!("API Error: {}", res["error"]["message"].as_str().unwrap_or("Unknown")));
+        }
+    }
+
+    let next_page_token = res["nextPageToken"].as_str().map(|s| s.to_string());
+    let mut videos = Vec::new();
+    let mut video_ids = Vec::new();
+
+    if let Some(items) = res["items"].as_array() {
+        for item in items {
+            let snippet = &item["snippet"];
+            // playlistItems has videoId in contentDetails, search has it in id
+            let vid = item["contentDetails"]["videoId"].as_str()
+                .or_else(|| item["id"]["videoId"].as_str())
+                .or_else(|| item["id"].as_str());
+
+            if let Some(vid) = vid {
+                video_ids.push(vid.to_string());
+                videos.push(Video {
+                    id: vid.to_string(),
+                    title: snippet["title"].as_str().unwrap_or("Unknown").to_string(),
+                    thumbnail: snippet["thumbnails"]["high"]["url"].as_str().or(snippet["thumbnails"]["default"]["url"].as_str()).unwrap_or("").to_string(),
+                    published_at: snippet["publishedAt"].as_str().unwrap_or("").to_string(),
+                    view_count: "0".to_string(),
+                    author: snippet["channelTitle"].as_str().map(|s| s.to_string()),
+                    status: None,
+                    date_added: None,
+                });
+            }
+        }
+    }
+
+    if !video_ids.is_empty() {
+        let stats_url = format!("https://youtube.googleapis.com/youtube/v3/videos?part=statistics&id={}&key={}", video_ids.join(","), api_key);
+        if let Ok(stats_res) = client.get(&stats_url).send().await {
+            if let Ok(stats_data) = stats_res.json::<Value>().await {
+                if let Some(items) = stats_data["items"].as_array() {
+                    for item in items {
+                        if let Some(vid) = item["id"].as_str() {
+                            if let Some(v) = videos.iter_mut().find(|v| v.id == vid) {
+                                let vc = item["statistics"]["viewCount"].as_str().unwrap_or("0");
+                                v.view_count = vc.to_string();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(VideoResponse {
+        videos,
+        continuation: next_page_token,
     })
 }
 
@@ -128,14 +320,17 @@ async fn fetch_video_info(_app: tauri::AppHandle, video_id: String) -> Result<Vi
     let data = client.player(&video_id).await?;
     let details = &data["videoDetails"];
     
+    let published_at = data["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("").to_string();
+    
     Ok(Video {
         id: details["videoId"].as_str().unwrap_or(&video_id).to_string(),
         title: details["title"].as_str().unwrap_or("Unknown").to_string(),
         thumbnail: details["thumbnail"]["thumbnails"].as_array().and_then(|a| a.last()).and_then(|t| t["url"].as_str()).unwrap_or("").to_string(),
-        published_at: "".to_string(),
+        published_at,
         view_count: details["viewCount"].as_str().unwrap_or("0").to_string(),
         author: details["author"].as_str().map(|s| s.to_string()),
         status: None,
+        date_added: None,
     })
 }
 
@@ -146,10 +341,28 @@ async fn fetch_transcript(app: tauri::AppHandle, video_id: String) -> Result<Str
         return Ok(transcript);
     }
 
+    // Fallback: check if API key exists. "else, don't fetch transcript at all"
+    let api_key = db::get_setting(&db_path, "api_key").unwrap_or(None);
+    if api_key.is_none() || api_key.unwrap().trim().is_empty() {
+        return Err("API_KEY_MISSING".to_string());
+    }
+
     let client = YouTubeClient::new(ClientType::Android);
-    let player_json = client.player(&video_id).await?;
-    let transcript = youtube::fetch_transcript(&player_json).await?.ok_or("No transcript available")?;
-    Ok(transcript)
+    
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let player_json = client.player(&video_id).await?;
+        match youtube::fetch_transcript(&player_json).await {
+            Ok(Some(t)) if !t.trim().is_empty() => return Ok(t),
+            Ok(_) | Err(_) if attempts < 3 => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                continue;
+            }
+            Ok(_) => return Err("No transcript available".to_string()),
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 #[command]
@@ -162,10 +375,11 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
             id: v_data.0,
             title: v_data.1,
             thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
-            published_at: "".to_string(),
-            view_count: "Saved".to_string(),
+            published_at: v_data.6,
+            view_count: v_data.5,
             author: Some(v_data.2),
             status: Some("exists".to_string()),
+            date_added: None, // Or we could put the actual date added here, but check exists works enough.
         });
     }
 
@@ -174,25 +388,53 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
     let client_android = YouTubeClient::new(ClientType::Android);
 
     let player_web = client_web.player(&video_id).await?;
-    let player_android = client_android.player(&video_id).await?;
 
     let details = &player_web["videoDetails"];
-    let transcript = youtube::fetch_transcript(&player_android).await?.unwrap_or("No transcript available.".to_string());
+    
+    // Check API key before fetching transcript for saving
+    let api_key = db::get_setting(&db_path, "api_key").unwrap_or(None);
+    let mut transcript = String::new();
+    
+    if api_key.is_some() && !api_key.unwrap().trim().is_empty() {
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            let player_android_retry = client_android.player(&video_id).await?;
+            match youtube::fetch_transcript(&player_android_retry).await {
+                Ok(Some(t)) if !t.trim().is_empty() => {
+                    transcript = t;
+                    break;
+                }
+                Ok(_) | Err(_) if attempts < 3 => {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+                _ => break,
+            }
+        }
+    }
+
+    if transcript.is_empty() {
+        return Err("Cannot save video without transcript.".to_string());
+    }
 
     let title = details["title"].as_str().unwrap_or("Unknown");
     let author = details["author"].as_str().unwrap_or("Unknown");
     let length = details["lengthSeconds"].as_str().unwrap_or("0").parse::<i32>().unwrap_or(0);
+    let view_count = details["viewCount"].as_str().unwrap_or("0");
+    let published_at = player_web["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("");
 
-    db::save_video(&db_path, &video_id, title, author, length, &transcript).map_err(|e| e.to_string())?;
+    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at).map_err(|e| e.to_string())?;
 
     Ok(Video {
         thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
         id: video_id,
         title: title.to_string(),
-        published_at: "".to_string(),
-        view_count: "Saved".to_string(),
+        published_at: published_at.to_string(),
+        view_count: view_count.to_string(),
         author: Some(author.to_string()),
         status: Some("saved".to_string()),
+        date_added: None,
     })
 }
 
@@ -246,7 +488,8 @@ async fn search_videos(_app: tauri::AppHandle, query: String) -> Result<VideoRes
                 for item in item_section {
                     if let Some(v_renderer) = item.get("videoRenderer") {
                         if let Some(v_json) = youtube::extract_video_basic_info(v_renderer) {
-                            if let Ok(v) = serde_json::from_value::<Video>(v_json) {
+                            if let Ok(mut v) = serde_json::from_value::<Video>(v_json) {
+                                v.date_added = None;
                                 videos.push(v);
                             }
                         }
@@ -270,6 +513,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             resolve_channel,
             fetch_videos,
+            fetch_channel_videos_v3,
             fetch_view_count,
             fetch_transcript,
             fetch_video_info,
@@ -278,8 +522,34 @@ pub fn run() {
             fetch_saved_videos,
             delete_video,
             check_video_exists,
-            bulk_save_videos
+            bulk_save_videos,
+            get_api_key,
+            set_api_key,
+            remove_api_key,
+            open_db_location,
+            get_db_details,
+            get_display_settings,
+            set_display_settings
         ])
+        .setup(|app| {
+            // Apply saved display settings on startup
+            let app_handle = app.handle();
+            let db_path = get_db_path(app_handle);
+            
+            let resolution = db::get_setting(&db_path, "resolution").unwrap_or(None).unwrap_or_else(|| "1440x900".to_string());
+            let fullscreen = db::get_setting(&db_path, "fullscreen").unwrap_or(None).map(|s| s == "true").unwrap_or(false);
+            
+            if let Some(window) = app.get_webview_window("main") {
+                let parts: Vec<&str> = resolution.split('x').collect();
+                if parts.len() == 2 {
+                    if let (Ok(w), Ok(h)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                    }
+                }
+                let _ = window.set_fullscreen(fullscreen);
+            }
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

@@ -1,21 +1,20 @@
 @import "tailwindcss";
 
 @theme {
-    --color-gray-950: #0a0a0a;
-    --color-gray-900: #171717;
-    --color-gray-850: #1f1f1f;
-    --color-gray-800: #262626;
-    --color-brand-red: #ff0033;
+    --color-yt-bg: #0f0f0f;
+    --color-yt-card-hover: #272727;
+    --color-yt-text-secondary: #aaaaaa;
+    --color-brand-red: #ff0000;
 }
 
 :root {
-    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+    font-family: "Roboto", "Inter", system-ui, -apple-system, sans-serif;
     line-height: 1.5;
     font-weight: 400;
 
     color-scheme: dark;
-    color: rgba(255, 255, 255, 0.9);
-    background-color: #0a0a0a;
+    color: #ffffff;
+    background-color: #0f0f0f;
 
     font-synthesis: none;
     text-rendering: optimizeLegibility;
@@ -29,20 +28,30 @@
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--color-gray-900);
+    background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--color-gray-800);
-    border-radius: 4px;
+    background: #717171;
+    border-radius: 10px;
+    border: 2px solid #0f0f0f;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #444;
+    background: #aaaaaa;
 }
 
 body {
     margin: 0;
-    background-color: #0a0a0a;
+    background-color: #0f0f0f;
     color: white;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #3f3f3f;
+    border: 1px solid #0f0f0f;
 }
