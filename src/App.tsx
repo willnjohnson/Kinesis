@@ -53,7 +53,7 @@ function App() {
     // Settings state
     const [showSettings, setShowSettings] = useState(false);
     const [hasApiKey, setHasApiKey] = useState(false);
-    const [videoTypeFilter, setVideoTypeFilter] = useState<string | undefined>(undefined);
+    const [videoTypeFilter] = useState<string | undefined>(undefined);
 
     useEffect(() => {
         getApiKey().then(k => setHasApiKey(!!k));
