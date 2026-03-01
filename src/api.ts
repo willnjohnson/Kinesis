@@ -7,8 +7,11 @@ export interface Video {
     publishedAt: string;
     viewCount: string;
     author?: string;
+    handle?: string;
     status?: 'exists' | 'saved';
     dateAdded?: string;
+    lengthSeconds?: number;
+    videoType?: 'short' | 'standard';
 }
 
 interface ChannelInfo {
@@ -104,9 +107,9 @@ export async function searchVideos(query: string): Promise<VideoResponse> {
     }
 }
 
-export async function getSavedVideos(): Promise<VideoResponse> {
+export async function getSavedVideos(videoType?: string): Promise<VideoResponse> {
     try {
-        const res = await invoke<VideoResponse>('fetch_saved_videos');
+        const res = await invoke<VideoResponse>('fetch_saved_videos', { videoType: videoType || null });
         return res;
     } catch (error: any) {
         throw new Error(error || 'Failed to fetch saved videos');
@@ -164,6 +167,7 @@ export async function removeApiKey(): Promise<void> {
 export interface DisplaySettings {
     resolution: string;
     fullscreen: boolean;
+    theme: string;
 }
 
 export interface DbDetails {

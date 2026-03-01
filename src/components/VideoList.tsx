@@ -65,9 +65,11 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
     return (
         <div className="w-full max-w-[1700px] mx-auto">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4 px-2">
-                <div className="flex items-center gap-4">
+                <div className="flex items-baseline gap-2">
                     <h3 className="text-xl font-bold text-white">Videos</h3>
-                    <span className="text-[#aaaaaa] text-sm font-medium">{videos.length} results</span>
+                    <span className="text-[#aaaaaa] text-sm font-medium">
+                        ({videos.length} results)
+                    </span>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -75,7 +77,7 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                         <button
                             onClick={onSaveAll}
                             disabled={!!saveProgress}
-                            className={`mr-4 px-4 py-2 bg-white text-black hover:bg-[#e5e5e5] rounded-full text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 ${!saveProgress ? 'cursor-pointer' : 'cursor-default'}`}
+                            className={`mr-4 px-3 py-1.5 bg-white text-black hover:bg-[#e5e5e5] rounded-lg text-sm font-semibold transition-colors disabled:opacity-50 flex items-center gap-2 ${!saveProgress ? 'cursor-pointer' : 'cursor-default'}`}
                         >
                             {saveProgress ? (
                                 <>
@@ -141,19 +143,29 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                                 </h3>
 
                                 <div className="flex flex-col text-[13px] text-[#aaaaaa]">
-                                    <span className="truncate">
+                                    <span
+                                        className="truncate"
+                                        title={`${(h => h ? `Handle: ${h}` : `Channel Name: ${video.author}`)(video.handle)}`}
+                                    >
                                         {video.author || "YouTube Creator"}
                                     </span>
+
                                     <div className="flex items-center gap-1">
-                                        <span>{formatViewCount(video.viewCount)} views</span>
+                                        <span title={`Views: ${parseViewCount(video.viewCount).toLocaleString('en-US')}`}>
+                                            {formatViewCount(video.viewCount)} views
+                                        </span>
                                         <span className="text-[8px]">•</span>
-                                        <span>{formatDate(video.publishedAt)}</span>
+                                        <span title={`Timestamp: ${video.publishedAt || 'Unknown'}`}>
+                                            {formatDate(video.publishedAt)}
+                                        </span>
                                     </div>
 
                                     {video.dateAdded && (
                                         <div className="flex items-center gap-1 mt-1 text-yellow-400 font-medium text-[11px]">
                                             <Bookmark className="w-3 h-3 fill-yellow-400" />
-                                            <span>Bookmarked {formatDate(video.dateAdded)}</span>
+                                            <span title={`Timestamp: ${video.dateAdded}`}>
+                                                Bookmarked {formatDate(video.dateAdded)}
+                                            </span>
                                         </div>
                                     )}
                                 </div>
@@ -183,7 +195,6 @@ function formatDate(dateStr: string) {
     if (!dateStr) return 'Unknown';
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) {
-        // Handle strings like "3 days ago" or "6 months ago" from InnerTube
         return dateStr;
     }
     return format(d, 'MMM dd, yyyy');
@@ -220,3 +231,4 @@ function formatViewCount(count: string) {
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
     return n.toLocaleString();
 }
+

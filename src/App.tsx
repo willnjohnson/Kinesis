@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, type Video } from "./api";
+import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, getDisplaySettings, type Video } from "./api";
 import { SearchBar, type Facet } from "./components/SearchBar";
 import { VideoList } from "./components/VideoList";
 import { Sidebar } from "./components/Sidebar";
@@ -53,9 +53,23 @@ function App() {
     // Settings state
     const [showSettings, setShowSettings] = useState(false);
     const [hasApiKey, setHasApiKey] = useState(false);
+    const [videoTypeFilter, setVideoTypeFilter] = useState<string | undefined>(undefined);
 
     useEffect(() => {
         getApiKey().then(k => setHasApiKey(!!k));
+    }, []);
+
+    // Load and apply theme on startup
+    useEffect(() => {
+        getDisplaySettings().then(settings => {
+            if (settings.theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        }).catch(() => {
+            document.documentElement.classList.add('dark');
+        });
     }, []);
 
     // Handle scroll visibility for "Back to Top" button
@@ -84,7 +98,7 @@ function App() {
         setLoading(true);
         setError(null);
         try {
-            const res = await getSavedVideos();
+            const res = await getSavedVideos(videoTypeFilter);
             setLibraryVideos(res.videos);
         } catch (e: any) {
             setError("Failed to load library.");
@@ -92,7 +106,7 @@ function App() {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [videoTypeFilter]);
 
     // Load saved videos when switching to Library mode
     useEffect(() => {
@@ -100,6 +114,13 @@ function App() {
             refreshLibrary();
         }
     }, [viewMode, refreshLibrary]);
+
+    // Refresh library when video type filter changes
+    useEffect(() => {
+        if (viewMode === 'library') {
+            refreshLibrary();
+        }
+    }, [videoTypeFilter, viewMode, refreshLibrary]);
 
 
     const handleSearch = async (query: string) => {
@@ -448,7 +469,7 @@ function App() {
                                 onClick={() => setViewMode('search')}
                                 className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all cursor-pointer ${viewMode === 'search' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
                             >
-                                Home
+                                Search
                             </button>
                             <button
                                 onClick={() => setViewMode('library')}
@@ -526,7 +547,7 @@ function App() {
                             {libraryVideos.length === 0 && !loading ? (
                                 <div className="text-center text-gray-500 py-24">
                                     <p className="text-xl font-bold text-white mb-2">Build your library</p>
-                                    <p className="text-sm">Find videos you love and save their transcripts here.</p>
+                                    <p className="text-sm">Find videos and save their transcripts here.</p>
                                 </div>
                             ) : (
                                 <VideoList
@@ -584,7 +605,7 @@ function App() {
                     }`}
                 title="Back to Top"
             >
-                <ChevronUp className="w-6 h-6" />
+                <ChevronUp className="w-6 h-6" style={{ color: '#ffffff' }} />
             </button>
 
             {/* Scroll to Bottom (Post-Load Hint) */}

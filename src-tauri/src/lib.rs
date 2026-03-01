@@ -9,6 +9,33 @@ mod youtube;
 
 use youtube::{YouTubeClient, ClientType};
 
+/// Extract YouTube handle from channel URL (e.g., "/@handle" or "/c/custom" or "/channel/UC...")
+fn extract_handle_from_url(url: &str) -> Option<String> {
+    // Check if URL contains @ (handle)
+    if url.contains("@") {
+        let parts: Vec<&str> = url.split('@').collect();
+        if parts.len() > 1 {
+            let handle_part = parts[1];
+            // Handle could end with / or be at end of string
+            let handle = handle_part.trim_end_matches('/');
+            if !handle.is_empty() {
+                return Some(format!("@{}", handle));
+            }
+        }
+    }
+    // Check for custom URL (/c/ or /user/)
+    if url.contains("/c/") {
+        let parts: Vec<&str> = url.split("/c/").collect();
+        if parts.len() > 1 {
+            let handle = parts[1].trim_end_matches('/');
+            if !handle.is_empty() {
+                return Some(format!("@{}", handle));
+            }
+        }
+    }
+    None
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Video {
     pub id: String,
@@ -19,9 +46,14 @@ pub struct Video {
     #[serde(rename = "viewCount")]
     pub view_count: String,
     pub author: Option<String>,
+    pub handle: Option<String>,
     pub status: Option<String>,
     #[serde(rename = "dateAdded")]
     pub date_added: Option<String>,
+    #[serde(rename = "lengthSeconds")]
+    pub length_seconds: Option<i32>,
+    #[serde(rename = "videoType")]
+    pub video_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,6 +74,7 @@ pub struct VideoResponse {
 pub struct DisplaySettings {
     pub resolution: String,
     pub fullscreen: bool,
+    pub theme: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,10 +149,14 @@ fn get_display_settings(app: tauri::AppHandle) -> Result<DisplaySettings, String
         .unwrap_or(None)
         .map(|s| s == "true")
         .unwrap_or(false);
+    let theme = db::get_setting(&db_path, "theme")
+        .unwrap_or(None)
+        .unwrap_or_else(|| "dark".to_string());
         
     Ok(DisplaySettings {
         resolution,
         fullscreen,
+        theme,
     })
 }
 
@@ -128,16 +165,23 @@ fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) -> Res
     let db_path = get_db_path(&app);
     db::set_setting(&db_path, "resolution", &settings.resolution).map_err(|e| e.to_string())?;
     db::set_setting(&db_path, "fullscreen", &settings.fullscreen.to_string()).map_err(|e| e.to_string())?;
+    db::set_setting(&db_path, "theme", &settings.theme).map_err(|e| e.to_string())?;
     
     // Apply immediately if possible
     if let Some(window) = app.get_webview_window("main") {
-        let parts: Vec<&str> = settings.resolution.split('x').collect();
-        if parts.len() == 2 {
-            if let (Ok(w), Ok(h)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
-                let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+        // Apply fullscreen first (or disable it) before changing resolution
+        let _ = window.set_fullscreen(settings.fullscreen);
+        
+        // Only apply resolution when NOT in fullscreen mode
+        // (setting window size while in fullscreen can cause issues)
+        if !settings.fullscreen {
+            let parts: Vec<&str> = settings.resolution.split('x').collect();
+            if parts.len() == 2 {
+                if let (Ok(w), Ok(h)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(w, h)));
+                }
             }
         }
-        let _ = window.set_fullscreen(settings.fullscreen);
     }
     
     Ok(())
@@ -276,8 +320,11 @@ async fn fetch_channel_videos_v3(
                     published_at: snippet["publishedAt"].as_str().unwrap_or("").to_string(),
                     view_count: "0".to_string(),
                     author: snippet["channelTitle"].as_str().map(|s| s.to_string()),
+                    handle: None, // YouTube Data API v3 doesn't provide handles directly
                     status: None,
                     date_added: None,
+                    length_seconds: None,
+                    video_type: None,
                 });
             }
         }
@@ -322,15 +369,42 @@ async fn fetch_video_info(_app: tauri::AppHandle, video_id: String) -> Result<Vi
     
     let published_at = data["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("").to_string();
     
+    // Extract author - could be string or array
+    let author = if let Some(authors) = details["author"].as_array() {
+        authors.first().and_then(|a| a["name"].as_str()).map(|s| s.to_string())
+    } else {
+        details["author"].as_str().map(|s| s.to_string())
+    };
+    
+    // Extract handle from ownerProfileUrl in microformat (e.g., "https://www.youtube.com/@handle")
+    let mut handle: Option<String> = None;
+    if let Some(owner_profile_url) = data["microformat"]["playerMicroformatRenderer"]["ownerProfileUrl"].as_str() {
+        handle = extract_handle_from_url(owner_profile_url);
+    }
+    
+    // Fallback: try author URL field
+    if handle.is_none() {
+        if let Some(authors) = details["author"].as_array() {
+            if let Some(first_author) = authors.first() {
+                if let Some(url) = first_author["url"].as_str() {
+                    handle = extract_handle_from_url(url);
+                }
+            }
+        }
+    }
+    
     Ok(Video {
         id: details["videoId"].as_str().unwrap_or(&video_id).to_string(),
         title: details["title"].as_str().unwrap_or("Unknown").to_string(),
         thumbnail: details["thumbnail"]["thumbnails"].as_array().and_then(|a| a.last()).and_then(|t| t["url"].as_str()).unwrap_or("").to_string(),
         published_at,
         view_count: details["viewCount"].as_str().unwrap_or("0").to_string(),
-        author: details["author"].as_str().map(|s| s.to_string()),
+        author,
+        handle,
         status: None,
         date_added: None,
+        length_seconds: None,
+        video_type: None,
     })
 }
 
@@ -378,8 +452,11 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
             published_at: v_data.6,
             view_count: v_data.5,
             author: Some(v_data.2),
+            handle: Some(v_data.7),
             status: Some("exists".to_string()),
-            date_added: None, // Or we could put the actual date added here, but check exists works enough.
+            date_added: None,
+            length_seconds: Some(v_data.3),
+            video_type: Some(v_data.8),
         });
     }
 
@@ -390,6 +467,16 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
     let player_web = client_web.player(&video_id).await?;
 
     let details = &player_web["videoDetails"];
+    
+    // Extract handle from author array
+    let mut handle: Option<String> = None;
+    if let Some(authors) = details["author"].as_array() {
+        if let Some(first_author) = authors.first() {
+            if let Some(channel_id) = first_author["channel_id"].as_str() {
+                handle = youtube::extract_handle_from_channel_id(channel_id).await.ok().flatten();
+            }
+        }
+    }
     
     // Check API key before fetching transcript for saving
     let api_key = db::get_setting(&db_path, "api_key").unwrap_or(None);
@@ -419,12 +506,50 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
     }
 
     let title = details["title"].as_str().unwrap_or("Unknown");
-    let author = details["author"].as_str().unwrap_or("Unknown");
+    
+    // Extract author - could be string or array
+    let author = if let Some(authors) = details["author"].as_array() {
+        authors.first().and_then(|a| a["name"].as_str()).unwrap_or("Unknown")
+    } else {
+        details["author"].as_str().unwrap_or("Unknown")
+    };
+    
+    // Extract handle from ownerProfileUrl in microformat (e.g., "https://www.youtube.com/@handle")
+    let mut handle: Option<String> = None;
+    if let Some(owner_profile_url) = player_web["microformat"]["playerMicroformatRenderer"]["ownerProfileUrl"].as_str() {
+        handle = extract_handle_from_url(owner_profile_url);
+    }
+    
+    // Fallback: try author URL field
+    if handle.is_none() {
+        if let Some(authors) = details["author"].as_array() {
+            if let Some(first_author) = authors.first() {
+                if let Some(url) = first_author["url"].as_str() {
+                    handle = extract_handle_from_url(url);
+                }
+            }
+        }
+    }
+    
+    // Final fallback: try channel_id lookup
+    if handle.is_none() {
+        if let Some(authors) = details["author"].as_array() {
+            if let Some(first_author) = authors.first() {
+                if let Some(channel_id) = first_author["channel_id"].as_str() {
+                    handle = youtube::extract_handle_from_channel_id(channel_id).await.ok().flatten();
+                }
+            }
+        }
+    }
+    
     let length = details["lengthSeconds"].as_str().unwrap_or("0").parse::<i32>().unwrap_or(0);
     let view_count = details["viewCount"].as_str().unwrap_or("0");
     let published_at = player_web["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("");
+    
+    // Determine video type: YouTube Shorts are 60 seconds or less
+    let video_type = if length > 0 && length <= 60 { "short" } else { "standard" };
 
-    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at).map_err(|e| e.to_string())?;
+    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type).map_err(|e| e.to_string())?;
 
     Ok(Video {
         thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
@@ -433,16 +558,19 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
         published_at: published_at.to_string(),
         view_count: view_count.to_string(),
         author: Some(author.to_string()),
+        handle,
         status: Some("saved".to_string()),
         date_added: None,
+        length_seconds: Some(length),
+        video_type: Some(video_type.to_string()),
     })
 }
 
 #[command]
-async fn fetch_saved_videos(app: tauri::AppHandle) -> Result<VideoResponse, String> {
+async fn fetch_saved_videos(app: tauri::AppHandle, video_type: Option<String>) -> Result<VideoResponse, String> {
     let db_path = get_db_path(&app);
     db::init_db(&db_path).map_err(|e| e.to_string())?;
-    let videos = db::list_videos(&db_path).map_err(|e| e.to_string())?;
+    let videos = db::list_videos(&db_path, video_type.as_deref()).map_err(|e| e.to_string())?;
     Ok(VideoResponse {
         videos,
         continuation: None,

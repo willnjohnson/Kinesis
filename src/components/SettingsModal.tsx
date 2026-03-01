@@ -1,4 +1,4 @@
-import { X, Settings, Database, Check, Monitor, Key, HardDrive } from "lucide-react";
+import { X, Settings, Database, Check, Monitor, Key, HardDrive, Sun, Moon } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
     getApiKey,
@@ -16,11 +16,12 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     onStatusChange: (hasKey: boolean) => void;
+    onThemeChange?: (theme: string) => void;
 }
 
 type Tab = 'api' | 'db' | 'display';
 
-export function SettingsModal({ isOpen, onClose, onStatusChange }: Props) {
+export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange }: Props) {
     const [activeTab, setActiveTab] = useState<Tab>('api');
     const [hasKey, setHasKey] = useState(false);
     const [apiKeyInput, setApiKeyInput] = useState("");
@@ -29,7 +30,8 @@ export function SettingsModal({ isOpen, onClose, onStatusChange }: Props) {
     const [dbDetails, setDbDetails] = useState<DbDetails | null>(null);
     const [displaySettings, setDisplaySettingsState] = useState<DisplaySettings>({
         resolution: '1440x900',
-        fullscreen: false
+        fullscreen: false,
+        theme: 'dark'
     });
 
     useEffect(() => {
@@ -265,6 +267,32 @@ export function SettingsModal({ isOpen, onClose, onStatusChange }: Props) {
                                                 className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${displaySettings.fullscreen ? 'bg-red-600' : 'bg-[#303030]'}`}
                                             >
                                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${displaySettings.fullscreen ? 'left-7' : 'left-1'}`} />
+                                            </button>
+                                        </div>
+
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <span className="text-sm font-semibold text-white block">Theme</span>
+                                                <span className="text-xs text-[#aaaaaa]">Switch between light and dark mode</span>
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    const newTheme = displaySettings.theme === 'dark' ? 'light' : 'dark';
+                                                    handleUpdateDisplay({ theme: newTheme });
+                                                    // Toggle dark class for Tailwind
+                                                    document.documentElement.classList.toggle('dark', newTheme === 'dark');
+                                                    // Notify parent
+                                                    onThemeChange?.(newTheme);
+                                                }}
+                                                className={`w-14 h-7 rounded-full transition-colors relative cursor-pointer flex items-center px-0.5 ${displaySettings.theme === 'dark' ? 'bg-purple-600' : 'bg-yellow-400'}`}
+                                            >
+                                                <div className={`absolute top-0.5 w-6 h-6 bg-white rounded-full transition-all flex items-center justify-center shadow-md ${displaySettings.theme === 'dark' ? 'left-0.5' : 'left-7'}`}>
+                                                    {displaySettings.theme === 'dark' ? (
+                                                        <Moon className="w-3.5 h-3.5 text-purple-800" />
+                                                    ) : (
+                                                        <Sun className="w-3.5 h-3.5 text-yellow-600" />
+                                                    )}
+                                                </div>
                                             </button>
                                         </div>
                                     </div>

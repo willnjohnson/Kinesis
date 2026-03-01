@@ -238,7 +238,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                     <button
                         type="submit"
                         disabled={loading || (query.trim() === '' && facets.length === 0) || isFilterSearchActive}
-                        className={`flex items-center justify-center px-6 bg-[#222222] border border-[#404040] border-l-0 rounded-r-full transition-colors disabled:opacity-50 group h-auto min-h-11 ${isFilterSearchActive ? 'cursor-default' : 'hover:bg-[#333333] hover:border-[#505050] cursor-pointer'
+                        className={`flex items-center justify-center px-6 bg-[#222222] border border-[#404040] border-l-0 rounded-r-full transition-colors disabled:opacity-50 group h-auto min-h-11 ${isFilterSearchActive ? 'cursor-default' : 'hover:bg-[#444444] hover:border-[#505050] cursor-pointer'
                             }`}
                         title={isFilterSearchActive ? "In Filter Mode" : "Search"}
                     >
