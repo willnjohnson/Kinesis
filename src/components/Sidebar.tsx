@@ -1,6 +1,7 @@
-import { X, Trash2, Save } from 'lucide-react';
+import { X, Trash2, Save, ExternalLink } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { checkVideoExists } from '../api';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface Props {
     isOpen: boolean;
@@ -124,7 +125,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                     <iframe
                                         width="100%"
                                         height="100%"
-                                        src={`https://www.youtube.com/embed/${videoId}?rel=0`}
+                                        src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`}
                                         title="YouTube video player"
                                         frameBorder="0"
                                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"

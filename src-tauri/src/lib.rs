@@ -4,6 +4,27 @@ use std::path::PathBuf;
 use tauri::Manager;
 use serde_json::Value;
 
+/// Parse YouTube view count string to integer
+/// Handles formats like: "1.2M views", "123K", "1,234,567", "1234567", etc.
+pub fn parse_view_count(view_count_str: &str) -> i64 {
+    let cleaned = view_count_str
+        .replace(" views", "")
+        .replace(" view", "")
+        .replace(",", "");
+    
+    let multiplier: i64 = if cleaned.ends_with('M') || cleaned.ends_with('m') {
+        1_000_000
+    } else if cleaned.ends_with('K') || cleaned.ends_with('k') {
+        1_000
+    } else {
+        1
+    };
+    
+    let num_str = cleaned.trim_end_matches(|c| c == 'M' || c == 'm' || c == 'K' || c == 'k');
+    
+    num_str.parse::<i64>().unwrap_or(0) * multiplier
+}
+
 mod db;
 mod youtube;
 
@@ -75,6 +96,7 @@ pub struct DisplaySettings {
     pub resolution: String,
     pub fullscreen: bool,
     pub theme: String,
+    pub video_list_mode: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -152,11 +174,15 @@ fn get_display_settings(app: tauri::AppHandle) -> Result<DisplaySettings, String
     let theme = db::get_setting(&db_path, "theme")
         .unwrap_or(None)
         .unwrap_or_else(|| "dark".to_string());
+    let video_list_mode = db::get_setting(&db_path, "video_list_mode")
+        .unwrap_or(None)
+        .unwrap_or_else(|| "grid".to_string());
         
     Ok(DisplaySettings {
         resolution,
         fullscreen,
         theme,
+        video_list_mode,
     })
 }
 
@@ -166,6 +192,7 @@ fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) -> Res
     db::set_setting(&db_path, "resolution", &settings.resolution).map_err(|e| e.to_string())?;
     db::set_setting(&db_path, "fullscreen", &settings.fullscreen.to_string()).map_err(|e| e.to_string())?;
     db::set_setting(&db_path, "theme", &settings.theme).map_err(|e| e.to_string())?;
+    db::set_setting(&db_path, "video_list_mode", &settings.video_list_mode).map_err(|e| e.to_string())?;
     
     // Apply immediately if possible
     if let Some(window) = app.get_webview_window("main") {
@@ -398,7 +425,7 @@ async fn fetch_video_info(_app: tauri::AppHandle, video_id: String) -> Result<Vi
         title: details["title"].as_str().unwrap_or("Unknown").to_string(),
         thumbnail: details["thumbnail"]["thumbnails"].as_array().and_then(|a| a.last()).and_then(|t| t["url"].as_str()).unwrap_or("").to_string(),
         published_at,
-        view_count: details["viewCount"].as_str().unwrap_or("0").to_string(),
+        view_count: parse_view_count(details["viewCount"].as_str().unwrap_or("0")).to_string(),
         author,
         handle,
         status: None,
@@ -450,7 +477,7 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
             title: v_data.1,
             thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
             published_at: v_data.6,
-            view_count: v_data.5,
+            view_count: v_data.5.to_string(),
             author: Some(v_data.2),
             handle: Some(v_data.7),
             status: Some("exists".to_string()),
@@ -543,7 +570,8 @@ async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, St
     }
     
     let length = details["lengthSeconds"].as_str().unwrap_or("0").parse::<i32>().unwrap_or(0);
-    let view_count = details["viewCount"].as_str().unwrap_or("0");
+    let view_count_str = details["viewCount"].as_str().unwrap_or("0");
+    let view_count = parse_view_count(view_count_str);
     let published_at = player_web["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("");
     
     // Determine video type: YouTube Shorts are 60 seconds or less

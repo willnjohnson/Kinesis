@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, getDisplaySettings, type Video } from "./api";
+import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, getDisplaySettings, type Video, type DisplaySettings } from "./api";
 import { SearchBar, type Facet } from "./components/SearchBar";
 import { VideoList } from "./components/VideoList";
 import { Sidebar } from "./components/Sidebar";
@@ -54,6 +54,7 @@ function App() {
     const [showSettings, setShowSettings] = useState(false);
     const [hasApiKey, setHasApiKey] = useState(false);
     const [videoTypeFilter] = useState<string | undefined>(undefined);
+    const [videoListMode, setVideoListMode] = useState<'grid' | 'compact'>('grid');
 
     useEffect(() => {
         getApiKey().then(k => setHasApiKey(!!k));
@@ -67,6 +68,8 @@ function App() {
             } else {
                 document.documentElement.classList.remove('dark');
             }
+            // Load video list mode
+            setVideoListMode((settings.videoListMode as 'grid' | 'compact') || 'grid');
         }).catch(() => {
             document.documentElement.classList.add('dark');
         });
@@ -516,6 +519,7 @@ function App() {
                                 onSelect={handleSelectVideo}
                                 onSaveAll={filteredVideos.length > 0 ? handleSaveAll : undefined}
                                 saveProgress={saveProgress}
+                                compact={videoListMode === 'compact'}
                             />
 
                             {continuationToken && (
@@ -554,6 +558,7 @@ function App() {
                                     videos={filteredVideos}
                                     onSelect={handleSelectVideo}
                                     onDelete={handleDeleteVideo}
+                                    compact={videoListMode === 'compact'}
                                 />
                             )}
                         </div>
@@ -578,6 +583,7 @@ function App() {
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}
                 onStatusChange={setHasApiKey}
+                onVideoListModeChange={setVideoListMode}
             />
 
             {notification && (

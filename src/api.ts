@@ -168,6 +168,7 @@ export interface DisplaySettings {
     resolution: string;
     fullscreen: boolean;
     theme: string;
+    videoListMode: 'grid' | 'compact';
 }
 
 export interface DbDetails {

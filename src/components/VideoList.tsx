@@ -9,12 +9,13 @@ interface Props {
     onSaveAll?: () => void;
     onDelete?: (video: Video) => void;
     saveProgress?: string | null;
+    compact?: boolean;
 }
 
 type SortField = 'popularity' | 'date' | 'added';
 type SortOrder = 'desc' | 'asc';
 
-export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress }: Props) {
+export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress, compact = false }: Props) {
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
@@ -118,15 +119,15 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-x-4 gap-y-10">
+            <div className={`grid gap-x-3 gap-y-8 ${compact ? 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8' : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5'}`}>
                 {sortedVideos.map((video) => (
                     <div
                         key={video.id}
-                        className="group flex flex-col gap-3 cursor-pointer"
+                        className="group flex flex-col gap-2 cursor-pointer"
                         onClick={() => onSelect(video)}
                     >
                         {/* Thumbnail */}
-                        <div className="aspect-video w-full rounded-xl overflow-hidden bg-[#272727] relative">
+                        <div className={`${compact ? 'aspect-[16/9]' : 'aspect-video'} w-full rounded-lg overflow-hidden bg-[#272727] relative`}>
                             <img
                                 src={video.thumbnail}
                                 alt={video.title}
@@ -136,13 +137,13 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                         </div>
 
                         {/* Details */}
-                        <div className="flex gap-3 px-1">
+                        <div className="flex gap-2">
                             <div className="flex flex-col flex-1 overflow-hidden">
-                                <h3 className="text-sm font-bold text-white line-clamp-2 leading-snug group-hover:text-white mb-1">
+                                <h3 className={`${compact ? 'text-xs' : 'text-sm'} font-bold text-white line-clamp-2 leading-tight group-hover:text-white`}>
                                     {video.title}
                                 </h3>
 
-                                <div className="flex flex-col text-[13px] text-[#aaaaaa]">
+                                <div className={`flex flex-col text-[#aaaaaa] ${compact ? 'text-[10px]' : 'text-[13px]'}`}>
                                     <span
                                         className="truncate"
                                         title={`${(h => h ? `Handle: ${h}` : `Channel Name: ${video.author}`)(video.handle)}`}
@@ -161,10 +162,10 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                                     </div>
 
                                     {video.dateAdded && (
-                                        <div className="flex items-center gap-1 mt-1 text-yellow-400 font-medium text-[11px]">
-                                            <Bookmark className="w-3 h-3 fill-yellow-400" />
+                                        <div className="flex items-center gap-1 mt-0.5 text-yellow-400 font-medium text-[10px]">
+                                            <Bookmark className="w-2.5 h-2.5 fill-yellow-400" />
                                             <span title={`Timestamp: ${video.dateAdded}`}>
-                                                Bookmarked {formatDate(video.dateAdded)}
+                                                {formatDate(video.dateAdded)}
                                             </span>
                                         </div>
                                     )}
@@ -177,10 +178,10 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress 
                                         e.stopPropagation();
                                         onDelete(video);
                                     }}
-                                    className="opacity-0 group-hover:opacity-100 p-2 hover:bg-[#3f3f3f] rounded-full transition-all text-white self-start mt-1 hover:cursor-pointer"
+                                    className="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-[#3f3f3f] rounded-full transition-all text-white self-start hover:cursor-pointer"
                                     title="Remove"
                                 >
-                                    <Trash2 className="w-4 h-4" />
+                                    <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                             )}
                         </div>
@@ -201,7 +202,8 @@ function formatDate(dateStr: string) {
 }
 
 function parseViewCount(count: string): number {
-    if (!count) return 0;
+    // "Saved" is a special case - video was saved but we don't have view count
+    if (!count || count === "Saved") return 0;
     const clean = count.toLowerCase().replace(/,/g, '').trim();
 
     // Check for explicit multipliers
@@ -218,6 +220,8 @@ function parseViewCount(count: string): number {
 }
 
 function formatViewCount(count: string) {
+    // "Saved" is a special case - return as-is
+    if (count === "Saved") return 'Saved';
     if (!count) return '0';
 
     // If it's already a formatted string like "1.2M views", just cleanup

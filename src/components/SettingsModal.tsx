@@ -1,4 +1,4 @@
-import { X, Settings, Database, Check, Monitor, Key, HardDrive, Sun, Moon } from "lucide-react";
+import { X, Settings, Database, Check, Monitor, Key, HardDrive, Sun, Moon, LayoutGrid, List } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
     getApiKey,
@@ -17,11 +17,12 @@ interface Props {
     onClose: () => void;
     onStatusChange: (hasKey: boolean) => void;
     onThemeChange?: (theme: string) => void;
+    onVideoListModeChange?: (mode: 'grid' | 'compact') => void;
 }
 
 type Tab = 'api' | 'db' | 'display';
 
-export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange }: Props) {
+export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange, onVideoListModeChange }: Props) {
     const [activeTab, setActiveTab] = useState<Tab>('api');
     const [hasKey, setHasKey] = useState(false);
     const [apiKeyInput, setApiKeyInput] = useState("");
@@ -31,7 +32,8 @@ export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange }
     const [displaySettings, setDisplaySettingsState] = useState<DisplaySettings>({
         resolution: '1440x900',
         fullscreen: false,
-        theme: 'dark'
+        theme: 'dark',
+        videoListMode: 'grid'
     });
 
     useEffect(() => {
@@ -85,6 +87,10 @@ export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange }
         setDisplaySettingsState(newSettings);
         try {
             await setDisplaySettings(newSettings);
+            // Notify parent components of changes
+            if (updates.videoListMode) {
+                onVideoListModeChange?.(updates.videoListMode);
+            }
         } catch (e) {
             console.error("Failed to apply display settings", e);
         }
@@ -294,6 +300,38 @@ export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange }
                                                     )}
                                                 </div>
                                             </button>
+                                        </div>
+
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <span className="text-sm font-semibold text-white block">Video List Layout</span>
+                                                <span className="text-xs text-[#aaaaaa]">Choose between grid and compact layout</span>
+                                            </div>
+                                            <div className="flex bg-[#121212] border border-[#303030] rounded-md p-0.5">
+                                            <button
+                                                onClick={() => handleUpdateDisplay({ videoListMode: 'grid' })}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
+                                                displaySettings.videoListMode === 'grid'
+                                                    ? 'text-white'
+                                                    : 'text-[#aaaaaa] hover:text-white'
+                                                }`}
+                                            >
+                                                <LayoutGrid className="w-3 h-3" />
+                                                Grid
+                                            </button>
+
+                                            <button
+                                                onClick={() => handleUpdateDisplay({ videoListMode: 'compact' })}
+                                                className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] transition-colors cursor-pointer ${
+                                                displaySettings.videoListMode === 'compact'
+                                                    ? 'text-white'
+                                                    : 'text-[#aaaaaa] hover:text-white'
+                                                }`}
+                                            >
+                                                <List className="w-3 h-3" />
+                                                Compact
+                                            </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

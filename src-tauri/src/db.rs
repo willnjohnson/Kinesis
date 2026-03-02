@@ -11,28 +11,13 @@ pub fn init_db(db_path: &str) -> Result<()> {
             handle TEXT,
             length_seconds INTEGER,
             transcript TEXT,
-            view_count TEXT,
-            published_at TEXT,
+            view_count INTEGER DEFAULT 0,
             video_type TEXT DEFAULT 'standard',
+            published_at TEXT,
             date_added DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
     )?;
-
-    // Try to add video_type column if it doesn't exist (for existing databases)
-    // SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN, so we use a workaround
-    let column_exists: i32 = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name = 'video_type'",
-        [],
-        |row| row.get(0),
-    )?;
-    
-    if column_exists == 0 {
-        let _ = conn.execute(
-            "ALTER TABLE videos ADD COLUMN video_type TEXT DEFAULT 'standard'",
-            [],
-        );
-    }
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
@@ -55,12 +40,18 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
     
     let mut stmt = conn.prepare(query)?;
     let video_iter = stmt.query_map([], |row| {
+        let view_count_int: Option<i64> = row.get(4)?;
+        // Format view count for display, or show "Saved" if it's 0 (video was just saved without view count)
+        let view_count_str = match view_count_int {
+            Some(0) | None => "Saved".to_string(),
+            Some(n) => n.to_string(),
+        };
         Ok(Video {
             id: row.get(0)?,
             title: row.get(1)?,
             author: Some(row.get(2)?),
             length_seconds: row.get::<_, Option<i32>>(3)?,
-            view_count: row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "Saved".to_string()),
+            view_count: view_count_str,
             thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", row.get::<_, String>(0)?),
             published_at: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "".to_string()),
             status: Some("saved".to_string()),
@@ -77,7 +68,7 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
     Ok(videos)
 }
 
-pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, length: i32, transcript: &str, view_count: &str, published_at: &str, handle: &str, video_type: &str) -> Result<()> {
+pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, length: i32, transcript: &str, view_count: i64, published_at: &str, handle: &str, video_type: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
     conn.execute(
         "INSERT INTO videos (video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type)
@@ -120,7 +111,7 @@ pub fn get_transcript(db_path: &str, video_id: &str) -> Result<Option<String>> {
     }
 }
 
-pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, String, String, i32, String, String, String, String, String)>> {
+pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, String, String, i32, String, i64, String, String, String)>> {
      let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare("SELECT video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type FROM videos WHERE video_id = ?")?;
     let mut rows = stmt.query(params![video_id])?;
@@ -131,7 +122,7 @@ pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, S
             row.get(2)?,
             row.get(3)?,
             row.get(4)?,
-            row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "".to_string()),
+            row.get::<_, Option<i64>>(5)?.unwrap_or(0),
             row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "".to_string()),
             row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "".to_string()),
             row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "standard".to_string())
