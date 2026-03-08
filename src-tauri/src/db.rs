@@ -19,6 +19,44 @@ pub fn init_db(db_path: &str) -> Result<()> {
         [],
     )?;
 
+    let mut needs_migration = false;
+    {
+        let mut stmt = conn.prepare("PRAGMA table_info(videos)")?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            let col_type: String = row.get(2)?;
+            if name == "view_count" && col_type.to_uppercase() == "TEXT" {
+                needs_migration = true;
+                break;
+            }
+        }
+    }
+
+    if needs_migration {
+        conn.execute_batch(
+            "BEGIN TRANSACTION;
+             ALTER TABLE videos RENAME TO videos_old;
+             CREATE TABLE videos (
+                 video_id TEXT PRIMARY KEY,
+                 title TEXT,
+                 author TEXT,
+                 handle TEXT,
+                 length_seconds INTEGER,
+                 transcript TEXT,
+                 view_count INTEGER DEFAULT 0,
+                 video_type TEXT DEFAULT 'standard',
+                 published_at TEXT,
+                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
+             );
+             INSERT INTO videos (video_id, title, author, handle, length_seconds, transcript, view_count, video_type, published_at, date_added)
+             SELECT video_id, title, author, handle, length_seconds, transcript, CAST(view_count AS INTEGER), video_type, published_at, date_added
+             FROM videos_old;
+             DROP TABLE videos_old;
+             COMMIT;"
+        )?;
+    }
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -40,24 +78,33 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
     
     let mut stmt = conn.prepare(query)?;
     let video_iter = stmt.query_map([], |row| {
-        let view_count_int: Option<i64> = row.get(4)?;
-        // Format view count for display, or show "Saved" if it's 0 (video was just saved without view count)
-        let view_count_str = match view_count_int {
-            Some(0) | None => "Saved".to_string(),
-            Some(n) => n.to_string(),
+        // view_count might be stored as INTEGER or TEXT depending on how it was inserted originally
+        let view_count_str = match row.get::<_, Option<i64>>(4) {
+            Ok(Some(0)) | Ok(None) => "Saved".to_string(),
+            Ok(Some(n)) => n.to_string(),
+            Err(_) => {
+                match row.get::<_, Option<String>>(4) {
+                    Ok(Some(ref s)) if s == "0" => "Saved".to_string(),
+                    Ok(Some(s)) => s,
+                    _ => "Saved".to_string(),
+                }
+            }
         };
         Ok(Video {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            author: Some(row.get(2)?),
-            length_seconds: row.get::<_, Option<i32>>(3)?,
+            id: row.get::<_, String>(0).unwrap_or_default(),
+            title: row.get::<_, Option<String>>(1).unwrap_or(None).unwrap_or_else(|| "Unknown".to_string()),
+            author: row.get::<_, Option<String>>(2).unwrap_or(None),
+            length_seconds: match row.get::<_, Option<i32>>(3) {
+                Ok(v) => v,
+                Err(_) => row.get::<_, Option<String>>(3).unwrap_or(None).and_then(|s| s.parse().ok()),
+            },
             view_count: view_count_str,
-            thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", row.get::<_, String>(0)?),
-            published_at: row.get::<_, Option<String>>(5)?.unwrap_or_else(|| "".to_string()),
+            thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", row.get::<_, String>(0).unwrap_or_default()),
+            published_at: row.get::<_, Option<String>>(5).unwrap_or(None).unwrap_or_else(|| "".to_string()),
             status: Some("saved".to_string()),
-            date_added: row.get::<_, Option<String>>(6)?,
-            handle: row.get::<_, Option<String>>(7)?,
-            video_type: row.get::<_, Option<String>>(8)?,
+            date_added: row.get::<_, Option<String>>(6).unwrap_or(None),
+            handle: row.get::<_, Option<String>>(7).unwrap_or(None),
+            video_type: row.get::<_, Option<String>>(8).unwrap_or(None),
         })
     })?;
 
@@ -117,15 +164,26 @@ pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, S
     let mut rows = stmt.query(params![video_id])?;
     if let Some(row) = rows.next()? {
         Ok(Some((
-            row.get(0)?,
-            row.get(1)?,
-            row.get(2)?,
-            row.get(3)?,
-            row.get(4)?,
-            row.get::<_, Option<i64>>(5)?.unwrap_or(0),
-            row.get::<_, Option<String>>(6)?.unwrap_or_else(|| "".to_string()),
-            row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "".to_string()),
-            row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "standard".to_string())
+            row.get::<_, String>(0).unwrap_or_default(),
+            row.get::<_, Option<String>>(1).unwrap_or(None).unwrap_or_else(|| "Unknown".to_string()),
+            row.get::<_, Option<String>>(2).unwrap_or(None).unwrap_or_else(|| "Unknown".to_string()),
+            match row.get::<_, Option<i32>>(3) {
+                Ok(Some(v)) => v,
+                Err(_) => row.get::<_, Option<String>>(3).unwrap_or(None).and_then(|s| s.parse().ok()).unwrap_or(0),
+                _ => 0,
+            },
+            row.get::<_, Option<String>>(4).unwrap_or(None).unwrap_or_else(|| "".to_string()),
+            match row.get::<_, Option<i64>>(5) {
+                Ok(Some(n)) => n,
+                Err(_) => match row.get::<_, Option<String>>(5) {
+                    Ok(Some(s)) => s.parse::<i64>().unwrap_or(0),
+                    _ => 0,
+                },
+                _ => 0,
+            },
+            row.get::<_, Option<String>>(6).unwrap_or(None).unwrap_or_else(|| "".to_string()),
+            row.get::<_, Option<String>>(7).unwrap_or(None).unwrap_or_else(|| "".to_string()),
+            row.get::<_, Option<String>>(8).unwrap_or(None).unwrap_or_else(|| "standard".to_string())
         )))
     } else {
         Ok(None)

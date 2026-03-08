@@ -40,7 +40,7 @@ impl YouTubeClient {
                     "context": {
                         "client": {
                             "clientName": "ANDROID",
-                            "clientVersion": "19.05.36",
+                            "clientVersion": "21.02.35",
                             "hl": "en",
                             "gl": "US",
                             "utcOffsetMinutes": 0,
@@ -57,7 +57,7 @@ impl YouTubeClient {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         let ua = match self.client_type {
             ClientType::Web => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            ClientType::Android => "com.google.android.youtube/19.05.36 (Linux; U; Android 14; en_US) gzip",
+            ClientType::Android => "com.google.android.youtube/21.02.35 (Linux; U; Android 14; en_US) gzip",
         };
         headers.insert(USER_AGENT, HeaderValue::from_str(ua).unwrap());
         headers

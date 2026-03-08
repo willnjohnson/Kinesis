@@ -1,7 +1,6 @@
-import { X, Trash2, Save, ExternalLink } from 'lucide-react';
+import { X, Trash2, Save } from 'lucide-react';
 import { useState, useEffect, useCallback } from 'react';
 import { checkVideoExists } from '../api';
-import { openUrl } from '@tauri-apps/plugin-opener';
 
 interface Props {
     isOpen: boolean;
