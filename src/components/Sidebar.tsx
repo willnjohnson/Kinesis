@@ -1,6 +1,7 @@
-import { X, Trash2, Save } from 'lucide-react';
-import { useState, useEffect, useCallback } from 'react';
-import { checkVideoExists } from '../api';
+import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, Copy, Check } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { checkVideoExists, summarizeTranscript } from '../api';
+import ReactMarkdown from 'react-markdown';
 
 interface Props {
     isOpen: boolean;
@@ -13,28 +14,36 @@ interface Props {
     onDelete?: () => void;
     onRefetch?: () => void;
     hasApiKey: boolean;
+    pluginSummarizeEnabled: boolean;
 }
 
-export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey }: Props) {
+export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey, pluginSummarizeEnabled }: Props) {
     const [copied, setCopied] = useState(false);
+    const [summaryCopied, setSummaryCopied] = useState(false);
     const [existsInDb, setExistsInDb] = useState(false);
     const [checkingDb, setCheckingDb] = useState(false);
     const [splitPercent, setSplitPercent] = useState(65);
     const [isResizing, setIsResizing] = useState(false);
+    const isResizingRef = useRef(false);
+    const [showSummary, setShowSummary] = useState(false);
+    const [summary, setSummary] = useState<string | null>(null);
+    const [loadingSummary, setLoadingSummary] = useState(false);
+    const [summaryError, setSummaryError] = useState<string | null>(null);
 
     const startResizing = useCallback((e: React.MouseEvent) => {
+        isResizingRef.current = true;
         setIsResizing(true);
         e.preventDefault();
     }, []);
 
     const stopResizing = useCallback(() => {
+        isResizingRef.current = false;
         setIsResizing(false);
     }, []);
 
     const resize = useCallback((e: MouseEvent) => {
-        if (!isResizing) return;
+        if (!isResizingRef.current) return;
 
-        // Calculate position relative to sidebar
         const sidebar = document.getElementById('sidebar-container');
         if (!sidebar) return;
 
@@ -42,20 +51,19 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
         const offsetX = e.clientX - rect.left;
         const newPercent = (offsetX / rect.width) * 100;
 
-        // Constraints
         if (newPercent > 30 && newPercent < 85) {
             setSplitPercent(newPercent);
         }
-    }, [isResizing]);
+    }, []);
 
     useEffect(() => {
         if (isResizing) {
-            window.addEventListener('mousemove', resize);
-            window.addEventListener('mouseup', stopResizing);
+            document.addEventListener('mousemove', resize);
+            document.addEventListener('mouseup', stopResizing);
         }
         return () => {
-            window.removeEventListener('mousemove', resize);
-            window.removeEventListener('mouseup', stopResizing);
+            document.removeEventListener('mousemove', resize);
+            document.removeEventListener('mouseup', stopResizing);
         };
     }, [isResizing, resize, stopResizing]);
 
@@ -78,6 +86,10 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                 setCheckingDb(false);
             });
         }
+        // Reset summary state when video changes
+        setSummary(null);
+        setShowSummary(false);
+        setSummaryError(null);
     }, [videoId, isOpen]);
 
     const handleCopy = useCallback(() => {
@@ -86,6 +98,37 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     }, [transcript]);
+
+    const handleCopySummary = useCallback(() => {
+        if (!summary) return;
+        navigator.clipboard.writeText(summary);
+        setSummaryCopied(true);
+        setTimeout(() => setSummaryCopied(false), 2000);
+    }, [summary]);
+
+    const handleSummarize = useCallback(async () => {
+        if (!transcript || showSummary) return;
+        setLoadingSummary(true);
+        setSummaryError(null);
+        try {
+            const result = await summarizeTranscript(transcript);
+            setSummary(result);
+            setShowSummary(true);
+        } catch (err) {
+            setSummaryError(err instanceof Error ? err.message : String(err));
+        } finally {
+            setLoadingSummary(false);
+        }
+    }, [transcript, showSummary]);
+
+    const handleBackToTranscript = useCallback(() => {
+        setShowSummary(false);
+    }, []);
+
+    const isTranscriptInvalid = !transcript ||
+        transcript.includes("No transcript available") ||
+        transcript.includes("Failed to load") ||
+        transcript.includes("Could not load");
 
     return (
         <>
@@ -120,7 +163,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                             className="p-6 border-r border-gray-900 bg-black/20 flex flex-col justify-center"
                         >
                             {videoId && isOpen ? (
-                                <div className="aspect-video w-full bg-black rounded-lg overflow-hidden shadow-2xl border border-gray-800">
+                                <div className={`aspect-video w-full bg-black rounded-lg overflow-hidden shadow-2xl border border-gray-800 ${isResizing ? 'pointer-events-none' : ''}`}>
                                     <iframe
                                         width="100%"
                                         height="100%"
@@ -150,9 +193,77 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                         {/* Transcript Side */}
                         <div
                             style={{ width: `${100 - splitPercent}%` }}
-                            className="overflow-y-auto p-8 text-[#aaaaaa] text-sm leading-relaxed whitespace-pre-wrap font-sans selection:bg-[#3f3f3f] custom-scrollbar bg-[#121212]"
+                            className="overflow-y-auto p-8 text-[#aaaaaa] text-sm leading-relaxed font-sans selection:bg-[#3f3f3f] custom-scrollbar bg-[#121212]"
                         >
-                            {loading ? (
+                            {/* Header with Sparkle button */}
+                            <div className="flex justify-between items-center mb-4">
+                                <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#aaaaaa]">
+                                {showSummary ? (
+                                    <>
+                                    <Sparkles className="w-3 h-3 inline" /> AI Summary
+                                    </>
+                                ) : (
+                                    "Transcript"
+                                )}
+                                </span>
+                                {showSummary ? (
+                                    <button
+                                        onClick={handleBackToTranscript}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] border border-[#303030] text-[#aaaaaa] rounded-lg hover:text-white hover:bg-[#3f3f3f] transition-colors text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                                    >
+                                        <ArrowLeft className="w-3 h-3" />
+                                        Back to Transcript
+                                    </button>
+                                ) : (
+                                    pluginSummarizeEnabled && (
+                                        <button
+                                            onClick={handleSummarize}
+                                            disabled={loadingSummary || loading || !transcript || transcript.includes("No transcript") || transcript.includes("Failed to load")}
+                                            title="Generate AI summary with Ollama"
+                                            className="summarize-btn flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-500 hover:to-blue-500 transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-default cursor-pointer shadow-lg shadow-purple-900/20"
+                                        >
+                                            {loadingSummary ? (
+                                                <>
+                                                    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+                                                        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                                    </svg>
+                                                    Generating...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Sparkles className="w-3 h-3" />
+                                                    Summarize
+                                                </>
+                                            )}
+                                        </button>
+                                    )
+                                )}
+                            </div>
+
+                            {/* Error message */}
+                            {summaryError && (
+                                <div className="mb-4 p-3 bg-red-900/20 border border-red-500/30 rounded-lg text-red-400 text-xs">
+                                    {summaryError}
+                                </div>
+                            )}
+
+                            {/* Content */}
+                            {showSummary && summary ? (
+                                <div className="flex flex-col gap-3">
+                                    <button
+                                        onClick={handleCopySummary}
+                                        className="self-start flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600 hover:text-red-300 transition-colors"
+                                        title="Copy AI Summary to clipboard"
+                                    >
+                                        {summaryCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                                        {summaryCopied ? "Copied" : "Copy Summary"}
+                                    </button>
+                                    <div className="text-gray-300 leading-relaxed prose prose-invert prose-sm max-w-none">
+                                        <ReactMarkdown>{summary}</ReactMarkdown>
+                                    </div>
+                                </div>
+                            ) : loading ? (
                                 <div className="flex flex-col justify-start items-center h-40 pt-10 text-gray-600">
                                     <svg className="w-8 h-8 animate-spin" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                                         <circle cx="12" cy="3" r="1.5" fill="currentColor" opacity="0.1" />
@@ -166,66 +277,57 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                     </svg>
                                     <p className="text-[10px] uppercase tracking-[0.2em] font-bold mt-4">Analysing segments</p>
                                 </div>
+                            ) : !isTranscriptInvalid ? (
+                                <div className="text-gray-300 leading-relaxed prose prose-invert prose-sm max-w-none">
+                                    <ReactMarkdown>{transcript}</ReactMarkdown>
+                                </div>
                             ) : (
-                                transcript && !transcript.includes("No transcript available") && !transcript.includes("Failed to load") && !transcript.includes("Could not load") ? (
-                                    <div className="text-gray-300 leading-relaxed">
-                                        {transcript}
-                                    </div>
-                                ) : (
-                                    <div className="text-center text-gray-600 mt-10 flex flex-col items-center gap-4">
-                                        <p className="text-xs uppercase tracking-widest font-bold">{transcript || "No transcript data available."}</p>
-                                        {onRefetch && (
-                                            <button onClick={onRefetch} className="px-4 py-1.5 bg-gray-800 text-gray-300 rounded border border-gray-700 hover:bg-gray-700 hover:text-white transition-colors text-[10px] font-bold uppercase tracking-widest cursor-pointer mt-2">
-                                                Try Again
-                                            </button>
-                                        )}
-                                    </div>
-                                )
+                                <div className="text-center text-gray-600 mt-10 flex flex-col items-center gap-4">
+                                    <p className="text-xs uppercase tracking-widest font-bold">{transcript || "No transcript data available."}</p>
+                                    {onRefetch && (
+                                        <button
+                                            onClick={onRefetch}
+                                            title="Try Again"
+                                            className="p-3 bg-gray-800/40 text-gray-400 rounded-full border border-gray-700/50 hover:bg-gray-700/60 hover:text-white transition-all cursor-pointer mt-2 group"
+                                        >
+                                            <RotateCcw className="w-5 h-5 group-hover:rotate-[-45deg] transition-transform duration-300" />
+                                        </button>
+                                    )}
+                                </div>
                             )}
                         </div>
                     </div>
 
                     <div className="p-8 border-t border-[#303030] flex gap-4 bg-[#0f0f0f]">
-                        {(() => {
-                            const isTranscriptInvalid = !transcript ||
-                                transcript.includes("No transcript available") ||
-                                transcript.includes("Failed to load") ||
-                                transcript.includes("Could not load");
+                        <button
+                            onClick={handleCopy}
+                            disabled={loading || isTranscriptInvalid}
+                            className={`flex-1 bg-[#272727] border border-[#303030] text-[#aaaaaa] py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 ${loading || isTranscriptInvalid ? 'cursor-default' : 'hover:text-white hover:bg-[#3f3f3f] cursor-pointer'}`}
+                        >
+                            {copied ? "Copied Transcript" : "Copy Transcript"}
+                        </button>
 
-                            return (
-                                <>
-                                    <button
-                                        onClick={handleCopy}
-                                        disabled={loading || isTranscriptInvalid}
-                                        className={`flex-1 bg-[#272727] border border-[#303030] text-[#aaaaaa] py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 ${loading || isTranscriptInvalid ? 'cursor-default' : 'hover:text-white hover:bg-[#3f3f3f] cursor-pointer'}`}
-                                    >
-                                        {copied ? "Copied Transcript" : "Copy Transcript"}
-                                    </button>
-
-                                    {existsInDb && onDelete ? (
-                                        <button
-                                            onClick={onDelete}
-                                            disabled={loading || isTranscriptInvalid || checkingDb || !hasApiKey}
-                                            title={!hasApiKey ? "API not imported" : isTranscriptInvalid ? "No transcript to delete" : "Delete from library"}
-                                            className={`flex-1 bg-red-900/10 border border-red-900/20 text-red-500 py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 flex items-center justify-center gap-2 ${loading || isTranscriptInvalid || checkingDb || !hasApiKey ? 'cursor-default' : 'hover:bg-red-900/20 hover:border-red-500/50 cursor-pointer'}`}
-                                        >
-                                            <Trash2 className="w-3.5 h-3.5" />
-                                            Delete from library
-                                        </button>
-                                    ) : (
-                                        <button
-                                            onClick={onSave}
-                                            disabled={loading || isTranscriptInvalid || checkingDb || !hasApiKey}
-                                            title={!hasApiKey ? "API not imported" : isTranscriptInvalid ? "No transcript to save" : "Save to library"}
-                                            className={`flex-1 bg-white text-black py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 flex items-center justify-center gap-2 ${loading || isTranscriptInvalid || checkingDb || !hasApiKey ? 'cursor-default' : 'hover:bg-[#e5e5e5] cursor-pointer'}`}
-                                        >
-                                            <Save className="w-3.5 h-3.5" />
-                                            Save to library
-                                        </button>
-                                    )}
-                                </>
-                            );
-                        })()}
+                        {existsInDb && onDelete ? (
+                            <button
+                                onClick={onDelete}
+                                disabled={loading || isTranscriptInvalid || checkingDb || !hasApiKey}
+                                title={!hasApiKey ? "API not imported" : isTranscriptInvalid ? "No transcript to delete" : "Delete from library"}
+                                className={`flex-1 bg-red-900/10 border border-red-900/20 text-red-500 py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 flex items-center justify-center gap-2 ${loading || isTranscriptInvalid || checkingDb || !hasApiKey ? 'cursor-default' : 'hover:bg-red-900/20 hover:border-red-500/50 cursor-pointer'}`}
+                            >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                Delete from library
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onSave}
+                                disabled={loading || isTranscriptInvalid || checkingDb || !hasApiKey}
+                                title={!hasApiKey ? "API not imported" : isTranscriptInvalid ? "No transcript to save" : "Save to library"}
+                                className={`flex-1 bg-white text-black py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 flex items-center justify-center gap-2 ${loading || isTranscriptInvalid || checkingDb || !hasApiKey ? 'cursor-default' : 'hover:bg-[#e5e5e5] cursor-pointer'}`}
+                            >
+                                <Save className="w-3.5 h-3.5" />
+                                Save to library
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

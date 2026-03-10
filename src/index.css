@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -71,6 +72,10 @@
 :root:not(.dark) .hover\:bg-gray-700:hover { background-color: #cccccc !important; }
 :root:not(.dark) .hover\:bg-\[\#e5e5e5\]:hover { background-color: #d5d5d5 !important; }
 
+/* Gradient buttons - always white text */
+:root:not(.dark) .summarize-btn { color: #ffffff !important; }
+:root:not(.dark) .summarize-btn svg { color: #ffffff !important; }
+
 /* Input fields */
 :root:not(.dark) input,
 :root:not(.dark) select {
@@ -123,6 +128,21 @@
 
 /* Sidebar - transcript text */
 :root:not(.dark) .text-gray-300 { color: #333333 !important; }
+
+/* Sidebar - markdown content */
+:root:not(.dark) .prose { color: #333333 !important; }
+:root:not(.dark) .prose h1 { color: #111111 !important; }
+:root:not(.dark) .prose h2 { color: #222222 !important; }
+:root:not(.dark) .prose h3 { color: #333333 !important; }
+:root:not(.dark) .prose strong { color: #111111 !important; }
+:root:not(.dark) .prose code { color: #333333 !important; }
+
+/* Reduce markdown spacing */
+.prose p { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+.prose ul { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
+.prose li { margin-top: 0.1rem !important; margin-bottom: 0.1rem !important; }
+.prose h1, .prose h2, .prose h3 { margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; }
+.prose ul li, .prose ol li { padding-top: 0 !important; padding-bottom: 0 !important; }
 
 /* Sidebar - Save to Library button */
 :root:not(.dark) .bg-white.text-black { background-color: #333333 !important; color: #ffffff !important; }

@@ -1,167 +1,30 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from "@tauri-apps/api/core";
 
 export interface Video {
     id: string;
     title: string;
     thumbnail: string;
-    publishedAt: string;
-    viewCount: string;
     author?: string;
-    handle?: string;
-    status?: 'exists' | 'saved';
+    description?: string;
+    duration?: string;
+    views?: string;
+    publishedTime?: string;
+    viewCount: string;
+    publishedAt: string;
     dateAdded?: string;
-    lengthSeconds?: number;
-    videoType?: 'short' | 'standard';
+    handle?: string;
 }
 
-interface ChannelInfo {
-    channelId: string;
-    channelName: string;
-}
-
-export interface VideoResponse {
+export interface SearchResponse {
     videos: Video[];
     continuation: string | null;
 }
 
-/**
- * Resolve a YouTube handle or ID to a channel ID.
- */
-export async function getUploadsPlaylistId(handle: string): Promise<string> {
-    try {
-        const channelInfo = await invoke<ChannelInfo>('resolve_channel', { query: handle });
-        return channelInfo.channelId;
-    } catch (error: any) {
-        throw new Error(error || 'Could not find channel. Use @handle or channel ID.');
-    }
-}
-
-/**
- * Fetch videos from a channel or playlist.
- */
-export async function getVideos(id: string, isPlaylist: boolean = false, continuation: string | null = null): Promise<VideoResponse> {
-    try {
-        // Python backend fetches all videos for playlist/channel, search is single page.
-        // Continuation logic currently disabled/noop in backend for this implementation.
-        const res = await invoke<VideoResponse>('fetch_videos', { id, isPlaylist, continuation });
-        return res;
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch videos');
-    }
-}
-
-/**
- * Fetch channel videos using YouTube Data API v3.
- */
-export async function fetchChannelVideosV3(query: string, continuation: string | null = null): Promise<VideoResponse> {
-    try {
-        return await invoke<VideoResponse>('fetch_channel_videos_v3', { query, continuation });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch channel videos');
-    }
-}
-
-/**
- * Fetch direct video info for a single ID.
- * Uses kinesis-cli -i (fast metadata)
- */
-export async function getVideoInfo(videoId: string): Promise<Video> {
-    try {
-        return await invoke<Video>('fetch_video_info', { videoId });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch video info');
-    }
-}
-
-/**
- * Fetch transcript for a video.
- * Uses manager.py (fetches and caches)
- */
-export async function getTranscript(videoId: string): Promise<string> {
-    try {
-        return await invoke('fetch_transcript', { videoId });
-    } catch (e: any) {
-        return typeof e === 'string' ? e : "Could not load transcript.";
-    }
-}
-
-/**
- * Save video metadata and transcript to database.
- */
-export async function saveVideo(videoId: string): Promise<Video> {
-    try {
-        return await invoke<Video>('save_video', { videoId });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to save video');
-    }
-}
-
-/**
- * Search YouTube videos.
- */
-export async function searchVideos(query: string): Promise<VideoResponse> {
-    try {
-        return await invoke<VideoResponse>('search_videos', { query });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to search videos');
-    }
-}
-
-export async function getSavedVideos(videoType?: string): Promise<VideoResponse> {
-    try {
-        const res = await invoke<VideoResponse>('fetch_saved_videos', { videoType: videoType || null });
-        return res;
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch saved videos');
-    }
-}
-
-export async function deleteVideo(id: string): Promise<string> {
-    try {
-        return await invoke<string>('delete_video', { videoId: id });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to delete video');
-    }
-}
-
-export async function checkVideoExists(id: string): Promise<boolean> {
-    try {
-        return await invoke<boolean>('check_video_exists', { videoId: id });
-    } catch (error: any) {
-        return false;
-    }
-}
-
-export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
-    try {
-        return await invoke<any[]>('bulk_save_videos', { videoIds: ids });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to bulk save videos');
-    }
-}
-
-export async function getApiKey(): Promise<string | null> {
-    try {
-        return await invoke<string | null>('get_api_key');
-    } catch {
-        return null;
-    }
-}
-
-export async function setApiKey(apiKey: string): Promise<void> {
-    try {
-        await invoke('set_api_key', { apiKey });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to set API key');
-    }
-}
-
-export async function removeApiKey(): Promise<void> {
-    try {
-        await invoke('remove_api_key');
-    } catch (error: any) {
-        throw new Error(error || 'Failed to remove API key');
-    }
+export interface DbDetails {
+    path: string;
+    size_bytes: number;
+    video_count: number;
+    history_count: number;
 }
 
 export interface DisplaySettings {
@@ -171,42 +34,137 @@ export interface DisplaySettings {
     videoListMode: 'grid' | 'compact';
 }
 
-export interface DbDetails {
-    path: string;
-    size_bytes: number;
-    video_count: number;
+export interface HistoryEntry {
+    id: number;
+    query: string;
+    searchedAt: string;
+}
+
+export interface ChannelInfo {
+    channelId: string;
+    channelName: string;
+}
+
+export async function getVideos(id: string, isPlaylist: boolean, continuation?: string | null): Promise<SearchResponse> {
+    return await invoke("fetch_videos", { id, is_playlist: isPlaylist, continuation });
+}
+
+export async function getTranscript(id: string): Promise<string> {
+    return await invoke("fetch_transcript", { videoId: id });
+}
+
+export async function summarizeTranscript(transcript: string): Promise<string> {
+    return await invoke("summarize_transcript", { transcript });
+}
+
+export async function getVideoInfo(id: string): Promise<Video> {
+    return await invoke("fetch_video_info", { videoId: id });
+}
+
+export async function saveVideo(id: string): Promise<{ status: 'success' | 'exists' }> {
+    return await invoke("save_video", { videoId: id });
+}
+
+export async function searchVideos(query: string): Promise<SearchResponse> {
+    return await invoke("search_videos", { query });
+}
+
+export async function getSavedVideos(videoType?: string): Promise<SearchResponse> {
+    return await invoke("fetch_saved_videos", { video_type: videoType });
+}
+
+export async function deleteVideo(id: string): Promise<void> {
+    await invoke("delete_video", { videoId: id });
+}
+
+export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
+    return await invoke("bulk_save_videos", { video_ids: ids });
+}
+
+export async function fetchChannelVideosV3(handle: string, continuationToken?: string | null): Promise<SearchResponse> {
+    return await invoke("fetch_channel_videos_v3", { query: handle, continuation: continuationToken });
+}
+
+export async function getApiKey(): Promise<string | null> {
+    return await invoke("get_api_key");
+}
+
+export async function setApiKey(key: string): Promise<void> {
+    await invoke("set_api_key", { api_key: key });
+}
+
+export async function removeApiKey(): Promise<void> {
+    await invoke("remove_api_key");
 }
 
 export async function openDbLocation(): Promise<void> {
-    try {
-        await invoke('open_db_location');
-    } catch (error: any) {
-        throw new Error(error || 'Failed to open DB location');
-    }
+    await invoke("open_db_location");
 }
 
 export async function getDbDetails(): Promise<DbDetails> {
-    try {
-        return await invoke<DbDetails>('get_db_details');
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch DB details');
-    }
+    return await invoke("get_db_details");
 }
 
 export async function getDisplaySettings(): Promise<DisplaySettings> {
-    try {
-        return await invoke<DisplaySettings>('get_display_settings');
-    } catch (error: any) {
-        throw new Error(error || 'Failed to fetch display settings');
-    }
+    return await invoke("get_display_settings");
 }
 
 export async function setDisplaySettings(settings: DisplaySettings): Promise<void> {
-    try {
-        await invoke('set_display_settings', { settings });
-    } catch (error: any) {
-        throw new Error(error || 'Failed to set display settings');
-    }
+    await invoke("set_display_settings", { settings });
 }
 
+export async function getSearchHistory(limit: number): Promise<HistoryEntry[]> {
+    return await invoke("get_search_history", { limit });
+}
 
+export async function addSearchHistory(query: string): Promise<void> {
+    await invoke("add_search_history", { query });
+}
+
+export async function clearHistoryBeforeDate(date: string): Promise<void> {
+    await invoke("clear_history_before_date", { date });
+}
+
+export async function deleteHistoryEntry(id: number): Promise<void> {
+    await invoke("delete_history_entry", { id });
+}
+
+export async function clearAllHistory(): Promise<void> {
+    await invoke("clear_all_history");
+}
+
+export async function checkVideoExists(id: string): Promise<boolean> {
+    return await invoke("check_video_exists", { videoId: id });
+}
+
+export async function resolveChannel(query: string): Promise<ChannelInfo> {
+    return await invoke("resolve_channel", { query });
+}
+
+export async function fetchViewCount(videoId: string): Promise<string> {
+    return await invoke("fetch_view_count", { videoId });
+}
+
+export async function getSetting(key: string): Promise<string | null> {
+    return await invoke("get_setting", { key });
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+    await invoke("set_setting", { key, value });
+}
+
+export async function checkOllama(): Promise<boolean> {
+    return await invoke("check_ollama");
+}
+
+export async function pullModel(): Promise<void> {
+    await invoke("pull_model");
+}
+
+export async function deleteModel(): Promise<void> {
+    await invoke("delete_model");
+}
+
+export async function installOllama(): Promise<void> {
+    await invoke("install_ollama");
+}

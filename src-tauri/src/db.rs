@@ -64,6 +64,16 @@ pub fn init_db(db_path: &str) -> Result<()> {
         )",
         [],
     )?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS search_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            query       TEXT NOT NULL,
+            searched_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(query)
+        )",
+        [],
+    )?;
     Ok(())
 }
 
@@ -78,7 +88,6 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
     
     let mut stmt = conn.prepare(query)?;
     let video_iter = stmt.query_map([], |row| {
-        // view_count might be stored as INTEGER or TEXT depending on how it was inserted originally
         let view_count_str = match row.get::<_, Option<i64>>(4) {
             Ok(Some(0)) | Ok(None) => "Saved".to_string(),
             Ok(Some(n)) => n.to_string(),
@@ -116,6 +125,7 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
 }
 
 pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, length: i32, transcript: &str, view_count: i64, published_at: &str, handle: &str, video_type: &str) -> Result<()> {
+    let video_id = video_id.trim();
     let conn = Connection::open(db_path)?;
     conn.execute(
         "INSERT INTO videos (video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type)
@@ -148,6 +158,7 @@ pub fn check_video_exists(db_path: &str, video_id: &str) -> Result<bool> {
 }
 
 pub fn get_transcript(db_path: &str, video_id: &str) -> Result<Option<String>> {
+    let video_id = video_id.trim();
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare("SELECT transcript FROM videos WHERE video_id = ?")?;
     let mut rows = stmt.query(params![video_id])?;
@@ -226,6 +237,13 @@ pub fn delete_setting(db_path: &str, key: &str) -> Result<()> {
 pub fn get_db_stats(db_path: &str) -> Result<i64> {
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM videos")?;
+    let count: i64 = stmt.query_row([], |row| row.get(0))?;
+    Ok(count)
+}
+
+pub fn get_history_stats(db_path: &str) -> Result<i64> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM search_history")?;
     let count: i64 = stmt.query_row([], |row| row.get(0))?;
     Ok(count)
 }

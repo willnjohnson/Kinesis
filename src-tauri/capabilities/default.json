@@ -13,13 +13,11 @@
                 {
                     "name": "python",
                     "cmd": "python",
-                    "args": true,
-                    "sidecar": false
+                    "args": true
                 }
             ]
         },
         "shell:allow-open",
-        "openurl:allow-open-url",
         "opener:allow-open-url",
         "opener:default"
     ]

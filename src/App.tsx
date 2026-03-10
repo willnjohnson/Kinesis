@@ -1,14 +1,28 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { getVideos, getTranscript, getVideoInfo, saveVideo, searchVideos, getSavedVideos, deleteVideo, bulkSaveVideos, fetchChannelVideosV3, getDisplaySettings, type Video } from "./api";
+import {
+    getVideos,
+    getTranscript,
+    getVideoInfo,
+    saveVideo,
+    searchVideos,
+    getSavedVideos,
+    deleteVideo,
+    bulkSaveVideos,
+    fetchChannelVideosV3,
+    getDisplaySettings,
+    setDisplaySettings,
+    getApiKey,
+    getSetting,
+    type Video
+} from "./api";
 import { SearchBar, type Facet } from "./components/SearchBar";
 import { VideoList } from "./components/VideoList";
 import { Sidebar } from "./components/Sidebar";
-import KinesisLogo from "./assets/Kinesis.png";
+import KinesisLogo from "./assets/kinesis.png";
 import { Notification, type NotificationType } from "./components/Notification";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { SettingsModal } from "./components/SettingsModal";
-import { Settings, ChevronUp, ArrowDown } from "lucide-react";
-import { getApiKey } from "./api";
+import { Settings, ChevronUp, LayoutGrid, List } from "lucide-react";
 
 type ViewMode = 'search' | 'library';
 
@@ -48,16 +62,17 @@ function App() {
 
     // Scroll to top state
     const [showScrollTop, setShowScrollTop] = useState(false);
-    const [showScrollBottom, setShowScrollBottom] = useState(false);
 
     // Settings state
     const [showSettings, setShowSettings] = useState(false);
     const [hasApiKey, setHasApiKey] = useState(false);
     const [videoTypeFilter] = useState<string | undefined>(undefined);
     const [videoListMode, setVideoListMode] = useState<'grid' | 'compact'>('grid');
+    const [pluginSummarizeEnabled, setPluginSummarizeEnabled] = useState(false);
 
     useEffect(() => {
         getApiKey().then(k => setHasApiKey(!!k));
+        getSetting('plugin_summarize_enabled').then(v => setPluginSummarizeEnabled(v === 'true'));
     }, []);
 
     // Load and apply theme on startup
@@ -88,14 +103,16 @@ function App() {
         window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
-    const scrollToBottom = () => {
-        window.scrollTo({
-            top: document.documentElement.scrollHeight,
-            behavior: 'smooth'
-        });
-        setShowScrollBottom(false);
+    const toggleVideoListMode = async () => {
+        const newMode = videoListMode === 'grid' ? 'compact' : 'grid';
+        setVideoListMode(newMode);
+        try {
+            const currentSettings = await getDisplaySettings();
+            await setDisplaySettings({ ...currentSettings, videoListMode: newMode });
+        } catch (e) {
+            console.error("Failed to save video list mode", e);
+        }
     };
-
 
     const refreshLibrary = useCallback(async () => {
         setLoading(true);
@@ -125,7 +142,6 @@ function App() {
         }
     }, [videoTypeFilter, viewMode, refreshLibrary]);
 
-
     const handleSearch = async (query: string) => {
         if (viewMode === 'library') {
             setLibrarySearch(query);
@@ -141,7 +157,6 @@ function App() {
         setSearchQuery(query);
 
         try {
-            // Improved facet parsing: matches type:value or type:"value with spaces"
             const facetRegex = /([a-z_]+):(?:"([^"]*)"|([^ ]*))/g;
             let match;
             let forcedType: 'handle' | 'playlist' | 'video' | null = null;
@@ -157,7 +172,6 @@ function App() {
                 effectiveQuery = effectiveQuery.replace(match[0], '').trim();
             }
 
-            // Fallback: If we have a forced type and effectiveQuery is empty, use the value from the badge
             const targetId = effectiveQuery || facetValue || "";
 
             const playlistIdMatch = targetId.match(/[?&]list=([^#&?]+)/);
@@ -237,7 +251,6 @@ function App() {
                 if (uniqueVideos.length === 0) setError("No videos found for this search.");
             }
 
-            // After successful search, switch SearchBar to filter_search:
             setActiveFacets([{ type: 'filter_search', value: '' }]);
             setActiveText("");
             setSearchQuery("filter_search:");
@@ -299,7 +312,6 @@ function App() {
                 token = res.continuation;
                 setContinuationToken(token || null);
                 if (!token) break;
-                // Optional: add a small delay to avoid rate limits
                 await new Promise(r => setTimeout(r, 100));
             }
         } catch (e) {
@@ -328,7 +340,6 @@ function App() {
         const textTerms = queryToUse.replace(facetRegex, '').trim().toLowerCase().split(' ').filter(t => t);
         const filterBadge = facets.find(f => f.type === 'filter_search');
 
-        // Only filter locally if filter_search badge is active
         if (!filterBadge) return sourceVideos;
 
         const badgeValue = filterBadge.value.toLowerCase();
@@ -358,8 +369,8 @@ function App() {
             } else {
                 setTranscript(text);
             }
-        } catch (e) {
-            setTranscript("Failed to load transcript.");
+        } catch (e: any) {
+            setTranscript(`Failed to load transcript: ${e.message || String(e)}`);
         } finally {
             setLoadingTranscript(false);
         }
@@ -452,8 +463,6 @@ function App() {
         }
     };
 
-
-
     return (
         <div className="min-h-screen bg-[#0f0f0f] text-white font-sans selection:bg-red-500/30 selection:text-white pb-20 select-none">
             <div className="container mx-auto px-4 pt-4">
@@ -461,9 +470,12 @@ function App() {
                     <div className="flex items-center justify-between mb-12 relative max-w-7xl mx-auto border-b border-[#272727] pb-6">
                         <div className="flex items-center gap-3">
                             <img src={KinesisLogo} alt="Kinesis" className="w-8 h-8" />
-                            <h1 className="text-2xl font-bold tracking-tighter text-white">
-                                <span className="text-red-500">Kin</span>esis
-                            </h1>
+                            <div className="flex flex-col">
+                                <h1 className="text-2xl font-bold tracking-tighter text-white">
+                                    <span className="text-red-500">Kin</span>esis
+                                </h1>
+                                <span className="text-xs text-gray-500 -mt-0.5">YouTube Transcript Manager</span>
+                            </div>
                         </div>
 
                         {/* View Toggle as Chips */}
@@ -481,8 +493,15 @@ function App() {
                                 Library
                             </button>
                             <button
+                                onClick={toggleVideoListMode}
+                                className="p-2 ml-2 text-gray-400 hover:text-white transition-all cursor-pointer bg-[#272727] rounded-lg"
+                                title={videoListMode === 'grid' ? "Switch to Compact View" : "Switch to Grid View"}
+                            >
+                                {videoListMode === 'grid' ? <List className="w-5 h-5" /> : <LayoutGrid className="w-5 h-5" />}
+                            </button>
+                            <button
                                 onClick={() => setShowSettings(true)}
-                                className="p-2 ml-2 text-gray-400 hover:text-white transition-all cursor-pointer"
+                                className="p-2 ml-1 text-gray-400 hover:text-white transition-all cursor-pointer"
                                 title="Settings"
                             >
                                 <Settings className="w-5 h-5" />
@@ -577,13 +596,22 @@ function App() {
                 onDelete={handleDeleteFromSidebar}
                 onRefetch={selectedVideo ? () => handleSelectVideo(selectedVideo) : undefined}
                 hasApiKey={hasApiKey}
+                pluginSummarizeEnabled={pluginSummarizeEnabled}
             />
 
             <SettingsModal
                 isOpen={showSettings}
                 onClose={() => setShowSettings(false)}
                 onStatusChange={setHasApiKey}
+                onThemeChange={(_theme) => {
+                    // Theme class is already toggled in modal
+                }}
                 onVideoListModeChange={setVideoListMode}
+                currentVideoListMode={videoListMode}
+                onPluginsChange={() => {
+                    // Refresh plugin states
+                    getSetting('plugin_summarize_enabled').then(v => setPluginSummarizeEnabled(v === 'true'));
+                }}
             />
 
             {notification && (
@@ -612,18 +640,6 @@ function App() {
                 title="Back to Top"
             >
                 <ChevronUp className="w-6 h-6" style={{ color: '#ffffff' }} />
-            </button>
-
-            {/* Scroll to Bottom (Post-Load Hint) */}
-            <button
-                onClick={scrollToBottom}
-                className={`fixed bottom-12 left-6 px-4 py-3 bg-[#121212] border border-[#303030] hover:bg-[#222222] hover:border-[#505050] text-[#aaaaaa] hover:text-white rounded-lg shadow-xl transition-all duration-200 cursor-pointer z-39 flex items-center gap-3 active:scale-95 ${showScrollBottom
-                    ? "opacity-100"
-                    : "opacity-0 pointer-events-none"
-                    }`}
-            >
-                <ArrowDown className="w-4 h-4" />
-                <span className="text-xs font-bold uppercase tracking-widest">Scroll to Bottom</span>
             </button>
         </div>
     );

@@ -1,4 +1,4 @@
-import { Save, Trash2, Bookmark } from 'lucide-react';
+import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users } from 'lucide-react';
 import { type Video } from '../api';
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
@@ -40,25 +40,22 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                 if (validA && validB) {
                     cmp = timeA - timeB;
                 } else if (!validA && !validB) {
-                    // Fallback to title comparison if both dates are invalid/missing
                     cmp = a.title.localeCompare(b.title);
                 } else {
                     cmp = validA ? 1 : -1;
                 }
             }
-            // Ensure stable sort by using ID as tie-breaker
             if (cmp === 0) return a.id.localeCompare(b.id);
             return sortOrder === 'asc' ? cmp : -cmp;
         });
     }, [videos, sortField, sortOrder]);
 
-    const toggleSort = (field: SortField) => {
-        if (sortField === field) {
-            setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc');
-        } else {
-            setSortField(field);
-            setSortOrder('desc');
-        }
+    const handleSortField = (field: SortField) => {
+        setSortField(field);
+    };
+
+    const toggleSortOrder = () => {
+        setSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
     };
 
     if (videos.length === 0) return null;
@@ -94,26 +91,45 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                         </button>
                     )}
 
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => toggleSort('date')}
-                            className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${sortField === 'date' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
-                        >
-                            Date Uploaded
-                        </button>
-                        {videos.some(v => v.dateAdded) && (
+                    <div className="flex items-center bg-[#1a1a1a] p-1 rounded-xl border border-[#272727] gap-1 shadow-inner">
+                        <div className="flex gap-2">
                             <button
-                                onClick={() => toggleSort('added')}
-                                className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${sortField === 'added' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
+                                onClick={() => handleSortField('date')}
+                                className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${sortField === 'date' ? 'bg-white text-black shadow-lg scale-[1.02]' : 'text-[#888888] hover:text-white hover:bg-white/5'}`}
                             >
-                                Date Bookmarked
+                                <Calendar className="w-3.5 h-3.5" />
+                                Date Added
                             </button>
-                        )}
+                            {videos.some(v => v.dateAdded) && (
+                                <button
+                                    onClick={() => handleSortField('added')}
+                                    className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${sortField === 'added' ? 'bg-white text-black shadow-lg scale-[1.02]' : 'text-[#888888] hover:text-white hover:bg-white/5'}`}
+                                >
+                                    <Bookmark className="w-3.5 h-3.5" />
+                                    Date Bookmarked
+                                </button>
+                            )}
+                            <button
+                                onClick={() => handleSortField('popularity')}
+                                className={`px-3 py-1.5 rounded-lg text-[13px] font-bold transition-all cursor-pointer flex items-center gap-2 ${sortField === 'popularity' ? 'bg-white text-black shadow-lg scale-[1.02]' : 'text-[#888888] hover:text-white hover:bg-white/5'}`}
+                            >
+                                <Users className="w-3.5 h-3.5" />
+                                Views
+                            </button>
+                        </div>
+
+                        <div className="w-px h-4 bg-[#272727] mx-1" />
+
                         <button
-                            onClick={() => toggleSort('popularity')}
-                            className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors cursor-pointer ${sortField === 'popularity' ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
+                            onClick={toggleSortOrder}
+                            className="p-1.5 rounded-lg text-[#888888] hover:text-white hover:bg-white/5 transition-all cursor-pointer group flex items-center gap-1"
+                            title='Sort Order ↑ ↓'
                         >
-                            Views
+                            {sortOrder === 'desc' ? (
+                                <ArrowDown className="w-4 h-4 group-active:translate-y-0.5 transition-transform" />
+                            ) : (
+                                <ArrowUp className="w-4 h-4 group-active:-translate-y-0.5 transition-transform" />
+                            )}
                         </button>
                     </div>
                 </div>
@@ -162,8 +178,8 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                                     </div>
 
                                     {video.dateAdded && (
-                                        <div className="flex items-center gap-1 mt-0.5 text-yellow-400 font-medium text-[10px]">
-                                            <Bookmark className="w-2.5 h-2.5 fill-yellow-400" />
+                                        <div className="flex items-center gap-1 mt-0.5 text-yellow-600 font-medium text-[10px]">
+                                            <Bookmark className="w-2.5 h-2.5 fill-yellow-600" />
                                             <span title={`Timestamp: ${video.dateAdded}`}>
                                                 {formatDate(video.dateAdded)}
                                             </span>
@@ -202,33 +218,23 @@ function formatDate(dateStr: string) {
 }
 
 function parseViewCount(count: string): number {
-    // "Saved" is a special case - video was saved but we don't have view count
     if (!count || count === "Saved") return 0;
     const clean = count.toLowerCase().replace(/,/g, '').trim();
-
-    // Check for explicit multipliers
     let multiplier = 1;
     if (clean.includes('k')) multiplier = 1000;
     else if (clean.includes('m')) multiplier = 1000000;
     else if (clean.includes('b')) multiplier = 1000000000;
-
-    // Extract base number
     const num = parseFloat(clean.replace(/[^0-9.]/g, ''));
     if (isNaN(num)) return 0;
-
     return Math.floor(num * multiplier);
 }
 
-function formatViewCount(count: string) {
-    // "Saved" is a special case - return as-is
+function formatViewCount(count: string): string {
     if (count === "Saved") return 'Saved';
     if (!count) return '0';
-
-    // If it's already a formatted string like "1.2M views", just cleanup
     if (count.toLowerCase().includes('view')) {
         return count.split(' ')[0];
     }
-
     const n = parseViewCount(count);
     if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';

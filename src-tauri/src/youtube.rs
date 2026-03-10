@@ -251,7 +251,7 @@ pub async fn extract_handle_from_channel_id(channel_id: &str) -> Result<Option<S
     // Pattern 3: external_id in script
     let script_pattern = r#""externalId":"(UC[^"]+)"#;
     let re = regex::Regex::new(script_pattern).unwrap();
-    if let Some(caps) = re.captures(&text) {
+    if re.is_match(&text) {
         // This is the channel ID, not handle - return None since we couldn't find handle
         return Ok(None);
     }
@@ -261,7 +261,12 @@ pub async fn extract_handle_from_channel_id(channel_id: &str) -> Result<Option<S
 
 pub async fn fetch_transcript(player_json: &Value) -> Result<Option<String>, String> {
     let captions = &player_json["captions"];
-    let caption_tracks = captions["playerCaptionsTracklistRenderer"]["captionTracks"].as_array();
+    let mut caption_tracks = captions["playerCaptionsTracklistRenderer"]["captionTracks"].as_array();
+    
+    // Fallback if the above path is missing
+    if caption_tracks.is_none() {
+        caption_tracks = captions["captionTracks"].as_array();
+    }
     
     if let Some(tracks) = caption_tracks {
         let track = tracks.iter()
@@ -271,7 +276,6 @@ pub async fn fetch_transcript(player_json: &Value) -> Result<Option<String>, Str
         if let Some(track) = track {
             let base_url = track["baseUrl"].as_str().ok_or("No base URL for transcript")?;
             
-            // Build headers for the transcript request (important for some formats)
             let mut headers = HeaderMap::new();
             headers.insert(USER_AGENT, HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"));
             
@@ -284,11 +288,9 @@ pub async fn fetch_transcript(player_json: &Value) -> Result<Option<String>, Str
             let text = res.text().await.map_err(|e| e.to_string())?;
 
             if text.trim().starts_with('{') {
-                // JSON format (json3 / events)
                 let data: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
                 let mut lines: Vec<String> = Vec::new();
                 
-                // Optimized segment collection for json3 format
                 if let Some(events) = data["events"].as_array() {
                     for event in events {
                         if let Some(segs) = event["segs"].as_array() {
@@ -309,7 +311,6 @@ pub async fn fetch_transcript(player_json: &Value) -> Result<Option<String>, Str
                 
                 return Ok(Some(lines.join("\n")));
             } else {
-                // XML format
                 return parse_xml_transcript(&text);
             }
         }
@@ -319,15 +320,12 @@ pub async fn fetch_transcript(player_json: &Value) -> Result<Option<String>, Str
 
 fn collect_transcript_lines(val: &Value, lines: &mut Vec<String>) {
     if let Some(obj) = val.as_object() {
-        // Handle "text" and "utf8" (for segments)
         if let Some(text) = obj.get("text").and_then(|t| t.as_str()) {
             lines.push(text.to_string());
         } else if let Some(utf8) = obj.get("utf8").and_then(|t| t.as_str()) {
-             // In events/segs format, we might want to join segments, but for simplicity:
              lines.push(utf8.to_string());
         }
         
-        // Some formats have "simpleText"
         if let Some(st) = obj.get("simpleText").and_then(|t| t.as_str()) {
             lines.push(st.to_string());
         }
@@ -450,10 +448,8 @@ pub fn extract_playlist_video_info(renderer: &Value) -> Option<Value> {
     
     let owner_text = renderer["shortBylineText"]["runs"][0]["text"].as_str().unwrap_or("");
 
-    // Try to extract handle from shortBylineText
     let handle = extract_handle_from_text(owner_text);
 
-    // Playlist items usually have videoInfo with views and date
     let mut view_count = String::new();
     let mut published_at = String::new();
     
