@@ -168,3 +168,23 @@ export async function deleteModel(): Promise<void> {
 export async function installOllama(): Promise<void> {
     await invoke("install_ollama");
 }
+
+export async function saveSummary(videoId: string, summary: string): Promise<void> {
+    await invoke("save_summary", { videoId, summary });
+}
+
+export async function getSummary(videoId: string): Promise<string | null> {
+    return await invoke("get_summary", { videoId });
+}
+
+export async function getSummarizedCount(): Promise<number> {
+    return await invoke("get_summarized_count");
+}
+
+export async function getVideosWithSummaries(): Promise<string[]> {
+    return await invoke("get_videos_with_summaries");
+}
+
+export async function summarizeAllVideos(): Promise<number> {
+    return await invoke("summarize_all_videos");
+}

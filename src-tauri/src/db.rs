@@ -11,6 +11,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
             handle TEXT,
             length_seconds INTEGER,
             transcript TEXT,
+            summary TEXT,
             view_count INTEGER DEFAULT 0,
             video_type TEXT DEFAULT 'standard',
             published_at TEXT,
@@ -44,17 +45,31 @@ pub fn init_db(db_path: &str) -> Result<()> {
                  handle TEXT,
                  length_seconds INTEGER,
                  transcript TEXT,
+                 summary TEXT,
                  view_count INTEGER DEFAULT 0,
                  video_type TEXT DEFAULT 'standard',
                  published_at TEXT,
                  date_added DATETIME DEFAULT CURRENT_TIMESTAMP
              );
-             INSERT INTO videos (video_id, title, author, handle, length_seconds, transcript, view_count, video_type, published_at, date_added)
-             SELECT video_id, title, author, handle, length_seconds, transcript, CAST(view_count AS INTEGER), video_type, published_at, date_added
+             INSERT INTO videos (video_id, title, author, handle, length_seconds, transcript, summary, view_count, video_type, published_at, date_added)
+             SELECT video_id, title, author, handle, length_seconds, transcript, NULL, CAST(view_count AS INTEGER), video_type, published_at, date_added
              FROM videos_old;
              DROP TABLE videos_old;
              COMMIT;"
         )?;
+    } else {
+        // Add summary column if it doesn't exist (for existing databases)
+        let column_exists: Result<i64, _> = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='summary'",
+            [],
+            |row| row.get(0),
+        );
+        if let Ok(0) = column_exists {
+            conn.execute(
+                "ALTER TABLE videos ADD COLUMN summary TEXT",
+                [],
+            )?;
+        }
     }
 
     conn.execute(
@@ -246,4 +261,42 @@ pub fn get_history_stats(db_path: &str) -> Result<i64> {
     let mut stmt = conn.prepare("SELECT COUNT(*) FROM search_history")?;
     let count: i64 = stmt.query_row([], |row| row.get(0))?;
     Ok(count)
+}
+
+pub fn save_summary(db_path: &str, video_id: &str, summary: &str) -> Result<()> {
+    let conn = Connection::open(db_path)?;
+    conn.execute(
+        "UPDATE videos SET summary = ?1 WHERE video_id = ?2",
+        params![summary, video_id],
+    )?;
+    Ok(())
+}
+
+pub fn get_summary(db_path: &str, video_id: &str) -> Result<Option<String>> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT summary FROM videos WHERE video_id = ?")?;
+    let mut rows = stmt.query(params![video_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0)?)
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn get_summarized_count(db_path: &str) -> Result<i64> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM videos WHERE summary IS NOT NULL AND summary != ''")?;
+    let count: i64 = stmt.query_row([], |row| row.get(0))?;
+    Ok(count)
+}
+
+pub fn get_videos_with_summaries(db_path: &str) -> Result<Vec<String>> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT video_id FROM videos WHERE summary IS NOT NULL AND summary != ''")?;
+    let mut rows = stmt.query([])?;
+    let mut ids = Vec::new();
+    while let Some(row) = rows.next()? {
+        ids.push(row.get(0)?);
+    }
+    Ok(ids)
 }

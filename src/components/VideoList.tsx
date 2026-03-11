@@ -1,4 +1,4 @@
-import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users } from 'lucide-react';
+import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users, Sparkles } from 'lucide-react';
 import { type Video } from '../api';
 import { useState, useMemo } from 'react';
 import { format } from 'date-fns';
@@ -10,12 +10,17 @@ interface Props {
     onDelete?: (video: Video) => void;
     saveProgress?: string | null;
     compact?: boolean;
+    onSummarizeAll?: () => void;
+    summarizeProgress?: string | null;
+    summarizedCount?: number;
+    totalCount?: number;
+    isLibrary?: boolean;
 }
 
 type SortField = 'popularity' | 'date' | 'added';
 type SortOrder = 'desc' | 'asc';
 
-export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress, compact = false }: Props) {
+export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress, compact = false, onSummarizeAll, summarizeProgress, summarizedCount = 0, totalCount = 0, isLibrary = false }: Props) {
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
@@ -86,6 +91,26 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                                 <>
                                     <Save className="w-4 h-4" />
                                     Save All
+                                </>
+                            )}
+                        </button>
+                    )}
+
+                    {isLibrary && onSummarizeAll && (
+                        <button
+                            onClick={onSummarizeAll}
+                            disabled={!!summarizeProgress}
+                            className={`mr-4 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-500 hover:to-blue-500 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 flex items-center gap-2 ${!summarizeProgress ? 'cursor-pointer shadow-lg shadow-purple-900/20' : 'cursor-default'}`}
+                        >
+                            {summarizeProgress ? (
+                                <>
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                    {summarizeProgress}
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles className="w-4 h-4" />
+                                    {summarizedCount > 0 ? `Summarized (${summarizedCount}/${totalCount})` : 'Summarize All'}
                                 </>
                             )}
                         </button>

@@ -51,7 +51,7 @@ export function SettingsModal({ isOpen, onClose, onStatusChange, onThemeChange, 
     });
     const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
     const [plugins, setPlugins] = useState<{ id: string, name: string, enabled: boolean, description: string }[]>([
-        { id: 'summarize', name: 'Summarize Transcripts', enabled: false, description: 'Adds AI-powered summarization for transcripts using Ollama.' }
+        { id: 'summarize', name: 'Summarize Transcripts [Beta]', enabled: false, description: 'Adds AI-powered summarization for transcripts using Ollama.' }
     ]);
     const [pluginStatus, setPluginStatus] = useState<string | null>(null);
 

@@ -13,6 +13,8 @@ import {
     setDisplaySettings,
     getApiKey,
     getSetting,
+    summarizeAllVideos,
+    getSummarizedCount,
     type Video
 } from "./api";
 import { SearchBar, type Facet } from "./components/SearchBar";
@@ -69,11 +71,29 @@ function App() {
     const [videoTypeFilter] = useState<string | undefined>(undefined);
     const [videoListMode, setVideoListMode] = useState<'grid' | 'compact'>('grid');
     const [pluginSummarizeEnabled, setPluginSummarizeEnabled] = useState(false);
+    const [summarizeProgress, setSummarizeProgress] = useState<string | null>(null);
+    const [summarizedCount, setSummarizedCount] = useState(0);
+    const [summarizedVideoIds, setSummarizedVideoIds] = useState<Set<string>>(new Set());
 
     useEffect(() => {
         getApiKey().then(k => setHasApiKey(!!k));
         getSetting('plugin_summarize_enabled').then(v => setPluginSummarizeEnabled(v === 'true'));
     }, []);
+
+    // Load summarized count and video IDs when in library mode
+    useEffect(() => {
+        if (viewMode === 'library' && pluginSummarizeEnabled) {
+            const loadSummaryStats = async () => {
+                try {
+                    const count = await getSummarizedCount();
+                    setSummarizedCount(count);
+                } catch (e) {
+                    console.error('Failed to get summarized count:', e);
+                }
+            };
+            loadSummaryStats();
+        }
+    }, [viewMode, pluginSummarizeEnabled]);
 
     // Load and apply theme on startup
     useEffect(() => {
@@ -120,13 +140,23 @@ function App() {
         try {
             const res = await getSavedVideos(videoTypeFilter);
             setLibraryVideos(res.videos);
+            
+            // Also refresh summary stats
+            if (pluginSummarizeEnabled) {
+                try {
+                    const count = await getSummarizedCount();
+                    setSummarizedCount(count);
+                } catch (e) {
+                    console.error('Failed to get summarized count:', e);
+                }
+            }
         } catch (e: any) {
             setError("Failed to load library.");
             setNotification({ message: "Failed to load library", type: "error" });
         } finally {
             setLoading(false);
         }
-    }, [videoTypeFilter]);
+    }, [videoTypeFilter, pluginSummarizeEnabled]);
 
     // Load saved videos when switching to Library mode
     useEffect(() => {
@@ -463,6 +493,31 @@ function App() {
         }
     };
 
+    const handleSummarizeAll = async () => {
+        if (summarizeProgress || !pluginSummarizeEnabled) return;
+        
+        if (libraryVideos.length === 0) {
+            setNotification({ message: "No videos in library to summarize", type: "info" });
+            return;
+        }
+        
+        try {
+            setSummarizeProgress("Starting...");
+            const count = await summarizeAllVideos();
+            setSummarizedCount(prev => prev + count);
+            setNotification({ 
+                message: count > 0 
+                    ? `Successfully summarized ${count} video${count > 1 ? 's' : ''}` 
+                    : "All videos are already summarized", 
+                type: count > 0 ? "success" : "info" 
+            });
+        } catch (e: any) {
+            setNotification({ message: `Summarize failed: ${e.message}`, type: "error" });
+        } finally {
+            setSummarizeProgress(null);
+        }
+    };
+
     return (
         <div className="min-h-screen bg-[#0f0f0f] text-white font-sans selection:bg-red-500/30 selection:text-white pb-20 select-none">
             <div className="container mx-auto px-4 pt-4">
@@ -578,6 +633,11 @@ function App() {
                                     onSelect={handleSelectVideo}
                                     onDelete={handleDeleteVideo}
                                     compact={videoListMode === 'compact'}
+                                    onSummarizeAll={handleSummarizeAll}
+                                    summarizeProgress={summarizeProgress}
+                                    summarizedCount={summarizedCount}
+                                    totalCount={libraryVideos.length}
+                                    isLibrary={true}
                                 />
                             )}
                         </div>

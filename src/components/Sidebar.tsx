@@ -1,6 +1,6 @@
 import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, Copy, Check } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { checkVideoExists, summarizeTranscript } from '../api';
+import { checkVideoExists, summarizeTranscript, getSummary, saveSummary } from '../api';
 import ReactMarkdown from 'react-markdown';
 
 interface Props {
@@ -29,6 +29,8 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
     const [summary, setSummary] = useState<string | null>(null);
     const [loadingSummary, setLoadingSummary] = useState(false);
     const [summaryError, setSummaryError] = useState<string | null>(null);
+    const [hasExistingSummary, setHasExistingSummary] = useState(false);
+    const [checkingSummary, setCheckingSummary] = useState(false);
 
     const startResizing = useCallback((e: React.MouseEvent) => {
         isResizingRef.current = true;
@@ -85,12 +87,30 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                 setExistsInDb(exists);
                 setCheckingDb(false);
             });
+            
+            // Check if summary already exists
+            if (pluginSummarizeEnabled) {
+                setCheckingSummary(true);
+                getSummary(videoId).then(existingSummary => {
+                    if (existingSummary && existingSummary.trim()) {
+                        setHasExistingSummary(true);
+                        setSummary(existingSummary);
+                    } else {
+                        setHasExistingSummary(false);
+                    }
+                    setCheckingSummary(false);
+                }).catch(() => {
+                    setHasExistingSummary(false);
+                    setCheckingSummary(false);
+                });
+            }
         }
         // Reset summary state when video changes
         setSummary(null);
         setShowSummary(false);
         setSummaryError(null);
-    }, [videoId, isOpen]);
+        setHasExistingSummary(false);
+    }, [videoId, isOpen, pluginSummarizeEnabled]);
 
     const handleCopy = useCallback(() => {
         if (!transcript) return;
@@ -108,18 +128,35 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
 
     const handleSummarize = useCallback(async () => {
         if (!transcript || showSummary) return;
+        
+        // If summary already exists, just show it
+        if (hasExistingSummary && summary) {
+            setShowSummary(true);
+            return;
+        }
+        
         setLoadingSummary(true);
         setSummaryError(null);
         try {
             const result = await summarizeTranscript(transcript);
             setSummary(result);
             setShowSummary(true);
+            setHasExistingSummary(true);
+            
+            // Save summary to DB
+            if (videoId) {
+                try {
+                    await saveSummary(videoId, result);
+                } catch (e) {
+                    console.error('Failed to save summary to DB:', e);
+                }
+            }
         } catch (err) {
             setSummaryError(err instanceof Error ? err.message : String(err));
         } finally {
             setLoadingSummary(false);
         }
-    }, [transcript, showSummary]);
+    }, [transcript, showSummary, hasExistingSummary, summary, videoId]);
 
     const handleBackToTranscript = useCallback(() => {
         setShowSummary(false);
@@ -209,7 +246,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                 {showSummary ? (
                                     <button
                                         onClick={handleBackToTranscript}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] border border-[#303030] text-[#aaaaaa] rounded-lg hover:text-white hover:bg-[#3f3f3f] transition-colors text-[10px] font-bold uppercase tracking-wider cursor-pointer"
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-[#272727] text-[#aaaaaa] rounded-lg hover:text-white hover:bg-[#3f3f3f] transition-colors text-[10px] font-bold uppercase tracking-wider cursor-pointer"
                                     >
                                         <ArrowLeft className="w-3 h-3" />
                                         Back to Transcript
@@ -218,11 +255,19 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                     pluginSummarizeEnabled && (
                                         <button
                                             onClick={handleSummarize}
-                                            disabled={loadingSummary || loading || !transcript || transcript.includes("No transcript") || transcript.includes("Failed to load")}
-                                            title="Generate AI summary with Ollama"
+                                            disabled={loadingSummary || loading || !transcript || transcript.includes("No transcript") || transcript.includes("Failed to load") || checkingSummary}
+                                            title={hasExistingSummary ? "View AI Summary from database" : "Generate AI summary with Ollama"}
                                             className="summarize-btn flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-500 hover:to-blue-500 transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-default cursor-pointer shadow-lg shadow-purple-900/20"
                                         >
-                                            {loadingSummary ? (
+                                            {checkingSummary ? (
+                                                <>
+                                                    <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+                                                        <path d="M12 2a10 10 0 0 1 10 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                                                    </svg>
+                                                    Checking...
+                                                </>
+                                            ) : loadingSummary ? (
                                                 <>
                                                     <svg className="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
                                                         <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" opacity="0.2" />
@@ -233,7 +278,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                             ) : (
                                                 <>
                                                     <Sparkles className="w-3 h-3" />
-                                                    Summarize
+                                                    {hasExistingSummary ? "AI Summary" : "Summarize"}
                                                 </>
                                             )}
                                         </button>
@@ -278,8 +323,8 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                     <p className="text-[10px] uppercase tracking-[0.2em] font-bold mt-4">Analysing segments</p>
                                 </div>
                             ) : !isTranscriptInvalid ? (
-                                <div className="text-gray-300 leading-relaxed prose prose-invert prose-sm max-w-none">
-                                    <ReactMarkdown>{transcript}</ReactMarkdown>
+                                <div className="text-gray-300 leading-relaxed whitespace-pre-wrap">
+                                    {transcript}
                                 </div>
                             ) : (
                                 <div className="text-center text-gray-600 mt-10 flex flex-col items-center gap-4">
