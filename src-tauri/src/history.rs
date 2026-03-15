@@ -5,9 +5,9 @@ use rusqlite::{Connection, Result, params};
 pub fn add_history(path: &str, query: &str) -> Result<()> {
     let conn = Connection::open(path)?;
     conn.execute(
-        "INSERT INTO search_history (query, searched_at)
+        "INSERT INTO search_history (search_query, searched_at)
          VALUES (?1, datetime('now', 'localtime'))
-         ON CONFLICT(query) DO UPDATE SET searched_at = datetime('now', 'localtime')",
+         ON CONFLICT(search_query) DO UPDATE SET searched_at = datetime('now', 'localtime')",
         params![query],
     )?;
     Ok(())
@@ -16,7 +16,7 @@ pub fn add_history(path: &str, query: &str) -> Result<()> {
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct HistoryEntry {
     pub id: i64,
-    pub query: String,
+    pub search_query: String,
     #[serde(rename = "searchedAt")]
     pub searched_at: String,
 }
@@ -25,13 +25,13 @@ pub struct HistoryEntry {
 pub fn get_history(path: &str, limit: i64) -> Result<Vec<HistoryEntry>> {
     let conn = Connection::open(path)?;
     let mut stmt = conn.prepare(
-        "SELECT id, query, searched_at FROM search_history
+        "SELECT id, search_query, searched_at FROM search_history
          ORDER BY searched_at DESC LIMIT ?1",
     )?;
     let rows = stmt.query_map(params![limit], |row| {
         Ok(HistoryEntry {
             id: row.get(0)?,
-            query: row.get(1)?,
+            search_query: row.get(1)?,
             searched_at: row.get(2)?,
         })
     })?;

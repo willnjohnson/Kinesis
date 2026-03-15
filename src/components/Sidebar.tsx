@@ -1,6 +1,6 @@
 import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, Copy, Check } from 'lucide-react';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { checkVideoExists, summarizeTranscript, getSummary, saveSummary } from '../api';
+import { checkVideoExists, summarizeTranscript, getSummary, saveSummary, getSetting } from '../api';
 import ReactMarkdown from 'react-markdown';
 
 interface Props {
@@ -15,9 +15,10 @@ interface Props {
     onRefetch?: () => void;
     hasApiKey: boolean;
     pluginSummarizeEnabled: boolean;
+    onSummaryGenerated?: () => void;
 }
 
-export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey, pluginSummarizeEnabled }: Props) {
+export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey, pluginSummarizeEnabled, onSummaryGenerated }: Props) {
     const [copied, setCopied] = useState(false);
     const [summaryCopied, setSummaryCopied] = useState(false);
     const [existsInDb, setExistsInDb] = useState(false);
@@ -31,6 +32,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
     const [summaryError, setSummaryError] = useState<string | null>(null);
     const [hasExistingSummary, setHasExistingSummary] = useState(false);
     const [checkingSummary, setCheckingSummary] = useState(false);
+    const [summarizeProvider, setSummarizeProvider] = useState<'local' | 'cloud'>('local');
 
     const startResizing = useCallback((e: React.MouseEvent) => {
         isResizingRef.current = true;
@@ -71,6 +73,10 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
 
     useEffect(() => {
         if (isOpen) {
+            getSetting('summarize_provider').then(p => {
+                if (p === 'cloud') setSummarizeProvider('cloud');
+                else setSummarizeProvider('local');
+            });
             document.body.style.overflow = 'hidden';
         } else {
             document.body.style.overflow = 'auto';
@@ -87,7 +93,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                 setExistsInDb(exists);
                 setCheckingDb(false);
             });
-            
+
             // Check if summary already exists
             if (pluginSummarizeEnabled) {
                 setCheckingSummary(true);
@@ -128,13 +134,13 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
 
     const handleSummarize = useCallback(async () => {
         if (!transcript || showSummary) return;
-        
+
         // If summary already exists, just show it
         if (hasExistingSummary && summary) {
             setShowSummary(true);
             return;
         }
-        
+
         setLoadingSummary(true);
         setSummaryError(null);
         try {
@@ -142,7 +148,8 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
             setSummary(result);
             setShowSummary(true);
             setHasExistingSummary(true);
-            
+            onSummaryGenerated?.();
+
             // Save summary to DB
             if (videoId) {
                 try {
@@ -230,18 +237,18 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                         {/* Transcript Side */}
                         <div
                             style={{ width: `${100 - splitPercent}%` }}
-                            className="overflow-y-auto p-8 text-[#aaaaaa] text-sm leading-relaxed font-sans selection:bg-[#3f3f3f] custom-scrollbar bg-[#121212]"
+                            className="overflow-y-auto p-8 text-[#aaaaaa] text-sm leading-relaxed font-sans selection:bg-[#3f3f3f] bg-[#121212]"
                         >
                             {/* Header with Sparkle button */}
                             <div className="flex justify-between items-center mb-4">
                                 <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#aaaaaa]">
-                                {showSummary ? (
-                                    <>
-                                    <Sparkles className="w-3 h-3 inline" /> AI Summary
-                                    </>
-                                ) : (
-                                    "Transcript"
-                                )}
+                                    {showSummary ? (
+                                        <>
+                                            <Sparkles className="w-3 h-3 inline" /> AI Summary
+                                        </>
+                                    ) : (
+                                        "Transcript"
+                                    )}
                                 </span>
                                 {showSummary ? (
                                     <button
@@ -256,7 +263,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                         <button
                                             onClick={handleSummarize}
                                             disabled={loadingSummary || loading || !transcript || transcript.includes("No transcript") || transcript.includes("Failed to load") || checkingSummary}
-                                            title={hasExistingSummary ? "View AI Summary from database" : "Generate AI summary with Ollama"}
+                                            title={hasExistingSummary ? "View AI Summary from database" : `Generate AI summary with ${summarizeProvider === 'cloud' ? 'Venice' : 'Ollama'}`}
                                             className="summarize-btn flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-500 hover:to-blue-500 transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-default cursor-pointer shadow-lg shadow-purple-900/20"
                                         >
                                             {checkingSummary ? (

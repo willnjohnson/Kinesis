@@ -3,94 +3,46 @@ use crate::Video;
 
 pub fn init_db(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS videos (
-            video_id TEXT PRIMARY KEY,
-            title TEXT,
-            author TEXT,
-            handle TEXT,
+            video_id     TEXT PRIMARY KEY,
+            title        TEXT,
+            author       TEXT,
+            handle       TEXT,
             length_seconds INTEGER,
-            transcript TEXT,
-            summary TEXT,
-            view_count INTEGER DEFAULT 0,
-            video_type TEXT DEFAULT 'standard',
+            transcript   TEXT,
+            summary      TEXT,
+            view_count   INTEGER DEFAULT 0,
+            video_type   TEXT DEFAULT 'standard',
             published_at TEXT,
-            date_added DATETIME DEFAULT CURRENT_TIMESTAMP
+            date_added   DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
     )?;
 
-    let mut needs_migration = false;
-    {
-        let mut stmt = conn.prepare("PRAGMA table_info(videos)")?;
-        let mut rows = stmt.query([])?;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            let col_type: String = row.get(2)?;
-            if name == "view_count" && col_type.to_uppercase() == "TEXT" {
-                needs_migration = true;
-                break;
-            }
-        }
-    }
-
-    if needs_migration {
-        conn.execute_batch(
-            "BEGIN TRANSACTION;
-             ALTER TABLE videos RENAME TO videos_old;
-             CREATE TABLE videos (
-                 video_id TEXT PRIMARY KEY,
-                 title TEXT,
-                 author TEXT,
-                 handle TEXT,
-                 length_seconds INTEGER,
-                 transcript TEXT,
-                 summary TEXT,
-                 view_count INTEGER DEFAULT 0,
-                 video_type TEXT DEFAULT 'standard',
-                 published_at TEXT,
-                 date_added DATETIME DEFAULT CURRENT_TIMESTAMP
-             );
-             INSERT INTO videos (video_id, title, author, handle, length_seconds, transcript, summary, view_count, video_type, published_at, date_added)
-             SELECT video_id, title, author, handle, length_seconds, transcript, NULL, CAST(view_count AS INTEGER), video_type, published_at, date_added
-             FROM videos_old;
-             DROP TABLE videos_old;
-             COMMIT;"
-        )?;
-    } else {
-        // Add summary column if it doesn't exist (for existing databases)
-        let column_exists: Result<i64, _> = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('videos') WHERE name='summary'",
-            [],
-            |row| row.get(0),
-        );
-        if let Ok(0) = column_exists {
-            conn.execute(
-                "ALTER TABLE videos ADD COLUMN summary TEXT",
-                [],
-            )?;
-        }
-    }
-
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
+            key   TEXT PRIMARY KEY,
             value TEXT
         )",
         [],
     )?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS search_history (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            query       TEXT NOT NULL,
-            searched_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-            UNIQUE(query)
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            search_query TEXT NOT NULL,
+            searched_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(search_query)
         )",
         [],
     )?;
+
     Ok(())
 }
+
+
 
 pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec<Video>> {
     let conn = Connection::open(db_path)?;

@@ -36,7 +36,7 @@ export interface DisplaySettings {
 
 export interface HistoryEntry {
     id: number;
-    query: string;
+    search_query: string;
     searchedAt: string;
 }
 
@@ -46,7 +46,7 @@ export interface ChannelInfo {
 }
 
 export async function getVideos(id: string, isPlaylist: boolean, continuation?: string | null): Promise<SearchResponse> {
-    return await invoke("fetch_videos", { id, is_playlist: isPlaylist, continuation });
+    return await invoke("fetch_videos", { id, isPlaylist, continuation });
 }
 
 export async function getTranscript(id: string): Promise<string> {
@@ -70,7 +70,7 @@ export async function searchVideos(query: string): Promise<SearchResponse> {
 }
 
 export async function getSavedVideos(videoType?: string): Promise<SearchResponse> {
-    return await invoke("fetch_saved_videos", { video_type: videoType });
+    return await invoke("fetch_saved_videos", { videoType });
 }
 
 export async function deleteVideo(id: string): Promise<void> {
@@ -78,11 +78,11 @@ export async function deleteVideo(id: string): Promise<void> {
 }
 
 export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
-    return await invoke("bulk_save_videos", { video_ids: ids });
+    return await invoke("bulk_save_videos", { videoIds: ids });
 }
 
 export async function fetchChannelVideosV3(handle: string, continuationToken?: string | null): Promise<SearchResponse> {
-    return await invoke("fetch_channel_videos_v3", { query: handle, continuation: continuationToken });
+    return await invoke("fetch_channel_videos_v3", { query: handle, continuation: continuationToken ?? null });
 }
 
 export async function getApiKey(): Promise<string | null> {
@@ -90,7 +90,7 @@ export async function getApiKey(): Promise<string | null> {
 }
 
 export async function setApiKey(key: string): Promise<void> {
-    await invoke("set_api_key", { api_key: key });
+    await invoke("set_api_key", { apiKey: key });
 }
 
 export async function removeApiKey(): Promise<void> {
@@ -153,8 +153,28 @@ export async function setSetting(key: string, value: string): Promise<void> {
     await invoke("set_setting", { key, value });
 }
 
+export async function getOllamaModel(): Promise<string> {
+    return await invoke("get_ollama_model");
+}
+
+export async function setOllamaModel(model: string): Promise<void> {
+    await invoke("set_ollama_model", { model });
+}
+
+export async function getOllamaPrompt(): Promise<string> {
+    return await invoke("get_ollama_prompt");
+}
+
+export async function setOllamaPrompt(prompt: string): Promise<void> {
+    await invoke("set_ollama_prompt", { prompt });
+}
+
 export async function checkOllama(): Promise<boolean> {
     return await invoke("check_ollama");
+}
+
+export async function checkModelPulled(): Promise<boolean> {
+    return await invoke("check_model_pulled");
 }
 
 export async function pullModel(): Promise<void> {
@@ -187,4 +207,41 @@ export async function getVideosWithSummaries(): Promise<string[]> {
 
 export async function summarizeAllVideos(): Promise<number> {
     return await invoke("summarize_all_videos");
+}
+
+export async function getVeniceApiKey(): Promise<string | null> {
+    return await invoke("get_venice_api_key");
+}
+
+export async function setVeniceApiKey(key: string): Promise<void> {
+    await invoke("set_venice_api_key", { apiKey: key });
+}
+
+export async function removeVeniceApiKey(): Promise<void> {
+    await invoke("remove_venice_api_key");
+}
+
+export async function getVenicePrompt(): Promise<string> {
+    return await invoke("get_venice_prompt");
+}
+
+export async function setVenicePrompt(prompt: string): Promise<void> {
+    await invoke("set_venice_prompt", { prompt });
+}
+
+export async function selectFolder(): Promise<string | null> {
+    return await invoke("select_folder");
+}
+
+export async function setDbPath(path: string): Promise<string> {
+    return await invoke("set_db_path_override", { folderPath: path });
+}
+
+export interface AppInfo {
+    name: string;
+    version: string;
+}
+
+export async function getAppInfo(): Promise<AppInfo> {
+    return await invoke("get_app_info");
 }

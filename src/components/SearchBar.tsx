@@ -61,7 +61,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         if (!query.trim()) return history;
         const lowQuery = query.toLowerCase();
         return history.filter(entry =>
-            entry.query.toLowerCase().includes(lowQuery)
+            entry.search_query.toLowerCase().includes(lowQuery)
         );
     }, [history, query]);
     useEffect(() => {
@@ -190,11 +190,11 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
 
     const handleHistorySelect = (entry: HistoryEntry) => {
         setFacets([]);
-        handleInput(entry.query);
+        handleInput(entry.search_query);
         setShowHistory(false);
         setTimeout(() => {
-            onSearch(entry.query);
-            addSearchHistory(entry.query);
+            onSearch(entry.search_query);
+            addSearchHistory(entry.search_query);
         }, 0);
     };
 
@@ -240,7 +240,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                             <div className="group/hint relative flex items-center pr-1">
                                 <Lightbulb className="w-4 h-4 text-gray-500 hover:text-yellow-400 transition-colors cursor-help" />
 
-                                <div className="absolute top-full right-0 mt-3 w-64 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-50">
+                                <div className="absolute top-full right-0 mt-3 w-64 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-100">
                                     <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">Search Tips</h4>
                                     <div className="space-y-4">
                                         <div className="flex flex-col gap-1">
@@ -291,7 +291,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                         >
                                             <Clock className="w-3.5 h-3.5 text-gray-400 dark:text-[#555] shrink-0 group-hover:text-gray-600 dark:group-hover:text-[#888] transition-colors" />
                                             <span className="text-sm text-gray-600 dark:text-[#aaaaaa] group-hover:text-gray-900 dark:group-hover:text-white transition-colors truncate flex-1">
-                                                {entry.query}
+                                                {entry.search_query}
                                             </span>
                                             <span className="text-[10px] text-gray-400 dark:text-[#444] shrink-0 ml-2">
                                                 {new Date(entry.searchedAt).toLocaleDateString()}

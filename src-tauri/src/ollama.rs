@@ -4,6 +4,198 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
+use crate::db;
+
+// Default chunk settings
+const DEFAULT_CHUNK_SIZE: usize = 1000; // words per chunk
+const DEFAULT_CHUNK_OVERLAP: usize = 100; // words overlap between chunks
+const DEFAULT_MAX_CHUNKS: usize = 10; // maximum number of chunks to process
+
+/// Chunk configuration settings
+#[derive(Debug, Clone)]
+pub struct ChunkConfig {
+    pub enabled: bool,
+    pub chunk_size: usize,
+    pub chunk_overlap: usize,
+    pub max_chunks: usize,
+}
+
+impl Default for ChunkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            chunk_overlap: DEFAULT_CHUNK_OVERLAP,
+            max_chunks: DEFAULT_MAX_CHUNKS,
+        }
+    }
+}
+
+/// Split transcript into chunks based on word count
+fn chunk_transcript(transcript: &str, config: &ChunkConfig) -> Vec<String> {
+    if transcript.trim().is_empty() {
+        return vec![];
+    }
+    
+    let words: Vec<&str> = transcript.split_whitespace().collect();
+    if words.is_empty() {
+        return vec![];
+    }
+    
+    let mut chunks = Vec::new();
+    let chunk_size = config.chunk_size;
+    let overlap = config.chunk_overlap.min(chunk_size / 2); // Limit overlap to half chunk size
+    
+    let mut start = 0;
+    while start < words.len() {
+        // Check if we've exceeded max chunks
+        if chunks.len() >= config.max_chunks {
+            break;
+        }
+        
+        let end = (start + chunk_size).min(words.len());
+        let chunk_text = words[start..end].join(" ");
+        chunks.push(chunk_text);
+        
+        // Move start position with overlap
+        if end >= words.len() {
+            break;
+        }
+        start = end - overlap;
+    }
+    
+    chunks
+}
+
+/// Process a single chunk through the AI model
+async fn process_chunk(
+    client: &reqwest::Client,
+    model: &str,
+    chunk: &str,
+    prompt_template: &str,
+    ollama_url: &str,
+) -> Result<String, String> {
+    // Use the custom prompt template for chunk processing
+    let prompt = if prompt_template.contains("{}") {
+        prompt_template.replace("{}", chunk)
+    } else {
+        format!("Transcript segment:\n{}\n\n{}", chunk, prompt_template)
+    };
+    
+    let request_body = serde_json::json!({
+        "model": model,
+        "prompt": prompt,
+        "stream": false,
+        "keep_alive": 300,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 512,
+            "gpu_layers": 0
+        }
+    });
+    
+    let response = client
+        .post(ollama_url)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to process chunk: {}", e))?;
+    
+    let status = response.status();
+    
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Chunk processing failed: {} - {}", status, error_text));
+    }
+    
+    let result: Value = response.json().await
+        .map_err(|e| format!("Failed to parse chunk response: {}", e))?;
+    
+    let response_text = result["response"].as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    
+    Ok(response_text)
+}
+
+/// Combine multiple chunk summaries into a final summary
+async fn combine_chunk_summaries(
+    client: &reqwest::Client,
+    model: &str,
+    chunk_summaries: Vec<String>,
+    _prompt_template: &str,
+    ollama_url: &str,
+) -> Result<String, String> {
+    if chunk_summaries.is_empty() {
+        return Ok(String::new());
+    }
+    
+    if chunk_summaries.len() == 1 {
+        return Ok(chunk_summaries.into_iter().next().unwrap_or_default());
+    }
+    
+    // Join all chunk summaries
+    let combined_text = chunk_summaries.join("\n\n---\n\n");
+    
+    // Create a combination prompt
+    let combine_prompt = format!(
+        "The following are summaries from different segments of a video transcript. Combine them into a single coherent synopsis:\n\n{}\n\nFinal Synopsis:",
+        combined_text
+    );
+    
+    let request_body = serde_json::json!({
+        "model": model,
+        "prompt": combine_prompt,
+        "stream": false,
+        "keep_alive": 300,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": 768,
+            "gpu_layers": 0
+        }
+    });
+    
+    let response = client
+        .post(ollama_url)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to combine summaries: {}", e))?;
+    
+    let status = response.status();
+    
+    if !status.is_success() {
+        let error_text = response.text().await.unwrap_or_default();
+        return Err(format!("Combine failed: {} - {}", status, error_text));
+    }
+    
+    let result: Value = response.json().await
+        .map_err(|e| format!("Failed to parse combine response: {}", e))?;
+    
+    let final_summary = result["response"].as_str()
+        .unwrap_or("Failed to generate summary")
+        .trim()
+        .to_string();
+    
+    Ok(final_summary)
+}
+
+const DEFAULT_PROMPT_TEMPLATE: &str = r#"Create a synopsis of this video transcript with pretty format.
+
+Transcript:
+{}
+
+Synopsis:"#;
+
+fn get_db_path(app: &AppHandle) -> String {
+    let path = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    if !path.exists() {
+        let _ = std::fs::create_dir_all(&path);
+    }
+    path.join("kinesis_data.db").to_string_lossy().to_string()
+}
+
 /// Check if Ollama is running
 pub async fn check_ollama() -> Result<bool, String> {
     println!("Checking Ollama status...");
@@ -14,9 +206,40 @@ pub async fn check_ollama() -> Result<bool, String> {
     Ok(is_ok)
 }
 
-/// Pull a model from Ollama (llama3.2)
+/// Check if the specific model is pulled
+pub async fn check_model_pulled(app: AppHandle) -> Result<bool, String> {
+    let db_path = get_db_path(&app);
+    let model_setting = db::get_setting(&db_path, "ollama_model")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "llama3.2".to_string());
+    
+    let client = reqwest::Client::new();
+    let tags_resp = client.get("http://localhost:11434/api/tags").send().await;
+    
+    if let Ok(resp) = tags_resp {
+        if let Ok(json) = resp.json::<Value>().await {
+            if let Some(models) = json["models"].as_array() {
+                let model_exists = models.iter().any(|m| {
+                    let name = m["name"].as_str().unwrap_or("");
+                    name.starts_with(&model_setting) || name.starts_with(&format!("{}:", model_setting))
+                });
+                return Ok(model_exists);
+            }
+        }
+    }
+    
+    Ok(false)
+}
+
+/// Pull a model from Ollama
 pub async fn pull_model(app: AppHandle) -> Result<(), String> {
-    println!("Starting model pull: llama3.2");
+    // Get the selected model from settings
+    let db_path = get_db_path(&app);
+    let model_setting = db::get_setting(&db_path, "ollama_model")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "llama3.2".to_string());
+    
+    println!("Starting model pull: {}", model_setting);
     let client = reqwest::Client::new();
     let window = app.get_webview_window("main").ok_or("Could not find main window")?;
     
@@ -25,19 +248,29 @@ pub async fn pull_model(app: AppHandle) -> Result<(), String> {
     if let Ok(resp) = tags_resp {
         if let Ok(json) = resp.json::<Value>().await {
             if let Some(models) = json["models"].as_array() {
-                if models.iter().any(|m| m["name"].as_str() == Some("llama3.2:latest") || m["name"].as_str() == Some("llama3.2")) {
-                    println!("Model llama3.2 already exists, skipping pull.");
+                // Check for any variant of the selected model
+                let model_exists = models.iter().any(|m| {
+                    let name = m["name"].as_str().unwrap_or("");
+                    name.starts_with(&model_setting) || name.starts_with(&format!("{}:", model_setting))
+                });
+                if model_exists {
+                    println!("Model {} already exists, skipping pull.", model_setting);
+                    window.emit("plugin_progress", &format!("Model {} already installed.", model_setting)).map_err(|e: tauri::Error| e.to_string())?;
                     return Ok(());
                 }
             }
         }
     }
 
-    window.emit("plugin_progress", "Pulling llama3.2 (this may take 2-5 minutes)...").map_err(|e: tauri::Error| e.to_string())?;
+    window.emit("plugin_progress", &format!("Pulling {} (this may take a while)...", model_setting)).map_err(|e: tauri::Error| e.to_string())?;
 
+    // Try pulling with streaming to see more progress
     let response = client
         .post("http://localhost:11434/api/pull")
-        .json(&serde_json::json!({ "name": "llama3.2", "stream": false }))
+        .json(&serde_json::json!({ 
+            "name": model_setting, 
+            "stream": true 
+        }))
         .send()
         .await
         .map_err(|e| {
@@ -46,21 +279,32 @@ pub async fn pull_model(app: AppHandle) -> Result<(), String> {
         })?;
 
     if !response.status().is_success() {
-        println!("Ollama pull error status: {}", response.status());
-        return Err(format!("Ollama pull error: {}", response.status()));
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        println!("Ollama pull error status: {}, error: {}", status, error_text);
+        return Err(format!("Ollama pull error: {} - {}", status, error_text));
     }
 
-    println!("Model pull initiated successfully.");
+    // Read streaming response to keep connection alive
+    let _ = response.text().await;
+    
+    println!("Model pull completed.");
     window.emit("plugin_progress", "Finished pulling model.").map_err(|e: tauri::Error| e.to_string())?;
     Ok(())
 }
 
-/// Delete llama3.2 model from Ollama
-pub async fn delete_model() -> Result<(), String> {
-    println!("Starting model delete: llama3.2");
+/// Delete model from Ollama
+pub async fn delete_model(app: AppHandle) -> Result<(), String> {
+    // Get the selected model from settings
+    let db_path = get_db_path(&app);
+    let model_setting = db::get_setting(&db_path, "ollama_model")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "llama3.2".to_string());
+    
+    println!("Starting model delete: {}", model_setting);
     let client = reqwest::Client::new();
     
-    // First, get the list of all models to find any llama3.2 variants
+    // First, get the list of all models to find any matching variants
     let tags_resp = client.get("http://localhost:11434/api/tags").send().await
         .map_err(|e| format!("Failed to connect to Ollama: {}", e))?;
     
@@ -70,22 +314,22 @@ pub async fn delete_model() -> Result<(), String> {
     let models = json["models"].as_array()
         .ok_or("Invalid response from Ollama: no models array")?;
     
-    // Find any models that start with llama3.2
-    let llama_models: Vec<String> = models.iter()
+    // Find any models that start with the selected model name
+    let matching_models: Vec<String> = models.iter()
         .filter_map(|m| m["name"].as_str())
-        .filter(|name| name.starts_with("llama3.2"))
+        .filter(|name| name.starts_with(&model_setting))
         .map(|s| s.to_string())
         .collect();
     
-    if llama_models.is_empty() {
-        println!("No llama3.2 models found in Ollama, nothing to delete.");
+    if matching_models.is_empty() {
+        println!("No {} models found in Ollama, nothing to delete.", model_setting);
         return Ok(());
     }
     
-    println!("Found llama3.2 models to delete: {:?}", llama_models);
+    println!("Found {} models to delete: {:?}", model_setting, matching_models);
     
     // Delete each matching model
-    for model_name in llama_models {
+    for model_name in matching_models {
         println!("Deleting model: {}", model_name);
         let response = client
             .delete("http://localhost:11434/api/delete")
@@ -428,8 +672,50 @@ pub async fn install_ollama(app: AppHandle) -> Result<(), String> {
 }
 
 /// Summarize a transcript using Ollama
-pub async fn summarize_transcript(_app: AppHandle, transcript: String) -> Result<String, String> {
+pub async fn summarize_transcript(app: AppHandle, transcript: String) -> Result<String, String> {
     ensure_ollama_running().await?;
+    
+    // Get settings from database
+    let db_path = get_db_path(&app);
+    let model_setting = db::get_setting(&db_path, "ollama_model")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| "llama3.2".to_string());
+    let prompt_template = db::get_setting(&db_path, "ollama_prompt")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| DEFAULT_PROMPT_TEMPLATE.to_string());
+    
+    // Get chunking settings
+    let chunk_enabled = db::get_setting(&db_path, "chunk_enabled")
+        .map_err(|e| e.to_string())?
+        .map(|v| v == "true")
+        .unwrap_or(true);
+    let chunk_size = db::get_setting(&db_path, "chunk_size")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_CHUNK_SIZE);
+    let chunk_overlap = db::get_setting(&db_path, "chunk_overlap")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_CHUNK_OVERLAP);
+    let max_chunks = db::get_setting(&db_path, "max_chunks")
+        .map_err(|e| e.to_string())?
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_MAX_CHUNKS);
+    
+    let chunk_config = ChunkConfig {
+        enabled: chunk_enabled,
+        chunk_size,
+        chunk_overlap,
+        max_chunks,
+    };
+    
+    // Use default prompt if the saved prompt is empty
+    let prompt_template = if prompt_template.trim().is_empty() {
+        DEFAULT_PROMPT_TEMPLATE.to_string()
+    } else {
+        prompt_template
+    };
+    
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))  // 2 minute timeout for CPU-based generation
         .build()
@@ -453,12 +739,46 @@ pub async fn summarize_transcript(_app: AppHandle, transcript: String) -> Result
     
     println!("Available models: {:?}", tags_result);
     
-    // Get the first available model
+    // Get selected model from settings
+    let selected_model = model_setting.clone();
+    println!("Selected model from settings: {}", selected_model);
+    
+    // Check if the selected model exists, otherwise use first available
     let models = tags_result["models"].as_array();
     let model_name = match models {
         Some(arr) if !arr.is_empty() => {
-            // Get the name from the first model
-            arr[0].get("name").and_then(|n| n.as_str()).unwrap_or("llama3.2")
+            // First check if the selected model exists (exact match or partial match)
+            let selected_exists = arr.iter().any(|m| {
+                let name = m["name"].as_str().unwrap_or("");
+                // Check for exact match or if the model name contains the selected model
+                name == selected_model 
+                    || name.starts_with(&selected_model)
+                    || name.starts_with(&format!("{}:", selected_model))
+                    || selected_model.starts_with(name.split(':').next().unwrap_or(""))
+            });
+            
+            println!("Selected model exists in Ollama: {}", selected_exists);
+            
+            if selected_exists {
+                // Use the selected model (find exact name with tag)
+                let found = arr.iter()
+                    .find(|m| {
+                        let name = m["name"].as_str().unwrap_or("");
+                        name == selected_model 
+                            || name.starts_with(&selected_model)
+                            || name.starts_with(&format!("{}:", selected_model))
+                            || selected_model.starts_with(name.split(':').next().unwrap_or(""))
+                    })
+                    .and_then(|m| m["name"].as_str());
+                
+                println!("Using selected model: {:?}", found);
+                found.unwrap_or("llama3.2")
+            } else {
+                // Use the first available model
+                let first_model = arr[0].get("name").and_then(|n| n.as_str()).unwrap_or("llama3.2");
+                println!("Selected model not found, using first available: {}", first_model);
+                first_model
+            }
         }
         _ => {
             // No models installed - return helpful error
@@ -467,8 +787,79 @@ pub async fn summarize_transcript(_app: AppHandle, transcript: String) -> Result
     };
     
     // Extract just the model name (without tags like :latest)
-    let model = model_name.split(':').next().unwrap_or("llama3.2");
+    let model = model_name.split(':').next().unwrap_or(&model_setting);
     println!("Using model: {}", model);
+    
+    // Estimate word count for logging
+    let word_count = transcript.split_whitespace().count();
+    println!("Transcript word count: {}", word_count);
+    
+    // Check if we need chunking
+    if chunk_config.enabled && word_count > chunk_config.chunk_size {
+        println!("Transcript exceeds chunk size, using chunking pipeline");
+        return summarize_with_chunking(&client, model, &transcript, &prompt_template, ollama_url, &chunk_config).await;
+    }
+    
+    // Original single-pass processing for short transcripts
+    summarize_single_pass(&client, model, &transcript, &prompt_template, ollama_url).await
+}
+
+/// Summarize using chunking pipeline for long transcripts
+async fn summarize_with_chunking(
+    client: &reqwest::Client,
+    model: &str,
+    transcript: &str,
+    prompt_template: &str,
+    ollama_url: &str,
+    config: &ChunkConfig,
+) -> Result<String, String> {
+    // Split transcript into chunks
+    let chunks = chunk_transcript(transcript, config);
+    println!("Split transcript into {} chunks", chunks.len());
+    
+    if chunks.is_empty() {
+        return Err("Transcript is empty".to_string());
+    }
+    
+    // Process each chunk
+    let mut chunk_summaries = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        println!("Processing chunk {}/{} ({} words)", i + 1, chunks.len(), chunk.split_whitespace().count());
+        
+        // Add context about which part of the transcript this is
+        let chunk_prompt = format!(
+            "[This is part {} of {} of the transcript. Create a detailed summary of this segment.]
+\n{}",
+            i + 1,
+            chunks.len(),
+            chunk
+        );
+        
+        match process_chunk(client, model, &chunk_prompt, prompt_template, ollama_url).await {
+            Ok(summary) => {
+                println!("Chunk {} summary: {} chars", i + 1, summary.len());
+                chunk_summaries.push(summary);
+            }
+            Err(e) => {
+                println!("Failed to process chunk {}: {}", i + 1, e);
+                return Err(format!("Failed to process chunk {}: {}", i + 1, e));
+            }
+        }
+    }
+    
+    // Combine all chunk summaries
+    println!("Combining {} chunk summaries", chunk_summaries.len());
+    combine_chunk_summaries(client, model, chunk_summaries, prompt_template, ollama_url).await
+}
+
+/// Original single-pass summarization for shorter transcripts
+async fn summarize_single_pass(
+    client: &reqwest::Client,
+    model: &str,
+    transcript: &str,
+    prompt_template: &str,
+    ollama_url: &str,
+) -> Result<String, String> {
     
     // Retry logic for model loading
     let mut last_error = String::new();
@@ -478,13 +869,13 @@ pub async fn summarize_transcript(_app: AppHandle, transcript: String) -> Result
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
         
-        // Keep prompt concise for faster generation on CPU
-        let prompt = format!(r#"Summarize this video transcript in 2-3 paragraphs. Be concise and include main topics and key points only.
-
-Transcript:
-{}
-
-Summary:"#, transcript);
+        // Use the custom prompt template
+        // If the prompt contains {}, replace it with transcript; otherwise prepend transcript automatically
+        let prompt = if prompt_template.contains("{}") {
+            prompt_template.replace("{}", &transcript)
+        } else {
+            format!("Transcript:\n{}\n\n{}", transcript, prompt_template)
+        };
         
         let request_body = serde_json::json!({
             "model": model,
