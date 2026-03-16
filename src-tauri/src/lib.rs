@@ -24,7 +24,6 @@ mod commands;
 pub use types::{Video, ChannelInfo, VideoResponse, DisplaySettings, DbDetails};
 pub use types::{parse_view_count, extract_handle_from_url};
 
-use youtube::{YouTubeClient, ClientType};
 
 // ─── App state ────────────────────────────────────────────────────────────────
 

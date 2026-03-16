@@ -13,6 +13,7 @@ export interface Video {
     publishedAt: string;
     dateAdded?: string;
     handle?: string;
+    status?: string;
 }
 
 export interface SearchResponse {
@@ -61,7 +62,7 @@ export async function getVideoInfo(id: string): Promise<Video> {
     return await invoke("fetch_video_info", { videoId: id });
 }
 
-export async function saveVideo(id: string): Promise<{ status: 'success' | 'exists' }> {
+export async function saveVideo(id: string): Promise<Video> {
     return await invoke("save_video", { videoId: id });
 }
 

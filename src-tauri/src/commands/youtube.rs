@@ -260,7 +260,7 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video
             author: Some(v_data.2),
             handle: Some(v_data.7),
             status: Some("exists".to_string()),
-            date_added: None,
+            date_added: Some(v_data.9),
             length_seconds: Some(v_data.3),
             video_type: Some(v_data.8),
         });
@@ -320,6 +320,13 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video
     db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type)
         .map_err(|e| e.to_string())?;
 
+    let date_added = {
+        let conn = rusqlite::Connection::open(&db_path).ok();
+        conn.and_then(|c| {
+            c.query_row("SELECT date_added FROM videos WHERE video_id = ?", rusqlite::params![video_id], |row| row.get::<_, Option<String>>(0)).ok().flatten()
+        })
+    };
+
     Ok(Video {
         thumbnail: format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", video_id),
         id: video_id,
@@ -329,7 +336,7 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video
         author: Some(author.to_string()),
         handle,
         status: Some("saved".to_string()),
-        date_added: None,
+        date_added,
         length_seconds: Some(length),
         video_type: Some(video_type.to_string()),
     })

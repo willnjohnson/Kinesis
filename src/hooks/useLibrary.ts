@@ -6,10 +6,7 @@ import {
 } from "../api";
 import { type NotificationType } from "../components/Notification";
 
-type ViewMode = 'search' | 'library';
-
 export function useLibrary(
-    viewMode: ViewMode,
     pluginSummarizeEnabled: boolean,
     filteredSearchVideos: Video[],
     setNotification: (n: { message: string; type: NotificationType } | null) => void,
@@ -21,24 +18,27 @@ export function useLibrary(
     const [summarizeProgress, setSummarizeProgress] = useState<string | null>(null);
     const [summarizedCount, setSummarizedCount] = useState(0);
     const [confirmDelete, setConfirmDelete] = useState<{ video: Video; fromSidebar?: boolean } | null>(null);
+    const [initialized, setInitialized] = useState(false);
 
     const refreshSummarizedCount = useCallback(async () => {
         if (!pluginSummarizeEnabled) return;
         try { setSummarizedCount(await getSummarizedCount()); } catch { /* ignore */ }
     }, [pluginSummarizeEnabled]);
 
-    const refreshLibrary = useCallback(async () => {
+    const refreshLibrary = useCallback(async (force = false) => {
+        if (!force && initialized) return;
         setLoading(true);
         try {
             const res = await getSavedVideos();
             setLibraryVideos(res.videos);
             if (pluginSummarizeEnabled) refreshSummarizedCount();
+            setInitialized(true);
         } catch {
             setNotification({ message: "Failed to load library", type: "error" });
         } finally {
             setLoading(false);
         }
-    }, [pluginSummarizeEnabled, refreshSummarizedCount, setNotification]);
+    }, [pluginSummarizeEnabled, refreshSummarizedCount, setNotification, initialized]);
 
     const handleSaveVideo = useCallback(async (video: Video) => {
         if (!video) return;
@@ -48,12 +48,15 @@ export function useLibrary(
                 setNotification({ message: `"${video.title.substring(0, 30)}..." already exists in DB.`, type: "info" });
             } else {
                 setNotification({ message: `Saved "${video.title.substring(0, 30)}..." to library.`, type: "success" });
-                if (viewMode === 'library') refreshLibrary();
+                setLibraryVideos(prev => {
+                    if (prev.some(v => v.id === video.id)) return prev;
+                    return [result, ...prev];
+                });
             }
         } catch (e: any) {
             setNotification({ message: `Failed to save: ${e.message}`, type: "error" });
         }
-    }, [viewMode, refreshLibrary, setNotification]);
+    }, [setNotification]);
 
     const handleDeleteVideo = useCallback((video: Video) => {
         setConfirmDelete({ video, fromSidebar: false });
@@ -97,13 +100,13 @@ export function useLibrary(
                 message: `Bulk save complete. Saved: ${saved}, Existed: ${existed}, Failed: ${errored}`,
                 type: errored > 0 ? "info" : "success"
             });
-            if (viewMode === 'library') refreshLibrary();
+            refreshLibrary(true);
         } catch (e: any) {
             setNotification({ message: `Bulk save failed: ${e.message}`, type: "error" });
         } finally {
             setSaveProgress(null);
         }
-    }, [filteredSearchVideos, saveProgress, viewMode, refreshLibrary, setNotification]);
+    }, [filteredSearchVideos, saveProgress, refreshLibrary, setNotification]);
 
     const handleSummarizeAll = useCallback(async () => {
         if (summarizeProgress || !pluginSummarizeEnabled) return;

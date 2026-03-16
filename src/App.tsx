@@ -37,7 +37,6 @@ function App() {
     const search = useSearch(hasApiKey);
 
     const library = useLibrary(
-        viewMode,
         pluginSummarizeEnabled,
         search.filteredVideos,
         setNotification,
@@ -252,7 +251,12 @@ function App() {
                         </>
                     ) : (
                         <div className="animate-in fade-in slide-in-from-bottom-2 duration-400">
-                            {library.libraryVideos.length === 0 && !library.loading ? (
+                            {library.loading && library.libraryVideos.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center py-24 text-gray-400 space-y-4">
+                                    <div className="w-8 h-8 border-4 border-[#303030] border-t-red-600 rounded-full animate-spin" />
+                                    <p className="font-medium text-sm">Loading library...</p>
+                                </div>
+                            ) : library.libraryVideos.length === 0 ? (
                                 <div className="text-center text-gray-500 py-24">
                                     <p className="text-xl font-bold text-white mb-2">Build your library</p>
                                     <p className="text-sm">Find videos and save their transcripts here.</p>

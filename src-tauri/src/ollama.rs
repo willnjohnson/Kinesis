@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use crate::db;
+use crate::{db, get_db_path};
 
 // Default chunk settings
 const DEFAULT_CHUNK_SIZE: usize = 1000; // words per chunk
@@ -188,13 +188,7 @@ Transcript:
 
 Synopsis:"#;
 
-fn get_db_path(app: &AppHandle) -> String {
-    let path = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    if !path.exists() {
-        let _ = std::fs::create_dir_all(&path);
-    }
-    path.join("kinesis_data.db").to_string_lossy().to_string()
-}
+
 
 /// Check if Ollama is running
 pub async fn check_ollama() -> Result<bool, String> {

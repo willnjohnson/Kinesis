@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
-use crate::db;
+use tauri::AppHandle;
+use crate::{db, get_db_path};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VeniceMessage {
@@ -67,10 +67,4 @@ pub async fn summarize_transcript(app: AppHandle, transcript: String) -> Result<
     Ok(summary)
 }
 
-fn get_db_path(app: &AppHandle) -> String {
-    let path = app.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-    if !path.exists() {
-        let _ = std::fs::create_dir_all(&path);
-    }
-    path.join("kinesis_data.db").to_string_lossy().to_string()
-}
+

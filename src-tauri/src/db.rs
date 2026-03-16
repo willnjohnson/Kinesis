@@ -4,6 +4,7 @@ use crate::Video;
 pub fn init_db(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
+    // Create videos table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS videos (
             video_id     TEXT PRIMARY KEY,
@@ -21,6 +22,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
         [],
     )?;
 
+    // Create settings table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
             key   TEXT PRIMARY KEY,
@@ -29,6 +31,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
         [],
     )?;
 
+    // Create search_history table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS search_history (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -38,6 +41,20 @@ pub fn init_db(db_path: &str) -> Result<()> {
         )",
         [],
     )?;
+
+    // Migration: Ensure settings table exists for old databases that might be missing it
+    let table_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='settings'",
+        [],
+        |row| row.get(0),
+    )?;
+    
+    if table_count == 0 {
+        conn.execute(
+            "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)",
+            [],
+        )?;
+    }
 
     Ok(())
 }
@@ -136,9 +153,9 @@ pub fn get_transcript(db_path: &str, video_id: &str) -> Result<Option<String>> {
     }
 }
 
-pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, String, String, i32, String, i64, String, String, String)>> {
+pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, String, String, i32, String, i64, String, String, String, String)>> {
      let conn = Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type FROM videos WHERE video_id = ?")?;
+    let mut stmt = conn.prepare("SELECT video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type, date_added FROM videos WHERE video_id = ?")?;
     let mut rows = stmt.query(params![video_id])?;
     if let Some(row) = rows.next()? {
         Ok(Some((
@@ -161,7 +178,8 @@ pub fn get_video_full(db_path: &str, video_id: &str) -> Result<Option<(String, S
             },
             row.get::<_, Option<String>>(6).unwrap_or(None).unwrap_or_else(|| "".to_string()),
             row.get::<_, Option<String>>(7).unwrap_or(None).unwrap_or_else(|| "".to_string()),
-            row.get::<_, Option<String>>(8).unwrap_or(None).unwrap_or_else(|| "standard".to_string())
+            row.get::<_, Option<String>>(8).unwrap_or(None).unwrap_or_else(|| "standard".to_string()),
+            row.get::<_, Option<String>>(9).unwrap_or(None).unwrap_or_else(|| "".to_string())
         )))
     } else {
         Ok(None)
