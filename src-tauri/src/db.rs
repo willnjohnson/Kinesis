@@ -56,6 +56,29 @@ pub fn init_db(db_path: &str) -> Result<()> {
         )?;
     }
 
+    // Migration: Ensure search_history has the correct new schema (drop and recreate if it lacks search_query)
+    if conn.query_row("SELECT search_query FROM search_history LIMIT 1", [], |_| Ok(())).is_err() {
+        let _ = conn.execute("DROP TABLE search_history", []);
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS search_history (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                search_query TEXT NOT NULL,
+                searched_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                UNIQUE(search_query)
+            )",
+            [],
+        )?;
+    }
+
+    // Migration: Add missing columns to `videos` table for older database files
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN handle TEXT", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN length_seconds INTEGER", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN summary TEXT", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN view_count INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN video_type TEXT DEFAULT 'standard'", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN published_at TEXT", []);
+    let _ = conn.execute("ALTER TABLE videos ADD COLUMN date_added DATETIME DEFAULT CURRENT_TIMESTAMP", []);
+
     Ok(())
 }
 
