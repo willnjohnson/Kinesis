@@ -391,10 +391,12 @@ export function PluginsTab({ plugins, onTogglePlugin, loading }: Props) {
                                         ))}
                                     </div>
 
-                                    {summarizeTab === 'local'
-                                        ? <OllamaSubTab summarizeProvider={summarizeProvider} onSetDefault={() => setDefault('local')} />
-                                        : <VeniceSubTab summarizeProvider={summarizeProvider} onSetDefault={() => setDefault('cloud')} />
-                                    }
+                                    <div className={summarizeTab === 'local' ? 'block' : 'hidden'}>
+                                        <OllamaSubTab summarizeProvider={summarizeProvider} onSetDefault={() => setDefault('local')} />
+                                    </div>
+                                    <div className={summarizeTab === 'cloud' ? 'block' : 'hidden'}>
+                                        <VeniceSubTab summarizeProvider={summarizeProvider} onSetDefault={() => setDefault('cloud')} />
+                                    </div>
                                 </div>
                             )}
                         </div>

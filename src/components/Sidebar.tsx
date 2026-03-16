@@ -94,22 +94,20 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                 setCheckingDb(false);
             });
 
-            // Check if summary already exists
-            if (pluginSummarizeEnabled) {
-                setCheckingSummary(true);
-                getSummary(videoId).then(existingSummary => {
-                    if (existingSummary && existingSummary.trim()) {
-                        setHasExistingSummary(true);
-                        setSummary(existingSummary);
-                    } else {
-                        setHasExistingSummary(false);
-                    }
-                    setCheckingSummary(false);
-                }).catch(() => {
+            // Always check if summary already exists in DB
+            setCheckingSummary(true);
+            getSummary(videoId).then(existingSummary => {
+                if (existingSummary && existingSummary.trim()) {
+                    setHasExistingSummary(true);
+                    setSummary(existingSummary);
+                } else {
                     setHasExistingSummary(false);
-                    setCheckingSummary(false);
-                });
-            }
+                }
+                setCheckingSummary(false);
+            }).catch(() => {
+                setHasExistingSummary(false);
+                setCheckingSummary(false);
+            });
         }
         // Reset summary state when video changes
         setSummary(null);
@@ -211,10 +209,11 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                     <iframe
                                         width="100%"
                                         height="100%"
-                                        src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`}
+                                        src={`https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&playsinline=1`}
                                         title="YouTube video player"
                                         frameBorder="0"
                                         allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                        referrerPolicy="strict-origin-when-cross-origin"
                                         allowFullScreen
                                     ></iframe>
                                 </div>
@@ -259,7 +258,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                         Back to Transcript
                                     </button>
                                 ) : (
-                                    pluginSummarizeEnabled && (
+                                    (pluginSummarizeEnabled || hasExistingSummary) && (
                                         <button
                                             onClick={handleSummarize}
                                             disabled={loadingSummary || loading || !transcript || transcript.includes("No transcript") || transcript.includes("Failed to load") || checkingSummary}

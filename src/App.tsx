@@ -267,7 +267,7 @@ function App() {
                                     onSelect={handleSelectVideo}
                                     onDelete={library.handleDeleteVideo}
                                     compact={videoListMode === 'compact'}
-                                    onSummarizeAll={library.handleSummarizeAll}
+                                    onSummarizeAll={pluginSummarizeEnabled ? library.handleSummarizeAll : undefined}
                                     summarizeProgress={library.summarizeProgress}
                                     summarizedCount={library.summarizedCount}
                                     totalCount={library.libraryVideos.length}
