@@ -7,7 +7,7 @@ const APP_NAME: &str = "Genesis";
 #[cfg(not(feature = "genesis"))]
 const APP_NAME: &str = "Kinesis";
 
-const VERSION: &str = "0.1.7";
+const VERSION: &str = "0.1.8";
 
 fn get_window_title() -> String {
     format!("{} v{}", APP_NAME, VERSION)

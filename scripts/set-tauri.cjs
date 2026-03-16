@@ -44,11 +44,11 @@ config.bundle.icon = [
 if (branding === 'genesis') {
   config.productName = 'Genesis';
   config.identifier = 'genesisapp';
-  config.app.windows[0].title = 'Genesis v0.1.7';
+  config.app.windows[0].title = 'Genesis v0.1.8';
 } else {
   config.productName = 'Kinesis';
   config.identifier = 'kinesisapp';
-  config.app.windows[0].title = 'Kinesis v0.1.7';
+  config.app.windows[0].title = 'Kinesis v0.1.8';
 }
 
 // Write back to config file
