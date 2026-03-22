@@ -100,7 +100,7 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                         <button
                             onClick={onSummarizeAll}
                             disabled={!!summarizeProgress}
-                            className={`mr-4 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-500 hover:to-blue-500 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 flex items-center gap-2 ${!summarizeProgress ? 'cursor-pointer shadow-lg shadow-purple-900/20' : 'cursor-default'}`}
+                            className={`summarize-btn mr-4 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white hover:from-purple-500 hover:to-blue-500 rounded-lg text-sm font-semibold transition-all disabled:opacity-50 flex items-center gap-2 ${!summarizeProgress ? 'cursor-pointer shadow-lg shadow-purple-900/20' : 'cursor-default'}`}
                         >
                             {summarizeProgress ? (
                                 <>

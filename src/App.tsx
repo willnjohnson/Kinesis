@@ -32,6 +32,7 @@ function App() {
     const [transcript, setTranscript] = useState("");
     const [loadingTranscript, setLoadingTranscript] = useState(false);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [cachedSummaries, setCachedSummaries] = useState<Record<string, string>>({});
 
     // ── Hooks ────────────────────────────────────────────────────────────────
     const search = useSearch(hasApiKey);
@@ -48,28 +49,40 @@ function App() {
             const q = library.librarySearch;
             if (!q) return library.libraryVideos;
 
-            // Parse facets — the SearchBar always emits a filter_search: badge in library mode.
-            // When that badge has no value (initial state), we must return all videos, not zero.
             const FACET_RE = /([a-z_]+):(?:"([^"]*)"|([^ ]*))/g;
             const facets: { type: string; value: string }[] = [];
             let m;
             while ((m = FACET_RE.exec(q)) !== null) {
-                facets.push({ type: m[1], value: m[2] ?? m[3] ?? "" });
+                facets.push({ type: m[1] as any, value: (m[2] ?? m[3] ?? "").toLowerCase() });
             }
-            const filterBadge = facets.find(f => f.type === 'filter_search');
-            if (!filterBadge) return library.libraryVideos;
 
-            const textTerms = q.replace(/([a-z_]+):(?:"([^"]*)"|([^ ]*))/g, '').trim().toLowerCase().split(' ').filter(Boolean);
-            const badgeTerms = filterBadge.value.toLowerCase().split(' ').filter(Boolean);
-            const allTerms = [...textTerms, ...badgeTerms];
-            if (allTerms.length === 0) return library.libraryVideos; // empty filter → show all
+            const textParts = q.replace(FACET_RE, '').trim().toLowerCase().split(' ').filter(Boolean);
 
-            return library.libraryVideos.filter(v =>
-                allTerms.every(term =>
-                    v.title.toLowerCase().includes(term) ||
-                    (v.author && v.author.toLowerCase().includes(term))
-                )
-            );
+            return library.libraryVideos.filter(v => {
+                // Check facets
+                for (const f of facets) {
+                    if (f.value === "") continue; // Skip empty facets
+                    if (f.type === 'handle') {
+                        if (!v.handle?.toLowerCase().includes(f.value)) return false;
+                    } else if (f.type === 'video') {
+                        if (!v.id.toLowerCase().includes(f.value)) return false;
+                    } else if (f.type === 'filter_search') {
+                        const terms = f.value.split(' ').filter(Boolean);
+                        if (!terms.every(t =>
+                            v.title.toLowerCase().includes(t) ||
+                            v.author?.toLowerCase().includes(t)
+                        )) return false;
+                    }
+                }
+                // Check remaining text
+                if (textParts.length > 0) {
+                    if (!textParts.every(t =>
+                        v.title.toLowerCase().includes(t) ||
+                        v.author?.toLowerCase().includes(t)
+                    )) return false;
+                }
+                return true;
+            });
         }
         return search.filteredVideos;
     })();
@@ -286,12 +299,14 @@ function App() {
                 loading={loadingTranscript}
                 title={selectedVideo?.title || ""}
                 videoId={selectedVideo?.id}
-                onSave={selectedVideo ? () => library.handleSaveVideo(selectedVideo) : undefined}
+                onSave={selectedVideo ? (summary) => library.handleSaveVideo(selectedVideo, summary) : undefined}
                 onDelete={() => library.handleDeleteFromSidebar(selectedVideo)}
                 onRefetch={selectedVideo ? () => handleSelectVideo(selectedVideo) : undefined}
                 hasApiKey={hasApiKey}
                 pluginSummarizeEnabled={pluginSummarizeEnabled}
                 onSummaryGenerated={library.refreshSummarizedCount}
+                cachedSummaries={cachedSummaries}
+                onCacheSummary={(id, s) => setCachedSummaries(prev => ({ ...prev, [id]: s }))}
             />
 
             <SettingsModal

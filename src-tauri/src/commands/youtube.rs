@@ -246,11 +246,16 @@ pub async fn fetch_transcript(app: tauri::AppHandle, video_id: String) -> Result
 }
 
 #[command]
-pub async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video, String> {
+pub async fn save_video(app: tauri::AppHandle, video_id: String, summary: Option<String>) -> Result<Video, String> {
     use crate::types::{parse_view_count, extract_handle_from_url};
     let db_path = get_db_path(&app);
 
     if let Ok(Some(v_data)) = db::get_video_full(&db_path, &video_id) {
+        // Update summary if provided
+        if let Some(ref s) = summary {
+            let _ = db::save_summary(&db_path, &video_id, s);
+        }
+
         return Ok(Video {
             id: v_data.0,
             title: v_data.1,
@@ -317,7 +322,7 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String) -> Result<Video
     let published_at = player_web["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("");
     let video_type = if length > 0 && length <= 60 { "short" } else { "standard" };
 
-    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type)
+    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type, summary.as_deref())
         .map_err(|e| e.to_string())?;
 
     let date_added = {
@@ -367,7 +372,7 @@ pub async fn check_video_exists(app: tauri::AppHandle, video_id: String) -> Resu
 pub async fn bulk_save_videos(app: tauri::AppHandle, video_ids: Vec<String>) -> Result<serde_json::Value, String> {
     let mut results = Vec::new();
     for id in video_ids {
-        match save_video(app.clone(), id).await {
+        match save_video(app.clone(), id, None).await {
             Ok(v) => results.push(serde_json::to_value(v).unwrap()),
             Err(e) => results.push(serde_json::json!({"error": e})),
         }

@@ -84,12 +84,17 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         }
     };
 
-    const facetPatterns: Record<string, SearchFacet> = {
-        'handle:': 'handle',
-        'playlist:': 'playlist',
-        'video:': 'video',
-        'filter_search:': 'filter_search'
-    };
+    const facetPatterns = useMemo(() => {
+        const patterns: Record<string, SearchFacet> = {
+            'handle:': 'handle',
+            'video:': 'video',
+            'filter_search:': 'filter_search'
+        };
+        if (!isLibrary) {
+            patterns['playlist:'] = 'playlist';
+        }
+        return patterns;
+    }, [isLibrary]);
 
     const extractPlaylistId = (val: string) => {
         const match = val.match(/[?&]list=([^#&?]+)/);
@@ -99,6 +104,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
     };
 
     const extractVideoId = (val: string) => {
+        if (val.startsWith('>')) return val.slice(1);
         const match = val.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i);
         if (match) return match[1];
         if (/^[a-zA-Z0-9_-]{11}$/.test(val) && !val.includes('.') && !val.includes('/')) return val;
@@ -137,20 +143,20 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             }
         }
 
-        if (facets.length === 0) {
+        if (facets.length === 0 || (isLibrary && facets.length === 1 && facets[0].type === 'filter_search')) {
             const handle = extractHandle(val);
             const videoId = extractVideoId(val);
-            const playlistId = extractPlaylistId(val);
+            const playlistId = !isLibrary ? extractPlaylistId(val) : null;
 
             if (handle && (val.includes('youtube.com') || val.startsWith('@'))) {
                 setFacets([{ type: 'handle', value: "" }]);
                 setQuery(handle);
                 return;
-            } else if (videoId && (val.includes('youtube.com') || val.includes('youtu.be'))) {
+            } else if (videoId && (val.includes('youtube.com') || val.includes('youtu.be') || val.startsWith('>'))) {
                 setFacets([{ type: 'video', value: "" }]);
                 setQuery(videoId);
                 return;
-            } else if (playlistId && val.includes('list=')) {
+            } else if (!isLibrary && playlistId && val.includes('list=')) {
                 setFacets([{ type: 'playlist', value: "" }]);
                 setQuery(playlistId);
                 return;
@@ -178,7 +184,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (isFilterSearchActive) return;
+        if (isFilterSearchActive && !isLibrary) return;
         const fullQuery = facets.map(f => `${f.type}:${query}`).join(' ') + (facets.length === 0 ? query : "");
         const trimmed = fullQuery.trim();
         if (trimmed) {
@@ -236,42 +242,44 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                         />
 
                         {/* Hints Lightbulb */}
-                        {!isLibrary && (
-                            <div className="group/hint relative flex items-center pr-1">
-                                <Lightbulb className="w-4 h-4 text-gray-500 hover:text-yellow-400 transition-colors cursor-help" />
+                        <div className="group/hint relative flex items-center pr-1">
+                            <Lightbulb className="w-4 h-4 text-gray-500 hover:text-yellow-400 transition-colors cursor-help" />
 
-                                <div className="absolute top-full right-0 mt-3 w-64 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-100">
-                                    <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">Search Tips</h4>
-                                    <div className="space-y-4">
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Paste Mode</span>
-                                            <p className="text-[12px] text-gray-300">Paste any YouTube URL directly into the search bar.</p>
-                                        </div>
-                                        <div className="flex flex-col gap-1">
-                                            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Facet Options</span>
-                                            <div className="grid grid-cols-1 gap-1.5 pt-1 text-[11px]">
-                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
-                                                    <span>filter_search:</span>
-                                                    <span className="text-gray-500 group-hover/code:text-gray-300">Title Filter</span>
-                                                </code>
+                            <div className="absolute top-full right-0 mt-3 w-64 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 shadow-2xl opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-100">
+                                <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">Search Tips</h4>
+                                <div className="space-y-4">
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{isLibrary ? "Library Mode" : "Paste Mode"}</span>
+                                        <p className="text-[12px] text-gray-300">
+                                            {isLibrary ? "Filter your saved videos using facets." : "Paste any YouTube URL directly into the search bar."}
+                                        </p>
+                                    </div>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Facet Options</span>
+                                        <div className="grid grid-cols-1 gap-1.5 pt-1 text-[11px]">
+                                            <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                <span>filter_search:</span>
+                                                <span className="text-gray-500 group-hover/code:text-gray-300">Title Filter</span>
+                                            </code>
+                                            {!isLibrary && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>playlist:</span>
                                                     <span className="text-gray-500 group-hover/code:text-gray-300">ID / URL</span>
                                                 </code>
-                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
-                                                    <span>video:</span>
-                                                    <span className="text-gray-500 group-hover/code:text-gray-300">ID / URL</span>
-                                                </code>
-                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
-                                                    <span>handle:</span>
-                                                    <span className="text-gray-500 group-hover/code:text-gray-300">@User / ID</span>
-                                                </code>
-                                            </div>
+                                            )}
+                                            <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                <span>video:</span>
+                                                <span className="text-gray-500 group-hover/code:text-gray-300">{'>'} / ID / URL</span>
+                                            </code>
+                                            <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                <span>handle:</span>
+                                                <span className="text-gray-500 group-hover/code:text-gray-300">@ / ID / URL</span>
+                                            </code>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        )}
+                        </div>
                     </div>
 
                     {/* Search History Dropdown */}

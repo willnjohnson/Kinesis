@@ -136,6 +136,8 @@
 :root:not(.dark) .prose h3 { color: #333333 !important; }
 :root:not(.dark) .prose strong { color: #111111 !important; }
 :root:not(.dark) .prose code { color: #333333 !important; }
+:root:not(.dark) .prose blockquote { border-left-color: #ccc !important; color: #555 !important; font-style: italic !important; }
+:root:not(.dark) .prose blockquote p { color: #555 !important; }
 
 /* Reduce markdown spacing */
 .prose p { margin-top: 0.25rem !important; margin-bottom: 0.25rem !important; }
@@ -143,6 +145,28 @@
 .prose li { margin-top: 0.1rem !important; margin-bottom: 0.1rem !important; }
 .prose h1, .prose h2, .prose h3 { margin-top: 0.5rem !important; margin-bottom: 0.25rem !important; }
 .prose ul li, .prose ol li { padding-top: 0 !important; padding-bottom: 0 !important; }
+
+/* Table styling for markdown */
+.prose table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin-top: 1rem !important;
+    margin-bottom: 1rem !important;
+    font-size: 0.85rem !important;
+    line-height: normal !important;
+}
+.prose th, .prose td {
+    border: 1px solid #444 !important;
+    padding: 0.5rem !important;
+    text-align: left !important;
+}
+.prose th {
+    background-color: #2a2a2a !important;
+    color: #fff !important;
+    font-weight: 700 !important;
+}
+:root:not(.dark) .prose th { background-color: #e0e0e0 !important; color: #111 !important; border-color: #ccc !important; }
+:root:not(.dark) .prose td { border-color: #ccc !important; }
 
 /* Sidebar - Save to Library button */
 :root:not(.dark) .bg-white.text-black { background-color: #333333 !important; color: #ffffff !important; }

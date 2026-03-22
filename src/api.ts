@@ -62,8 +62,8 @@ export async function getVideoInfo(id: string): Promise<Video> {
     return await invoke("fetch_video_info", { videoId: id });
 }
 
-export async function saveVideo(id: string): Promise<Video> {
-    return await invoke("save_video", { videoId: id });
+export async function saveVideo(id: string, summary?: string | null): Promise<Video> {
+    return await invoke("save_video", { videoId: id, summary });
 }
 
 export async function searchVideos(query: string): Promise<SearchResponse> {

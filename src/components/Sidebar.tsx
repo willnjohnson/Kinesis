@@ -2,6 +2,7 @@ import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, Copy, Check } from 'lu
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { checkVideoExists, summarizeTranscript, getSummary, saveSummary, getSetting } from '../api';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 interface Props {
     isOpen: boolean;
@@ -10,15 +11,17 @@ interface Props {
     loading: boolean;
     title: string;
     videoId?: string;
-    onSave?: () => void;
+    onSave?: (summary?: string | null) => void;
     onDelete?: () => void;
     onRefetch?: () => void;
     hasApiKey: boolean;
     pluginSummarizeEnabled: boolean;
     onSummaryGenerated?: () => void;
+    cachedSummaries?: Record<string, string>;
+    onCacheSummary?: (videoId: string, summary: string) => void;
 }
 
-export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey, pluginSummarizeEnabled, onSummaryGenerated }: Props) {
+export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, onSave, onDelete, onRefetch, hasApiKey, pluginSummarizeEnabled, onSummaryGenerated, cachedSummaries, onCacheSummary }: Props) {
     const [copied, setCopied] = useState(false);
     const [summaryCopied, setSummaryCopied] = useState(false);
     const [existsInDb, setExistsInDb] = useState(false);
@@ -87,34 +90,62 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
     }, [isOpen]);
 
     useEffect(() => {
-        if (videoId && isOpen) {
+        // Reset summary state when video changes or sidebar is closed
+        if (!isOpen) {
+            setSummary(null);
+            setShowSummary(false);
+            setSummaryError(null);
+            setHasExistingSummary(false);
+            return;
+        }
+
+        if (videoId) {
             setCheckingDb(true);
             checkVideoExists(videoId).then(exists => {
                 setExistsInDb(exists);
                 setCheckingDb(false);
             });
 
-            // Always check if summary already exists in DB
-            setCheckingSummary(true);
-            getSummary(videoId).then(existingSummary => {
-                if (existingSummary && existingSummary.trim()) {
-                    setHasExistingSummary(true);
-                    setSummary(existingSummary);
-                } else {
-                    setHasExistingSummary(false);
-                }
+            // check runtime cache first
+            if (cachedSummaries && cachedSummaries[videoId]) {
+                setSummary(cachedSummaries[videoId]);
+                setShowSummary(true);
+                setHasExistingSummary(true);
                 setCheckingSummary(false);
-            }).catch(() => {
+            } else {
+                // Reset states ONLY if not in cache
+                setSummary(null);
+                setShowSummary(false);
                 setHasExistingSummary(false);
-                setCheckingSummary(false);
-            });
+
+                // Check if summary already exists in DB
+                setCheckingSummary(true);
+                getSummary(videoId).then(existingSummary => {
+                    if (existingSummary && existingSummary.trim()) {
+                        setHasExistingSummary(true);
+                        setSummary(existingSummary);
+                        if (onCacheSummary) onCacheSummary(videoId, existingSummary);
+                    } else {
+                        setHasExistingSummary(false);
+                    }
+                    setCheckingSummary(false);
+                }).catch(() => {
+                    setHasExistingSummary(false);
+                    setCheckingSummary(false);
+                });
+            }
         }
-        // Reset summary state when video changes
-        setSummary(null);
-        setShowSummary(false);
-        setSummaryError(null);
-        setHasExistingSummary(false);
-    }, [videoId, isOpen, pluginSummarizeEnabled]);
+    }, [videoId, isOpen, pluginSummarizeEnabled, cachedSummaries]);
+
+    const handleOnSave = useCallback(async () => {
+        if (!videoId || !onSave) return;
+        try {
+            await onSave(summary);
+            setExistsInDb(true);
+        } catch (e) {
+            console.error('Save failed:', e);
+        }
+    }, [videoId, onSave, summary]);
 
     const handleCopy = useCallback(() => {
         if (!transcript) return;
@@ -147,9 +178,10 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
             setShowSummary(true);
             setHasExistingSummary(true);
             onSummaryGenerated?.();
+            if (videoId && onCacheSummary) onCacheSummary(videoId, result);
 
-            // Save summary to DB
-            if (videoId) {
+            // Save summary to DB if video already exists in DB
+            if (videoId && existsInDb) {
                 try {
                     await saveSummary(videoId, result);
                 } catch (e) {
@@ -161,7 +193,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
         } finally {
             setLoadingSummary(false);
         }
-    }, [transcript, showSummary, hasExistingSummary, summary, videoId]);
+    }, [transcript, showSummary, hasExistingSummary, summary, videoId, existsInDb, onSummaryGenerated, onCacheSummary]);
 
     const handleBackToTranscript = useCallback(() => {
         setShowSummary(false);
@@ -304,14 +336,14 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                                 <div className="flex flex-col gap-3">
                                     <button
                                         onClick={handleCopySummary}
-                                        className="self-start flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600 hover:text-red-300 transition-colors"
+                                        className="self-start flex items-center gap-1.5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-red-600 hover:text-red-300 transition-colors cursor-pointer"
                                         title="Copy AI Summary to clipboard"
                                     >
                                         {summaryCopied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
                                         {summaryCopied ? "Copied" : "Copy Summary"}
                                     </button>
                                     <div className="text-gray-300 leading-relaxed prose prose-invert prose-sm max-w-none">
-                                        <ReactMarkdown>{summary}</ReactMarkdown>
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
                                     </div>
                                 </div>
                             ) : loading ? (
@@ -370,7 +402,7 @@ export function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, 
                             </button>
                         ) : (
                             <button
-                                onClick={onSave}
+                                onClick={handleOnSave}
                                 disabled={loading || isTranscriptInvalid || checkingDb || !hasApiKey}
                                 title={!hasApiKey ? "API not imported" : isTranscriptInvalid ? "No transcript to save" : "Save to library"}
                                 className={`flex-1 bg-white text-black py-3 rounded-lg transition-all font-bold uppercase text-[10px] tracking-[0.2em] disabled:opacity-20 flex items-center justify-center gap-2 ${loading || isTranscriptInvalid || checkingDb || !hasApiKey ? 'cursor-default' : 'hover:bg-[#e5e5e5] cursor-pointer'}`}

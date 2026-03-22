@@ -40,10 +40,10 @@ export function useLibrary(
         }
     }, [pluginSummarizeEnabled, refreshSummarizedCount, setNotification, initialized]);
 
-    const handleSaveVideo = useCallback(async (video: Video) => {
+    const handleSaveVideo = useCallback(async (video: Video, summary?: string | null) => {
         if (!video) return;
         try {
-            const result = await saveVideo(video.id);
+            const result = await saveVideo(video.id, summary);
             if (result.status === 'exists') {
                 setNotification({ message: `"${video.title.substring(0, 30)}..." already exists in DB.`, type: "info" });
             } else {
@@ -55,6 +55,7 @@ export function useLibrary(
             }
         } catch (e: any) {
             setNotification({ message: `Failed to save: ${e.message}`, type: "error" });
+            throw e;
         }
     }, [setNotification]);
 

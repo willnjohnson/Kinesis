@@ -16,7 +16,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
             summary      TEXT,
             view_count   INTEGER DEFAULT 0,
             video_type   TEXT DEFAULT 'standard',
-            published_at TEXT,
+            published_at DATETIME,
             date_added   DATETIME DEFAULT CURRENT_TIMESTAMP
         )",
         [],
@@ -36,7 +36,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS search_history (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             search_query TEXT NOT NULL,
-            searched_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+            searched_at  DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
             UNIQUE(search_query)
         )",
         [],
@@ -63,21 +63,82 @@ pub fn init_db(db_path: &str) -> Result<()> {
             "CREATE TABLE IF NOT EXISTS search_history (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 search_query TEXT NOT NULL,
-                searched_at  TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+                searched_at  DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
                 UNIQUE(search_query)
             )",
             [],
         )?;
     }
 
-    // Migration: Add missing columns to `videos` table for older database files
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN handle TEXT", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN length_seconds INTEGER", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN summary TEXT", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN view_count INTEGER DEFAULT 0", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN video_type TEXT DEFAULT 'standard'", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN published_at TEXT", []);
-    let _ = conn.execute("ALTER TABLE videos ADD COLUMN date_added DATETIME DEFAULT CURRENT_TIMESTAMP", []);
+    // Migration: Add missing columns or update column types for older database files
+    // Use a robust check to ensure columns are exactly as expected
+    let schema_ok = {
+        let mut ok = true;
+        let mut stmt = conn.prepare("PRAGMA table_info(videos)").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        let mut found_published_at_dt = false;
+        while let Some(row) = rows.next().unwrap() {
+            let name: String = row.get(1).unwrap();
+            let type_str: String = row.get(2).unwrap();
+            if name == "published_at" && type_str.to_uppercase() == "DATETIME" {
+                found_published_at_dt = true;
+            }
+        }
+        found_published_at_dt
+    };
+
+    if !schema_ok {
+        // Check if table has published_at at all
+        let has_col = conn.query_row("SELECT name FROM pragma_table_info('videos') WHERE name='published_at'", [], |_| Ok(())).is_ok();
+        
+        if !has_col {
+            // Simple expansion for very old DBs
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN handle TEXT", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN length_seconds INTEGER", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN summary TEXT", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN view_count INTEGER DEFAULT 0", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN video_type TEXT DEFAULT 'standard'", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN published_at DATETIME", []);
+            let _ = conn.execute("ALTER TABLE videos ADD COLUMN date_added DATETIME DEFAULT CURRENT_TIMESTAMP", []);
+        } else {
+            // Full migration needed to change TEXT to DATETIME
+            let _ = conn.execute_batch("
+                BEGIN TRANSACTION;
+                CREATE TABLE videos_new (
+                    video_id     TEXT PRIMARY KEY,
+                    title        TEXT,
+                    author       TEXT,
+                    handle       TEXT,
+                    length_seconds INTEGER,
+                    transcript   TEXT,
+                    summary      TEXT,
+                    view_count   INTEGER DEFAULT 0,
+                    video_type   TEXT DEFAULT 'standard',
+                    published_at DATETIME,
+                    date_added   DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                INSERT INTO videos_new (
+                    video_id, title, author, handle, length_seconds, 
+                    transcript, summary, view_count, video_type, 
+                    published_at, date_added
+                )
+                SELECT 
+                    video_id, title, author, 
+                    COALESCE(handle, ''), 
+                    COALESCE(length_seconds, 0), 
+                    COALESCE(transcript, ''), 
+                    COALESCE(summary, ''), 
+                    COALESCE(view_count, 0), 
+                    COALESCE(video_type, 'standard'), 
+                    published_at, 
+                    COALESCE(date_added, CURRENT_TIMESTAMP)
+                FROM videos;
+                DROP TABLE videos;
+                ALTER TABLE videos_new RENAME TO videos;
+                COMMIT;
+            ");
+        }
+    }
 
     Ok(())
 }
@@ -131,12 +192,12 @@ pub fn list_videos(db_path: &str, video_type_filter: Option<&str>) -> Result<Vec
     Ok(videos)
 }
 
-pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, length: i32, transcript: &str, view_count: i64, published_at: &str, handle: &str, video_type: &str) -> Result<()> {
+pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, length: i32, transcript: &str, view_count: i64, published_at: &str, handle: &str, video_type: &str, summary: Option<&str>) -> Result<()> {
     let video_id = video_id.trim();
     let conn = Connection::open(db_path)?;
     conn.execute(
-        "INSERT INTO videos (video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO videos (video_id, title, author, length_seconds, transcript, view_count, published_at, handle, video_type, summary)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(video_id) DO UPDATE SET 
             title=excluded.title, 
             author=excluded.author, 
@@ -145,8 +206,9 @@ pub fn save_video(db_path: &str, video_id: &str, title: &str, author: &str, leng
             view_count=excluded.view_count,
             published_at=excluded.published_at,
             handle=excluded.handle,
-            video_type=excluded.video_type",
-        params![video_id, title, author, length, transcript, view_count, published_at, handle, video_type],
+            video_type=excluded.video_type,
+            summary=COALESCE(excluded.summary, videos.summary)",
+        params![video_id, title, author, length, transcript, view_count, published_at, handle, video_type, summary],
     )?;
     Ok(())
 }
