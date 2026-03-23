@@ -239,8 +239,10 @@ function App() {
                                 onSaveAll={displayedVideos.length > 0 ? library.handleSaveAll : undefined}
                                 saveProgress={library.saveProgress}
                                 compact={videoListMode === 'compact'}
+                                onLoadMore={search.isSearch && search.continuationToken ? search.handleLoadMore : undefined}
+                                loadingMore={search.loadingMore}
                             />
-                            {search.continuationToken && (
+                            {search.continuationToken && !search.isSearch && (
                                 <div className="mt-16 text-center flex justify-center gap-4">
                                     <button
                                         onClick={search.handleLoadMore}

@@ -1,6 +1,6 @@
 import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users, Sparkles } from 'lucide-react';
 import { type Video } from '../api';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { format } from 'date-fns';
 
 interface Props {
@@ -15,14 +15,34 @@ interface Props {
     summarizedCount?: number;
     totalCount?: number;
     isLibrary?: boolean;
+    onLoadMore?: () => void;
+    loadingMore?: boolean;
 }
 
 type SortField = 'popularity' | 'date' | 'added';
 type SortOrder = 'desc' | 'asc';
 
-export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress, compact = false, onSummarizeAll, summarizeProgress, summarizedCount = 0, totalCount = 0, isLibrary = false }: Props) {
+export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress, compact = false, onSummarizeAll, summarizeProgress, summarizedCount = 0, totalCount = 0, isLibrary = false, onLoadMore, loadingMore }: Props) {
     const [sortField, setSortField] = useState<SortField>('date');
     const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+    const loadMoreRef = useRef<HTMLDivElement>(null);
+
+    // Infinite scroll - trigger onLoadMore when sentinel comes into view
+    useEffect(() => {
+        if (!onLoadMore || !loadMoreRef.current) return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && !loadingMore) {
+                    onLoadMore();
+                }
+            },
+            { threshold: 0.1, rootMargin: '100px' }
+        );
+
+        observer.observe(loadMoreRef.current);
+        return () => observer.disconnect();
+    }, [onLoadMore, loadingMore]);
 
     const sortedVideos = useMemo(() => {
         return [...videos].sort((a, b) => {
@@ -229,6 +249,18 @@ export function VideoList({ videos, onSelect, onSaveAll, onDelete, saveProgress,
                     </div>
                 ))}
             </div>
+
+            {/* Sentinel for infinite scroll */}
+            {onLoadMore && (
+                <div ref={loadMoreRef} className="py-8 flex items-center justify-center">
+                    {loadingMore && (
+                        <div className="flex flex-col items-center gap-2">
+                            <div className="w-8 h-8 border-4 border-[#303030] border-t-red-600 rounded-full animate-spin" />
+                            <p className="font-medium text-sm text-gray-400">Loading more...</p>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

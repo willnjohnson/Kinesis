@@ -5,9 +5,9 @@ use rusqlite::{Connection, Result, params};
 pub fn add_history(path: &str, query: &str) -> Result<()> {
     let conn = Connection::open(path)?;
     conn.execute(
-        "INSERT INTO search_history (search_query, searched_at)
-         VALUES (?1, datetime('now', 'localtime'))
-         ON CONFLICT(search_query) DO UPDATE SET searched_at = datetime('now', 'localtime')",
+        "INSERT INTO search_history (search_query)
+         VALUES (?1)
+         ON CONFLICT(search_query) DO UPDATE SET searched_at = CURRENT_TIMESTAMP",
         params![query],
     )?;
     Ok(())

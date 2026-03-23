@@ -381,7 +381,79 @@ pub async fn bulk_save_videos(app: tauri::AppHandle, video_ids: Vec<String>) -> 
 }
 
 #[command]
-pub async fn search_videos(_app: tauri::AppHandle, query: String) -> Result<VideoResponse, String> {
+pub async fn search_videos(app: tauri::AppHandle, query: String, continuation: Option<String>) -> Result<VideoResponse, String> {
+    let db_path = get_db_path(&app);
+    let api_key = db::get_setting(&db_path, "api_key").unwrap_or(None);
+
+    log::info!("Search called - query: {}, continuation: {:?}, api_key present: {}", query, continuation, api_key.is_some());
+
+    // If API key is available, use YouTube Data API with pagination
+    if let Some(key) = api_key {
+        let client = reqwest::Client::new();
+        let mut url = format!(
+            "https://youtube.googleapis.com/youtube/v3/search?part=snippet&maxResults=50&q={}&type=video&key={}",
+            urlencoding::encode(&query), key
+        );
+        if let Some(token) = continuation.as_ref() {
+            url = format!("{}&pageToken={}", url, token);
+        }
+
+        let res: Value = client.get(&url).send().await.map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+
+        if res.get("error").is_some() {
+            return Err(format!("API Error: {}", res["error"]["message"].as_str().unwrap_or("Unknown")));
+        }
+
+        let next_page_token = res["nextPageToken"].as_str().map(|s| s.to_string());
+        let mut videos = Vec::new();
+        let mut video_ids = Vec::new();
+
+        if let Some(items) = res["items"].as_array() {
+            for item in items {
+                let snippet = &item["snippet"];
+                if let Some(vid) = item["id"]["videoId"].as_str() {
+                    video_ids.push(vid.to_string());
+                    videos.push(Video {
+                        id: vid.to_string(),
+                        title: snippet["title"].as_str().unwrap_or("Unknown").to_string(),
+                        thumbnail: snippet["thumbnails"]["high"]["url"].as_str()
+                            .or(snippet["thumbnails"]["default"]["url"].as_str())
+                            .unwrap_or("").to_string(),
+                        published_at: snippet["publishedAt"].as_str().unwrap_or("").to_string(),
+                        view_count: "0".to_string(),
+                        author: snippet["channelTitle"].as_str().map(|s| s.to_string()),
+                        handle: None, status: None, date_added: None,
+                        length_seconds: None, video_type: None,
+                    });
+                }
+            }
+        }
+
+        // Fetch view counts
+        if !video_ids.is_empty() {
+            let stats_url = format!(
+                "https://youtube.googleapis.com/youtube/v3/videos?part=statistics&id={}&key={}",
+                video_ids.join(","), key
+            );
+            if let Ok(stats_res) = client.get(&stats_url).send().await {
+                if let Ok(stats_data) = stats_res.json::<Value>().await {
+                    if let Some(items) = stats_data["items"].as_array() {
+                        for item in items {
+                            if let Some(vid) = item["id"].as_str() {
+                                if let Some(v) = videos.iter_mut().find(|v| v.id == vid) {
+                                    v.view_count = item["statistics"]["viewCount"].as_str().unwrap_or("0").to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return Ok(VideoResponse { videos, continuation: next_page_token });
+    }
+
+    // Fallback to web scraping without pagination
     let client = YouTubeClient::new(ClientType::Web);
     let data = client.search(&query).await?;
     let mut videos = Vec::new();

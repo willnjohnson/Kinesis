@@ -9,6 +9,7 @@ interface SearchState {
     id: string;
     isPlaylist: boolean;
     isV3Channel?: boolean;
+    isSearch?: boolean;
 }
 
 export function useSearch(hasApiKey: boolean) {
@@ -94,6 +95,8 @@ export function useSearch(hasApiKey: boolean) {
             } else {
                 const res = await searchVideos(targetId);
                 setVideos(dedup(res.videos));
+                setContinuationToken(res.continuation);
+                setCurrentSearch({ id: targetId, isPlaylist: false, isSearch: true });
                 if (res.videos.length === 0) setError("No videos found for this search.");
             }
 
@@ -112,9 +115,14 @@ export function useSearch(hasApiKey: boolean) {
         if (!continuationToken || !currentSearch || loadingMore) return;
         setLoadingMore(true);
         try {
-            const res = currentSearch.isV3Channel
-                ? await fetchChannelVideosV3(currentSearch.id, continuationToken)
-                : await getVideos(currentSearch.id, currentSearch.isPlaylist, continuationToken);
+            let res;
+            if (currentSearch.isSearch) {
+                res = await searchVideos(currentSearch.id, continuationToken);
+            } else if (currentSearch.isV3Channel) {
+                res = await fetchChannelVideosV3(currentSearch.id, continuationToken);
+            } else {
+                res = await getVideos(currentSearch.id, currentSearch.isPlaylist, continuationToken);
+            }
             setVideos(prev => {
                 const existing = new Set(prev.map(v => v.id));
                 return [...prev, ...res.videos.filter(v => !existing.has(v.id))];
@@ -133,9 +141,14 @@ export function useSearch(hasApiKey: boolean) {
         try {
             let token: string | null = continuationToken;
             while (token) {
-                const res = currentSearch.isV3Channel
-                    ? await fetchChannelVideosV3(currentSearch.id, token)
-                    : await getVideos(currentSearch.id, currentSearch.isPlaylist, token);
+                let res;
+                if (currentSearch.isSearch) {
+                    res = await searchVideos(currentSearch.id, token);
+                } else if (currentSearch.isV3Channel) {
+                    res = await fetchChannelVideosV3(currentSearch.id, token);
+                } else {
+                    res = await getVideos(currentSearch.id, currentSearch.isPlaylist, token);
+                }
                 setVideos(prev => {
                     const existing = new Set(prev.map(v => v.id));
                     return [...prev, ...res.videos.filter(v => !existing.has(v.id))];
@@ -174,6 +187,9 @@ export function useSearch(hasApiKey: boolean) {
         );
     }, [videos, searchQuery]);
 
+    // Computed: is this a regular search (not handle/playlist facet)?
+    const isSearch = currentSearch?.isSearch === true;
+
     return {
         videos,
         loading,
@@ -189,5 +205,6 @@ export function useSearch(hasApiKey: boolean) {
         handleLoadMore,
         handleLoadAll,
         filteredVideos,
+        isSearch,
     };
 }

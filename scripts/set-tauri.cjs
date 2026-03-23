@@ -3,7 +3,11 @@ const path = require('path');
 
 const branding = process.env.TAURI_BRANDING || 'kinesis';
 const configPath = path.join(__dirname, '..', 'src-tauri', 'tauri.conf.json');
+const packagePath = path.join(__dirname, '..', 'package.json');
 const stateFile = path.join(__dirname, '..', 'scripts', '.branding-state');
+
+// Get version from environment variable
+const version = process.env.TAURI_VERSION || null;
 
 console.log(`Setting icons for branding: ${branding}`);
 
@@ -30,6 +34,26 @@ if (brandingChanged) {
 // Read the config file
 const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 
+// Read package.json
+const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf-8'));
+
+// Default version from package.json if not provided via flag
+const defaultVersion = packageJson.version || '0.2.0';
+const currentVersion = version || defaultVersion;
+
+// Update version in tauri.conf.json if provided
+if (version) {
+  config.version = version;
+  console.log(`Updated tauri.conf.json version to ${version}`);
+}
+
+// Update version in package.json if provided
+if (version && packageJson.version !== version) {
+  packageJson.version = version;
+  fs.writeFileSync(packagePath, JSON.stringify(packageJson, null, 2) + '\n');
+  console.log(`Updated package.json version to ${version}`);
+}
+
 // Update the icon paths based on branding
 const iconFolder = `icons-${branding}`;
 config.bundle.icon = [
@@ -44,16 +68,16 @@ config.bundle.icon = [
 if (branding === 'genesis') {
   config.productName = 'Genesis';
   config.identifier = 'genesisapp';
-  config.app.windows[0].title = 'Genesis v0.1.8';
+  config.app.windows[0].title = `Genesis v${currentVersion}`;
 } else {
   config.productName = 'Kinesis';
   config.identifier = 'kinesisapp';
-  config.app.windows[0].title = 'Kinesis v0.1.8';
+  config.app.windows[0].title = `Kinesis v${currentVersion}`;
 }
 
 // Write back to config file
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-console.log(`Updated tauri.conf.json with ${branding} icons and title`);
+console.log(`Updated tauri.conf.json with ${branding} icons and title (v${currentVersion})`);
 
 // Only clean target if branding changed
 if (brandingChanged) {

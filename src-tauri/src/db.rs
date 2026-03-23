@@ -36,7 +36,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS search_history (
             id           INTEGER PRIMARY KEY AUTOINCREMENT,
             search_query TEXT NOT NULL,
-            searched_at  DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+            searched_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(search_query)
         )",
         [],
@@ -63,7 +63,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
             "CREATE TABLE IF NOT EXISTS search_history (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 search_query TEXT NOT NULL,
-                searched_at  DATETIME NOT NULL DEFAULT (datetime('now', 'localtime')),
+                searched_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(search_query)
             )",
             [],
