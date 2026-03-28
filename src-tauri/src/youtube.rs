@@ -1,5 +1,11 @@
 use serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT, CONTENT_TYPE};
+use html_escape;
+
+/// Decode HTML entities in a string (e.g., &amp; -> &, &#39; -> ')
+fn decode_html(text: &str) -> String {
+    html_escape::decode_html_entities(text).to_string()
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClientType {
@@ -405,7 +411,7 @@ fn parse_xml_transcript(xml: &str) -> Result<Option<String>, String> {
 
 pub fn extract_video_basic_info(renderer: &Value) -> Option<Value> {
     let video_id = renderer["videoId"].as_str()?;
-    let title = renderer["title"]["runs"][0]["text"].as_str().unwrap_or("Unknown");
+    let title = decode_html(renderer["title"]["runs"][0]["text"].as_str().unwrap_or("Unknown"));
     
     let thumbs = renderer["thumbnail"]["thumbnails"].as_array();
     let thumbnail = thumbs.and_then(|t| t.last())
@@ -421,10 +427,10 @@ pub fn extract_video_basic_info(renderer: &Value) -> Option<Value> {
         }
     }
 
-    let owner_text = renderer["ownerText"]["runs"][0]["text"].as_str().unwrap_or("");
+    let owner_text = decode_html(renderer["ownerText"]["runs"][0]["text"].as_str().unwrap_or(""));
     
     // Try to extract handle from ownerText (e.g., "Channel Name (@handle)")
-    let handle = extract_handle_from_text(owner_text);
+    let handle = extract_handle_from_text(&owner_text);
 
     Some(serde_json::json!({
         "id": video_id,
@@ -439,16 +445,16 @@ pub fn extract_video_basic_info(renderer: &Value) -> Option<Value> {
 
 pub fn extract_playlist_video_info(renderer: &Value) -> Option<Value> {
     let video_id = renderer["videoId"].as_str()?;
-    let title = renderer["title"]["runs"][0]["text"].as_str().unwrap_or("Unknown");
+    let title = decode_html(renderer["title"]["runs"][0]["text"].as_str().unwrap_or("Unknown"));
     
     let thumbs = renderer["thumbnail"]["thumbnails"].as_array();
     let thumbnail = thumbs.and_then(|t| t.last())
         .and_then(|t| t["url"].as_str())
         .unwrap_or("");
     
-    let owner_text = renderer["shortBylineText"]["runs"][0]["text"].as_str().unwrap_or("");
+    let owner_text = decode_html(renderer["shortBylineText"]["runs"][0]["text"].as_str().unwrap_or(""));
 
-    let handle = extract_handle_from_text(owner_text);
+    let handle = extract_handle_from_text(&owner_text);
 
     let mut view_count = String::new();
     let mut published_at = String::new();

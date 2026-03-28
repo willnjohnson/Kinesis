@@ -2,6 +2,12 @@ use serde_json::Value;
 use tauri::command;
 use crate::{get_db_path, db, types::*};
 use crate::youtube::{self, YouTubeClient, ClientType};
+use html_escape;
+
+/// Decode HTML entities in a string
+fn decode_html(text: &str) -> String {
+    html_escape::decode_html_entities(text).to_string()
+}
 
 #[command]
 pub async fn resolve_channel(_app: tauri::AppHandle, query: String) -> Result<ChannelInfo, String> {
@@ -120,13 +126,13 @@ pub async fn fetch_channel_videos_v3(
                 video_ids.push(vid.to_string());
                 videos.push(Video {
                     id: vid.to_string(),
-                    title: snippet["title"].as_str().unwrap_or("Unknown").to_string(),
+                    title: decode_html(&snippet["title"].as_str().unwrap_or("Unknown").to_string()),
                     thumbnail: snippet["thumbnails"]["high"]["url"].as_str()
                         .or(snippet["thumbnails"]["default"]["url"].as_str())
                         .unwrap_or("").to_string(),
                     published_at: snippet["publishedAt"].as_str().unwrap_or("").to_string(),
                     view_count: "0".to_string(),
-                    author: snippet["channelTitle"].as_str().map(|s| s.to_string()),
+                    author: snippet["channelTitle"].as_str().map(|s| decode_html(s)),
                     handle: None, status: None, date_added: None,
                     length_seconds: None, video_type: None,
                 });
@@ -194,7 +200,7 @@ pub async fn fetch_video_info(_app: tauri::AppHandle, video_id: String) -> Resul
 
     Ok(Video {
         id: details["videoId"].as_str().unwrap_or(&video_id).to_string(),
-        title: details["title"].as_str().unwrap_or("Unknown").to_string(),
+        title: decode_html(details["title"].as_str().unwrap_or("Unknown").as_ref()),
         thumbnail: details["thumbnail"]["thumbnails"].as_array()
             .and_then(|a| a.last())
             .and_then(|t| t["url"].as_str())
@@ -303,11 +309,11 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String, summary: Option
         return Err("Cannot save video without transcript.".to_string());
     }
 
-    let title = details["title"].as_str().unwrap_or("Unknown");
+    let title = decode_html(details["title"].as_str().unwrap_or("Unknown"));
     let author = if let Some(authors) = details["author"].as_array() {
-        authors.first().and_then(|a| a["name"].as_str()).unwrap_or("Unknown")
+        decode_html(authors.first().and_then(|a| a["name"].as_str()).unwrap_or("Unknown"))
     } else {
-        details["author"].as_str().unwrap_or("Unknown")
+        decode_html(details["author"].as_str().unwrap_or("Unknown"))
     };
 
     for try_handle in [
@@ -322,7 +328,7 @@ pub async fn save_video(app: tauri::AppHandle, video_id: String, summary: Option
     let published_at = player_web["microformat"]["playerMicroformatRenderer"]["publishDate"].as_str().unwrap_or("");
     let video_type = if length > 0 && length <= 60 { "short" } else { "standard" };
 
-    db::save_video(&db_path, &video_id, title, author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type, summary.as_deref())
+    db::save_video(&db_path, &video_id, &title, &author, length, &transcript, view_count, published_at, handle.as_deref().unwrap_or(""), video_type, summary.as_deref())
         .map_err(|e| e.to_string())?;
 
     let date_added = {
@@ -415,13 +421,13 @@ pub async fn search_videos(app: tauri::AppHandle, query: String, continuation: O
                     video_ids.push(vid.to_string());
                     videos.push(Video {
                         id: vid.to_string(),
-                        title: snippet["title"].as_str().unwrap_or("Unknown").to_string(),
+                        title: decode_html(&snippet["title"].as_str().unwrap_or("Unknown").to_string()),
                         thumbnail: snippet["thumbnails"]["high"]["url"].as_str()
                             .or(snippet["thumbnails"]["default"]["url"].as_str())
                             .unwrap_or("").to_string(),
                         published_at: snippet["publishedAt"].as_str().unwrap_or("").to_string(),
                         view_count: "0".to_string(),
-                        author: snippet["channelTitle"].as_str().map(|s| s.to_string()),
+                        author: snippet["channelTitle"].as_str().map(|s| decode_html(s)),
                         handle: None, status: None, date_added: None,
                         length_seconds: None, video_type: None,
                     });

@@ -1,6 +1,7 @@
 import { Search, AtSign, Youtube, ListVideo, Filter, X, Lightbulb, History, Clock } from 'lucide-react';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { addSearchHistory, getSearchHistory, type HistoryEntry } from '../api';
+import { decodeHtmlEntities } from '../lib/utils';
 
 export interface Facet {
     type: SearchFacet;
@@ -299,7 +300,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                         >
                                             <Clock className="w-3.5 h-3.5 text-gray-400 dark:text-[#555] shrink-0 group-hover:text-gray-600 dark:group-hover:text-[#888] transition-colors" />
                                             <span className="text-sm text-gray-600 dark:text-[#aaaaaa] group-hover:text-gray-900 dark:group-hover:text-white transition-colors truncate flex-1">
-                                                {entry.search_query}
+                                                {decodeHtmlEntities(entry.search_query)}
                                             </span>
                                             <span className="text-[10px] text-gray-400 dark:text-[#444] shrink-0 ml-2">
                                                 {new Date(entry.searchedAt).toLocaleDateString()}

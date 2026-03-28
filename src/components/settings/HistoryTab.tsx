@@ -1,5 +1,6 @@
 import { History, Clock, Trash2, X } from "lucide-react";
 import { type HistoryEntry } from "../../api";
+import { decodeHtmlEntities } from "../../lib/utils";
 
 interface Props {
     entries: HistoryEntry[];
@@ -69,7 +70,7 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll }: 
                                 {grouped[date].map(entry => (
                                     <div key={entry.id} className="flex items-center gap-3 px-4 py-2.5 group hover:bg-gray-100 dark:hover:bg-white/[0.02] transition-colors">
                                         <Clock className="w-3 h-3 text-gray-300 dark:text-[#444] shrink-0" />
-                                        <span className="flex-1 text-sm text-gray-600 dark:text-[#aaaaaa] truncate">{entry.search_query}</span>
+                                        <span className="flex-1 text-sm text-gray-600 dark:text-[#aaaaaa] truncate">{decodeHtmlEntities(entry.search_query)}</span>
                                         <span className="text-[10px] text-gray-400 dark:text-[#444] shrink-0">
                                             {entry.searchedAt.split(' ')[1]?.slice(0, 5) ?? ''}
                                         </span>
