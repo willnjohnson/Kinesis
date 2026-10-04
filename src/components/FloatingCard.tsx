@@ -75,10 +75,14 @@ interface Props {
      *  tooltips, which should never be covered by anything they're explaining — passes a higher one. Set inline, not
      *  via a `z-[...]` class, so it reliably beats whatever the className below adds. */
     zIndex?: number;
+    /** 'menu': the colors of the menus (ContextMenu.tsx's MENU_PANEL), for a card that opens beside one (a menu item's
+     *  peek), so the two read as one piece. */
+    tone?: 'default' | 'menu';
     children: ReactNode;
 }
 
-export function FloatingCard({ anchor, side: want = 'auto', role = 'tooltip', interactive = false, onMouseEnter, onMouseLeave, className = '', zIndex = 90, children }: Props) {
+export function FloatingCard({ anchor, side: want = 'auto', role = 'tooltip', interactive = false, onMouseEnter, onMouseLeave, className = '', zIndex = 90, tone = 'default', children }: Props) {
+    const colors = tone === 'menu' ? 'bg-[#1a1a1a] border-[#333]' : 'bg-[#272727] border-[#303030]';
     const box = useRef<HTMLDivElement>(null);
     const [placed, setPlaced] = useState<Placed | null>(null);
 
@@ -111,11 +115,11 @@ export function FloatingCard({ anchor, side: want = 'auto', role = 'tooltip', in
             onMouseEnter={onMouseEnter}
             onMouseLeave={onMouseLeave}
             {...(interactive ? { 'data-keep-open': '' } : {})}
-            className={`fixed ${interactive ? 'pointer-events-auto' : 'pointer-events-none'} rounded-lg bg-[#272727] border-2 border-[#303030] shadow-2xl select-none ${className}`}
+            className={`fixed ${interactive ? 'pointer-events-auto' : 'pointer-events-none'} rounded-lg border-2 ${colors} shadow-2xl select-none ${className}`}
         >
             {/* The strip across the gap to the element, so the pointer stays on the card on its way over. */}
             {interactive && <span aria-hidden className={`absolute ${BRIDGE[side]}`} />}
-            <span aria-hidden style={arrowStyle} className={`absolute w-2.5 h-2.5 rotate-45 bg-[#272727] border-[#303030] ${arrowBorder}`} />
+            <span aria-hidden style={arrowStyle} className={`absolute w-2.5 h-2.5 rotate-45 ${colors} ${arrowBorder}`} />
             {/* Above the arrow's half that is inside the box. */}
             <div className="relative">{children}</div>
         </div>,

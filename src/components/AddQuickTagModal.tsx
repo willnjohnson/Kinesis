@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { saveGlossaryTerm } from '../api';
 import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { Modal } from './Modal';
+import { UnsavedChangesModal } from './UnsavedChangesModal';
 
 interface Props {
     onClose: () => void;
@@ -12,9 +13,9 @@ interface Props {
 export function AddQuickTagModal({ onClose, onCreated }: Props) {
     const [tag, setTag] = useState('');
     const [error, setError] = useState<string | null>(null);
+    const [confirmClose, setConfirmClose] = useState(false);
 
-    const handleSubmit = async (event: FormEvent) => {
-        event.preventDefault();
+    const save = async () => {
         const name = tag.trim();
         if (!name) return;
         try {
@@ -25,9 +26,24 @@ export function AddQuickTagModal({ onClose, onCreated }: Props) {
         }
     };
 
+    const handleSubmit = async (event: FormEvent) => {
+        event.preventDefault();
+        await save();
+    };
+
     return (
+        <>
+        {confirmClose && (
+            <UnsavedChangesModal
+                message="You have an unsaved tag. Save it before closing?"
+                onCancel={() => setConfirmClose(false)}
+                onDiscard={onClose}
+                onSave={() => { setConfirmClose(false); void save(); }}
+            />
+        )}
         <Modal
-            onClose={onClose}
+            // Backdrop click, Esc and the X ask first once something's typed; Cancel discards on purpose.
+            onClose={() => { if (tag.trim()) setConfirmClose(true); else onClose(); }}
             icon={Plus}
             title="Add Tag"
             onSubmit={handleSubmit}
@@ -65,5 +81,6 @@ export function AddQuickTagModal({ onClose, onCreated }: Props) {
             </div>
             {error && <div className="text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
         </Modal>
+        </>
     );
 }

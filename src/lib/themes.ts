@@ -153,6 +153,11 @@ const RAW_TOKENS_LIGHT: RawTokens = {
 // themed palette (Dracula, Nord, a custom import) just needs a handful of visually distinct,
 // coherent levels, not an exact copy of it.
 function deriveRawTokens(colors: ThemeColors): RawTokens {
+    // The hovers that were a step *up* from #272727/#303030 in Dark (#333333, #3f3f3f, #444...) have to land a step up
+    // from surfaceRaised here too, since that's what bg-272727/303030 become: mapping them to surfaceRaised itself made
+    // hovering a menu item or button on a raised surface (every right-click menu, for one) change nothing at all. Nudged
+    // toward the text color, so it goes lighter in a dark theme and darker in a light one.
+    const raisedHover = `color-mix(in srgb, ${colors.surfaceRaised}, ${colors.text} 12%)`;
     return {
         bg: colors.bg,
         'bg-121212': colors.surface, 'bg-141414': colors.surface, 'bg-1a1a1a': colors.surfaceAlt, 'bg-202020': colors.surfaceAlt,
@@ -167,8 +172,8 @@ function deriveRawTokens(colors: ThemeColors): RawTokens {
         'border-303030': colors.border, 'border-333': colors.border, 'border-333333': colors.border, 'border-383838': colors.border,
         'border-404040': colors.border, 'border-444': colors.borderStrong, 'border-505050': colors.borderStrong,
         'border-gray-700': colors.border, 'border-gray-800': colors.borderStrong, 'border-white-5': colors.border,
-        'hover-bg-333333': colors.surfaceRaised, 'hover-bg-3f3f3f': colors.surfaceRaised, 'hover-bg-444': colors.surfaceRaised, 'hover-bg-444444': colors.surfaceRaised,
-        'hover-bg-272727': colors.surfaceRaised, 'hover-bg-2a2a2a': colors.surfaceRaised, 'hover-bg-202020': colors.surfaceRaised, 'hover-bg-gray-700': colors.surfaceRaised,
+        'hover-bg-333333': raisedHover, 'hover-bg-3f3f3f': raisedHover, 'hover-bg-444': raisedHover, 'hover-bg-444444': raisedHover,
+        'hover-bg-272727': colors.surfaceRaised, 'hover-bg-2a2a2a': colors.surfaceRaised, 'hover-bg-202020': colors.surfaceRaised, 'hover-bg-gray-700': raisedHover,
         'hover-text-white': colors.text, 'hover-border-505050': colors.borderStrong, 'hover-border-555555': colors.borderStrong,
         accent: colors.accent, 'accent-hover': colors.accentHover, success: colors.success, 'success-hover': colors.success,
         info: colors.accent, 'info-hover': colors.accentHover, purple: colors.accentHover,

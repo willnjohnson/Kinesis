@@ -38,8 +38,10 @@ function PreviewMarkdown({ children }: { children: string }) {
 
 /** A card with a title and the start of some markdown text, cut off with an ellipsis after six lines: a detailed entry shows its
  *  opening, and the rest is one click away. `side` is where it goes around `anchor` (flipped if there is no room). */
-export function SnippetCard({ anchor, title, markdown, onOpen, side = 'auto', copyText, onMouseEnter, onMouseLeave, zIndex }: {
+export function SnippetCard({ anchor, title, markdown, onOpen, side = 'auto', copyText, onMouseEnter, onMouseLeave, zIndex, tone }: {
     anchor: DOMRect; title: string; markdown: string; side?: Side | 'auto';
+    /** Passed to FloatingCard: 'menu' when the card opens beside a menu. */
+    tone?: 'default' | 'menu';
     /** With this, the bottom row reads "Open" and opens the entry when clicked (rather than only the hovered element doing so). */
     onOpen?: () => void;
     /** With this, the card can be moved onto and has a button that copies this text (the whole entry, where the card shows its start,
@@ -54,7 +56,7 @@ export function SnippetCard({ anchor, title, markdown, onOpen, side = 'auto', co
         }).catch(() => {});
     };
     return (
-        <FloatingCard anchor={anchor} side={side} zIndex={zIndex} interactive={copyText !== undefined} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className="w-80 max-w-[calc(100vw-1rem)] px-3.5 py-3 text-left">
+        <FloatingCard anchor={anchor} side={side} zIndex={zIndex} tone={tone} interactive={copyText !== undefined} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} className="w-80 max-w-[calc(100vw-1rem)] px-3.5 py-3 text-left">
             <div className="flex items-start gap-2">
                 <div className="flex-1 min-w-0 text-sm font-semibold text-white leading-snug">{title}</div>
                 {copyText !== undefined && (
@@ -149,7 +151,9 @@ function usePreviewCard(load: () => Promise<PreviewContent | null>, { side, zInd
     const handlers = {
         onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
             stay();
-            const el = e.currentTarget;
+            // The card goes around the nearest [data-preview-anchor] wrapper when there is one (a list row's name plus its
+            // edit/delete icons, so the card clears the icons rather than covering them), else the hovered element itself.
+            const el = e.currentTarget.closest<HTMLElement>('[data-preview-anchor]') ?? e.currentTarget;
             const id = ++attempt.current;
             window.clearTimeout(openTimer.current);
             openTimer.current = window.setTimeout(() => {

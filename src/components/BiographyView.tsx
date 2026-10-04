@@ -19,7 +19,10 @@ import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { normalizeText, driveSegmentLabel } from '../lib/utils';
 import { useCloseOnNavigate } from '../lib/navigation';
-import { handleMarkdownKeyDown, handleMarkdownContextMenu, handlePlainContextMenu } from '../lib/markdown-editor';
+import { handlePlainContextMenu } from '../lib/markdown-editor';
+import { MarkdownField } from './MarkdownField';
+import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
 
 type EditableBiography = BiographyEntry | null;
 type SocialTab = 'wikipedia' | 'website' | 'twitter' | 'instagram' | 'facebook' | 'threads' | 'youtube' | 'tiktok' | 'twitch' | 'reddit' | 'discord';
@@ -175,8 +178,9 @@ const detectSocialCandidates = (bio: string, current: BiographyEntry): DetectedS
     return candidates;
 };
 
-/** A person's name in the list. While the pointer is on the name itself (not the empty space after it), their description, if
- *  they have one, is previewed. The button (not a wrapping element outside it) is what opens the biography — the preview
+/** A person's name in the list. While the pointer is on the name itself, their description, if they have one, is previewed.
+ *  It's only as wide as the name, so the row's edit icon sits right after the text. The button (not a wrapping element
+ *  outside it) is what opens the biography — the preview
  *  card is portaled elsewhere on the page, but React still bubbles a click on it up through this component's own JSX tree;
  *  keeping that tree flat (the card is this button's sibling, not its child) is what stops a click on the card's Copy or
  *  Open button from also re-triggering this one. */
@@ -184,7 +188,7 @@ function PersonName({ person, onOpen }: { person: BiographyEntry; onOpen: () => 
     const preview = useBioPreview(person, onOpen);
     return (
         <>
-            <button onClick={onOpen} className="flex-1 min-w-0 text-left cursor-pointer">
+            <button onClick={onOpen} className="min-w-0 text-left cursor-pointer">
                 <span {...preview.handlers} className="group-hover:underline group-hover:decoration-dotted group-hover:underline-offset-4 group-hover:text-[var(--k-accent)] transition-all text-base font-medium">
                     {person.displayName || person.handle}
                 </span>
@@ -203,8 +207,31 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
     // Closes when the app goes somewhere else (its "See more" search, a Drive, a link: lib/navigation.ts).
     useCloseOnNavigate(selected !== null, () => setSelected(null));
     const [editing, setEditing] = useState<EditableBiography>(null);
+    // The entry as it was when the edit began, for telling whether anything's changed.
+    const [editingOriginal, setEditingOriginal] = useState<EditableBiography>(null);
     const [activeSocialTab, setActiveSocialTab] = useState<SocialTab>('website');
     const [pendingSocialPins, setPendingSocialPins] = useState<DetectedSocial[] | null>(null);
+    const [confirmClose, setConfirmClose] = useState(false);
+
+    const startEdit = (person: BiographyEntry) => {
+        setEditing(person);
+        setEditingOriginal(person);
+        setActiveSocialTab('website');
+    };
+
+    const closeEdit = () => {
+        setEditing(null);
+        setEditingOriginal(null);
+        setPendingSocialPins(null);
+    };
+
+    const editHasChanges = editing !== null && editingOriginal !== null && (
+        (editing.bio || '') !== (editingOriginal.bio || '')
+        || socialTabs.some(key => (editing[key] || '') !== (editingOriginal[key] || ''))
+    );
+
+    // Backdrop click, Esc and the X ask first when there's something unsaved; Cancel discards on purpose.
+    const requestCloseEdit = () => { if (editHasChanges) setConfirmClose(true); else closeEdit(); };
 
     const loadEntries = async () => {
         try {
@@ -270,14 +297,19 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
         });
 
         await updateBiography(normalized);
-        setEditing(null);
-        setPendingSocialPins(null);
+        closeEdit();
+        // Opened from its biography window: that comes back showing the saved changes.
+        setSelected(prev => (prev && prev.handle === normalized.handle ? normalized : prev));
         await loadEntries();
         onChange?.();
     };
 
     const saveEdit = async (e: React.FormEvent) => {
         e.preventDefault();
+        await submitEdit();
+    };
+
+    const submitEdit = async () => {
         if (!editing) return;
 
         const candidates = detectSocialCandidates(editing.bio || '', editing);
@@ -337,20 +369,23 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                             {grouped[char].map((person) => (
                                 <li key={person.handle} className="text-gray-300 group flex items-center">
                                     <div className="w-1.5 h-1.5 rounded-full bg-[#444] mr-3 shrink-0 group-hover:bg-[var(--k-accent)] transition-colors"></div>
+                                     {/* data-preview-anchor: the name's hover preview opens past the edit icon, not over it. */}
+                                     <div data-preview-anchor className="flex items-center min-w-0">
                                      <PersonName person={person} onOpen={() => setSelected(person)} />
+                                     {/* Hidden until the row is hovered (or it has keyboard focus), right after the name. */}
                                      {allowEditBio !== false && (
                                          <button
                                              onClick={(e) => {
                                                  e.stopPropagation();
-                                                 setEditing(person);
-                                                 setActiveSocialTab('website');
+                                                 startEdit(person);
                                              }}
-                                             className="text-gray-500 hover:text-blue-400 transition-colors cursor-pointer p-1"
+                                             className="ml-1.5 text-gray-500 hover:text-blue-400 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-all cursor-pointer p-1"
                                              title="Edit bio"
                                          >
                                              <Pencil className="w-3.5 h-3.5" />
                                          </button>
                                      )}
+                                     </div>
                                 </li>
                             ))}
                         </ul>
@@ -362,7 +397,9 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
 
             <AlphabetJumpNav idPrefix="biography-az" available={groupKeys} scrollContainerRef={scrollContainerRef} />
 
-            {selected && (
+            {/* Stepped aside while this person's biography is being edited, and back (with the saved changes)
+                once the edit's done. */}
+            {selected && !editing && (
                 <BiographyModal
                     biography={selected}
                     onClose={() => setSelected(null)}
@@ -370,11 +407,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         setSelected(null);
                         onVideoSelect?.(video);
                     }}
-                    onEdit={() => {
-                        setEditing(selected);
-                        setActiveSocialTab('website');
-                        setSelected(null);
-                    }}
+                    onEdit={() => startEdit(selected)}
                     onViewMore={onViewMore}
                     onDriveSelect={onDriveSelect}
                     allowEditBio={allowEditBio}
@@ -382,14 +415,14 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
             )}
 
             {editing && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={() => setEditing(null)}>
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={requestCloseEdit}>
                     <form onSubmit={saveEdit} onClick={(e) => e.stopPropagation()} className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-4xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="px-6 py-4 border-b border-[#303030] flex items-center justify-between bg-[#141414]">
                             <div className="text-gray-200">
                                 <h2 className="text-lg font-bold">Edit {labels.aliasBiographyItem}</h2>
                                 <p className="text-xs text-gray-400">{editing.displayName || editing.handle} ({editing.handle})</p>
                             </div>
-                            <button type="button" onClick={() => setEditing(null)} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
+                            <button type="button" onClick={requestCloseEdit} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
@@ -397,14 +430,12 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         <div className="p-6 max-h-[75vh] overflow-y-auto">
                             {/* Bio - largest section */}
                             <div className="mb-6">
-                                <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Description</label>
-                                <textarea
+                                <MarkdownField
+                                    label="Description"
+                                    autoFocus
                                     value={editing?.bio || ''}
-                                    onChange={(e) => setEditing(prev => prev && { ...prev, bio: e.target.value })}
-                                    onContextMenu={handleMarkdownContextMenu}
-                                    onKeyDown={(e) => handleMarkdownKeyDown(e, editing?.bio || '', (val) => setEditing(prev => prev && { ...prev, bio: val }))}
+                                    onChange={(val) => setEditing(prev => prev && { ...prev, bio: val })}
                                     rows={16}
-                                    className="w-full bg-[#121212] border border-[#333] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-600 transition-all resize-none placeholder-gray-600"
                                     placeholder="Describe who this person is (Markdown supported)... Tip: paste your existing YouTube channel description here as a starting point."
                                 />
                             </div>
@@ -453,13 +484,14 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         </div>
 
                         <div className="px-6 py-4 border-t border-[#303030] flex justify-end gap-3 bg-[#141414]">
-                            <button type="button" onClick={() => { setEditing(null); setPendingSocialPins(null); }} className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors">Cancel</button>
+                            <button type="button" onClick={closeEdit} className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors">Cancel</button>
                             <button type="submit" className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-all text-sm font-bold cursor-pointer">Save {labels.aliasBiographyItem}</button>
                         </div>
                     </form>
 
                     {pendingSocialPins && (
-                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={() => setPendingSocialPins(null)}>
+                        // stopPropagation: a click out here backs out of just this prompt, not the edit behind it.
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={(e) => { e.stopPropagation(); setPendingSocialPins(null); }}>
                             <div onClick={(e) => e.stopPropagation()} className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
                                 <div className="px-6 py-4 border-b border-[#303030] bg-[#141414]">
                                     <h3 className="text-base font-bold text-white">Social{pendingSocialPins.length > 1 ? 's' : ''} detected</h3>
@@ -496,6 +528,15 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                     )}
                 </div>
             )}
+
+            {confirmClose && (
+                <UnsavedChangesModal
+                    message={<>You have unsaved changes to this {labels.aliasBiographyItem.toLowerCase()}. Save them before closing?</>}
+                    onCancel={() => setConfirmClose(false)}
+                    onDiscard={() => { setConfirmClose(false); closeEdit(); }}
+                    onSave={() => { setConfirmClose(false); void submitEdit(); }}
+                />
+            )}
         </div>
     );
 }
@@ -509,6 +550,8 @@ export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onVi
     const [drives, setDrives] = useState<HandleDrive[]>([]);
     const { flags } = useFlags();
     const { labels } = useWorkspace();
+    // The description can be selected, and copied as plain text or markdown from a right-click.
+    const selectable = useSelectableText();
 
     const activeSocials = socialOrder.filter(key => getSocialValue(biography, key));
 
@@ -585,12 +628,15 @@ export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onVi
 
                   <div className="flex-1 flex flex-col lg:flex-row min-h-0">
                       {/* Main Content: Bio */}
-                       <div className="flex-1 border-b lg:border-b-0 lg:border-r border-[#272727] overflow-y-auto p-6">
+                       {/* Two parts: the description, which scrolls, and Backlinks pinned along the bottom (scrolling on
+                           its own past 40% of the column), so they're in view however long the description is. */}
+                       <div className="flex-1 min-h-0 flex flex-col border-b lg:border-b-0 lg:border-r border-[#272727]">
+                       <div className="flex-1 min-h-0 overflow-y-auto p-6">
                            <h3 className="text-lg font-bold text-white mb-4">About</h3>
                            {/* Font size/markdown look-and-feel kept in parity with the video Summary panel
                                (prose-sm — see Sidebar.tsx) rather than the previous prose-lg, which read
                                oversized next to it. */}
-                           <div className="leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400">
+                           <div {...selectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400`}>
                                <ReactMarkdown
                                    remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
  urlTransform={markdownUrlTransform}
@@ -607,10 +653,14 @@ export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onVi
                                    {biography.bio?.trim() || '_No biography yet._'}
                                </ReactMarkdown>
                            </div>
-                           {/* What else mentions this person with a link (components/BacklinksList.tsx). */}
-                           <h3 className="text-sm font-bold text-white mt-8 mb-2">Backlinks{backlinkCount ? ` (${backlinkCount})` : ''}</h3>
+                           {selectable.menu}
+                       </div>
+                       {/* What else mentions this person with a link (components/BacklinksList.tsx). */}
+                       <div className="shrink-0 max-h-[40%] overflow-y-auto border-t border-[#272727] px-6 py-4">
+                           <h3 className="text-sm font-bold text-white mb-2">Backlinks{backlinkCount ? ` (${backlinkCount})` : ''}</h3>
                            <BacklinksList key={biography.handle} kind="bio" targetKey={biography.handle} onCount={setBacklinkCount} />
-                      </div>
+                       </div>
+                       </div>
 
                        {/* Sidebar Content: Latest Videos — kept narrower than the About panel gets wide
                            (was w-96) so About has more horizontal room for markdown text. */}

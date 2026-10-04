@@ -4,6 +4,7 @@ import { trashDiscard, trashEmpty, trashRestore, type TrashKind } from '../api';
 import { useTrash } from '../hooks/useTrash';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { Modal } from './Modal';
+import { ConfirmDialog } from './ConfirmDialog';
 
 /** "just now", "3 min ago", "2 hr ago". */
 function ago(ms: number, now: number): string {
@@ -12,6 +13,20 @@ function ago(ms: number, now: number): string {
     const m = Math.round(s / 60);
     if (m < 60) return `${m} min ago`;
     return `${Math.round(m / 60)} hr ago`;
+}
+
+/** Asks before Empty Trash (the Trash window's, and the Trash chip's right-click menu's): what's in the Trash is the
+ *  last chance to get it back, so emptying it is the one step here that can't be undone. */
+export function ConfirmEmptyTrash({ kind, count, onDone }: { kind: TrashKind; count: number; onDone: () => void }) {
+    return (
+        <ConfirmDialog
+            title="Empty Trash"
+            message={`Permanently delete ${count === 1 ? 'the 1 item' : `all ${count} items`} in the Trash? This can't be undone.`}
+            confirmLabel="Empty Trash"
+            onConfirm={() => { onDone(); void trashEmpty(kind); }}
+            onCancel={onDone}
+        />
+    );
 }
 
 interface Props {
@@ -30,6 +45,7 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
     // Why a restore didn't happen, by item (it may have been made again since).
     const [errors, setErrors] = useState<Record<number, string>>({});
     const [busy, setBusy] = useState<number | null>(null);
+    const [confirmEmpty, setConfirmEmpty] = useState(false);
 
     useEffect(() => {
         const timer = window.setInterval(() => setNow(Date.now()), 30_000);
@@ -56,14 +72,14 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
             onClose={onClose}
             icon={Trash2}
             title={`Trash: ${where}`}
-            subtitle="Emptied when you quit"
+            subtitle="Everything here is deleted for good when you quit"
             size="lg"
             bodyClassName="p-0"
             footer={
                 <>
                     <button
                         type="button"
-                        onClick={() => { void trashEmpty(kind); }}
+                        onClick={() => setConfirmEmpty(true)}
                         disabled={entries.length === 0}
                         className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] disabled:opacity-40 disabled:cursor-default cursor-pointer text-white text-sm font-semibold transition-colors"
                     >
@@ -100,7 +116,7 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
                                 disabled={busy === entry.id}
                                 className="shrink-0 px-3 py-1.5 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] disabled:opacity-50 cursor-pointer text-gray-200 hover:text-white text-xs font-semibold transition-colors"
                             >
-                                Undo
+                                Restore
                             </button>
                             <button
                                 type="button"
@@ -114,6 +130,7 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
                     ))}
                 </ul>
             )}
+            {confirmEmpty && <ConfirmEmptyTrash kind={kind} count={entries.length} onDone={() => setConfirmEmpty(false)} />}
         </Modal>
     );
 }

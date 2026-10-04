@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, Inbox } from 'lucide-react';
 import { setWdbsAlias, setWdbsIcon, setWdbsColor, setWdbsShape, UNSORTED_WDBS_FILTER, type WdbsNode } from '../api';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { WdbsAliasMenu } from './WdbsAliasMenu';
+import { MENU_PANEL, MENU_ROW } from './ContextMenu';
 import { WdbsIconMenu } from './WdbsIconMenu';
 import { WdbsColorMenu } from './WdbsColorMenu';
 import { getWdbsIconComponent } from '../lib/wdbs-icons';
@@ -86,22 +87,22 @@ function NodeContextMenu({ x, y, onEditAlias, onEditIcon, onEditColor, onClose }
 
     const MENU_WIDTH = 184;
     const left = Math.min(x, window.innerWidth - MENU_WIDTH - 12);
-    const top = Math.min(y, window.innerHeight - 96);
+    const top = Math.min(y, window.innerHeight - 112);
 
     return (
         <div
             ref={containerRef}
             style={{ left, top, width: MENU_WIDTH }}
-            className="fixed z-[200] bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl py-1 animate-in fade-in zoom-in-95 duration-150"
+            className={`fixed z-[200] ${MENU_PANEL}`}
             onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
         >
-            <button onClick={onEditAlias} className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-[#272727] cursor-pointer">
+            <button onClick={onEditAlias} className={`${MENU_ROW} text-gray-200`}>
                 Edit Alias
             </button>
-            <button onClick={onEditIcon} className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-[#272727] cursor-pointer">
+            <button onClick={onEditIcon} className={`${MENU_ROW} text-gray-200`}>
                 Edit Category Marker
             </button>
-            <button onClick={onEditColor} className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:bg-[#272727] cursor-pointer">
+            <button onClick={onEditColor} className={`${MENU_ROW} text-gray-200`}>
                 Edit Decoration Marker
             </button>
         </div>

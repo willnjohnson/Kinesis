@@ -167,38 +167,46 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                     // A built-in tag's chip stands out: its icon, and a thicker border (the padding gives back the extra
                     // pixel, so every chip stays the same height).
                     const BuiltInIcon = kind === 'tags' ? builtInTagIcon(tag) : undefined;
+                    // The chip is a box holding two buttons side by side (its name, and the remove ×), not one button
+                    // inside another, which isn't valid and made the × easy to hit by accident.
                     return (
-                    <button
+                    <div
                         key={tag}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            if (kind === 'terms') {
-                                // Jumps to the link in the Summary — works even for a name that's
-                                // linked there but has no formal Glossary definition yet.
-                                onJumpToTerm?.(tag);
-                                return;
-                            }
-                            const term = resolveEntry(glossaryTerms, tag, preferredDrives);
-                            if (term) {
-                                onSelectTerm(term);
-                            }
-                        }}
-                        className={`group flex items-center gap-1 bg-[#222222] rounded-md text-[11px] text-white hover:bg-[#333333] transition-all cursor-pointer ${BuiltInIcon ? 'px-[9px] py-[3px] border-2 border-[#505050]' : 'px-2.5 py-1 border border-[#383838]'}`}
+                        className={`group flex items-center bg-[#222222] rounded-md text-[11px] text-white hover:bg-[#333333] transition-all ${BuiltInIcon ? 'border-2 border-[#505050]' : 'border border-[#383838]'}`}
                     >
-                        {BuiltInIcon && <BuiltInIcon className="w-3 h-3 shrink-0 -translate-y-px text-[#aaaaaa]" />}
-                        {tag}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                if (kind === 'terms') {
+                                    // Jumps to the link in the Summary — works even for a name that's
+                                    // linked there but has no formal Glossary definition yet.
+                                    onJumpToTerm?.(tag);
+                                    return;
+                                }
+                                const term = resolveEntry(glossaryTerms, tag, preferredDrives);
+                                if (term) {
+                                    onSelectTerm(term);
+                                }
+                            }}
+                            className={`flex items-center gap-1 cursor-pointer ${BuiltInIcon ? 'pl-[9px] py-[3px]' : 'pl-2.5 py-1'} ${editable ? 'pr-1' : BuiltInIcon ? 'pr-[9px]' : 'pr-2.5'}`}
+                        >
+                            {BuiltInIcon && <BuiltInIcon className="w-3 h-3 shrink-0 -translate-y-px text-[#aaaaaa]" />}
+                            {tag}
+                        </button>
                         {editable && (
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
                                 onRemoveTag?.(tag);
                             }}
-                            className="text-[#666666] hover:text-red-500 transition-colors ml-1 cursor-pointer"
+                            title={`Remove ${noun}`}
+                            aria-label={`Remove ${noun} ${tag}`}
+                            className={`self-stretch flex items-center text-[#666666] hover:text-red-500 transition-colors cursor-pointer ${BuiltInIcon ? 'pl-1 pr-[7px]' : 'pl-1 pr-2'}`}
                         >
                             <X className="w-3 h-3" />
                         </button>
                         )}
-                    </button>
+                    </div>
                     );
                 })}
 
@@ -221,6 +229,8 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                             e.stopPropagation();
                             setShowTagDropdown(!showTagDropdown);
                         }}
+                        title={`Add a ${noun}`}
+                        aria-label={`Add a ${noun}`}
                         className="flex items-center justify-center w-6 h-6 bg-[#222222] border border-[#383838] rounded-md text-[10px] text-[#888888] hover:text-white hover:border-[#555555] transition-all cursor-pointer"
                     >
                         <Plus className="w-3 h-3" />

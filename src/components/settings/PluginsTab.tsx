@@ -12,6 +12,7 @@ import { useFlags } from "../../hooks/useFlags";
 import { PromptEditor, DefaultBadge, TooltipLightbulb } from "./pluginShared";
 import { settingsPrimaryBtn, settingsSecondaryBtn } from "./buttons";
 import { Toggle } from "./Toggle";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 // ─── Local (Ollama) sub-tab ─────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ function OllamaSubTab({ summarizeProvider, onSetDefault }: OllamaProps) {
     const [isPulled, setIsPulled] = useState(false);
     const [prompt, setPrompt] = useState('');
     const [dirty, setDirty] = useState(false);
+    const [confirmRemove, setConfirmRemove] = useState(false);
     // A DB owner can take away installing Ollama and pulling or removing its model.
     const { flags } = useFlags();
 
@@ -71,7 +73,7 @@ function OllamaSubTab({ summarizeProvider, onSetDefault }: OllamaProps) {
     };
 
     const handleRemoveModel = async () => {
-        if (!window.confirm("Are you sure you want to remove the local model files?")) return;
+        setConfirmRemove(false);
         setLoading(true);
         setStatus("Removing model...");
         try {
@@ -110,7 +112,7 @@ function OllamaSubTab({ summarizeProvider, onSetDefault }: OllamaProps) {
                             </button>
                         ) : (
                             <button
-                                onClick={handleRemoveModel}
+                                onClick={() => setConfirmRemove(true)}
                                 disabled={loading}
                                 className={settingsPrimaryBtn}
                             >
@@ -148,6 +150,16 @@ function OllamaSubTab({ summarizeProvider, onSetDefault }: OllamaProps) {
                 onSave={handleSavePrompt}
                 dirty={dirty}
             />
+
+            {confirmRemove && (
+                <ConfirmDialog
+                    title="Remove Local Model"
+                    message="Remove the local model's files? To summarize locally again, it will have to be downloaded again."
+                    confirmLabel="Remove"
+                    onConfirm={() => void handleRemoveModel()}
+                    onCancel={() => setConfirmRemove(false)}
+                />
+            )}
         </div>
     );
 }

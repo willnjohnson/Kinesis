@@ -241,6 +241,8 @@ export function VideoList({
     const bulkAnchorIdRef = useRef<string | null>(null);
     const bulkAnchorSelectedRef = useRef(true);
     const bulkBaseSelectionRef = useRef<Set<string>>(new Set());
+    // Set when a drag-select (startBulkDrag below) ends, so the click that follows its mouseup doesn't also toggle a card.
+    const suppressBulkClickRef = useRef(false);
     useEffect(() => {
         if (!bulkAssignMode) {
             bulkAnchorIdRef.current = null;
@@ -256,6 +258,11 @@ export function VideoList({
     }, [sortedVideos]);
 
     const handleBulkCardClick = useCallback((video: Video, e: React.MouseEvent) => {
+        // The click that ends a drag-select (below) isn't a click on the card it ended on.
+        if (suppressBulkClickRef.current) {
+            suppressBulkClickRef.current = false;
+            return;
+        }
         if (e.shiftKey && bulkAnchorIdRef.current && onBulkSelectRange) {
             const anchorIdx = videoIndexById.get(bulkAnchorIdRef.current);
             const targetIdx = videoIndexById.get(video.id);
@@ -281,6 +288,96 @@ export function VideoList({
         bulkBaseSelectionRef.current = nextBase;
         onToggleBulkSelect?.(video);
     }, [videoIndexById, sortedVideos, onBulkSelectRange, onToggleBulkSelect, bulkSelectedIds]);
+
+    // Bulk Assign Mode's drag-select: press on a card and drag, and every card in the rectangle of the grid between it and
+    // the card under the pointer takes the pressed card's new state (selected, or deselected if it started selected, as a
+    // plain click would toggle it). Shift-click (above) picks a range in reading order instead; the two complement each
+    // other. Like shift-click's, the rectangle is re-derived from the selection as it was when the drag began, so dragging
+    // back shrinks it. A press that never reaches another card is just a click. Dragging near the top or bottom of the
+    // scroll pane scrolls it.
+    //
+    // The listeners outlive the render that started the drag, so they read the grid through refs.
+    const bulkDragRef = useRef<{ startIdx: number; state: boolean; base: Set<string>; lastIdx: number; moved: boolean; x: number; y: number } | null>(null);
+    const latestGridRef = useRef({ sortedVideos, columns, videoIndexById, onBulkSelectRange });
+    latestGridRef.current = { sortedVideos, columns, videoIndexById, onBulkSelectRange };
+
+    const startBulkDrag = useCallback((video: Video, e: React.MouseEvent) => {
+        suppressBulkClickRef.current = false;
+        if (!onBulkSelectRange || e.button !== 0 || e.shiftKey) return;
+        const startIdx = videoIndexById.get(video.id);
+        if (startIdx === undefined) return;
+        // No native drag of the thumbnail image while selecting.
+        e.preventDefault();
+        bulkDragRef.current = {
+            startIdx, state: !(bulkSelectedIds?.has(video.id) ?? false), base: new Set(bulkSelectedIds ?? []),
+            lastIdx: startIdx, moved: false, x: e.clientX, y: e.clientY,
+        };
+
+        // Selects the rectangle from the start card to the card under the pointer (or keeps the last one, over a gap).
+        const update = () => {
+            const drag = bulkDragRef.current;
+            if (!drag) return;
+            const { sortedVideos: list, columns: cols, videoIndexById: indexOf, onBulkSelectRange: apply } = latestGridRef.current;
+            const id = (document.elementFromPoint(drag.x, drag.y)?.closest('[data-video-id]') as HTMLElement | null)?.dataset.videoId;
+            const idx = id !== undefined ? indexOf.get(id) : undefined;
+            if (idx === undefined || idx === drag.lastIdx) return;
+            drag.lastIdx = idx;
+            drag.moved = true;
+            const [r1, c1, r2, c2] = [Math.floor(drag.startIdx / cols), drag.startIdx % cols, Math.floor(idx / cols), idx % cols];
+            const next = new Set(drag.base);
+            for (let r = Math.min(r1, r2); r <= Math.max(r1, r2); r++) {
+                for (let c = Math.min(c1, c2); c <= Math.max(c1, c2); c++) {
+                    const v = list[r * cols + c];
+                    if (!v) continue;
+                    if (drag.state) next.add(v.id); else next.delete(v.id);
+                }
+            }
+            apply?.(next);
+        };
+
+        // Within this far of the scroll pane's top or bottom edge, it scrolls, faster nearer the edge.
+        const EDGE = 48;
+        let frame = 0;
+        const autoScroll = () => {
+            frame = 0;
+            const drag = bulkDragRef.current;
+            const pane = scrollContainerRef.current;
+            if (!drag || !pane) return;
+            const { top, bottom } = pane.getBoundingClientRect();
+            const speed = drag.y < top + EDGE ? -Math.ceil((top + EDGE - drag.y) / 3)
+                : drag.y > bottom - EDGE ? Math.ceil((drag.y - (bottom - EDGE)) / 3)
+                : 0;
+            if (speed === 0) return;
+            pane.scrollTop += speed;
+            update();
+            frame = requestAnimationFrame(autoScroll);
+        };
+
+        const onMove = (ev: MouseEvent) => {
+            const drag = bulkDragRef.current;
+            if (!drag) return;
+            drag.x = ev.clientX;
+            drag.y = ev.clientY;
+            update();
+            if (!frame) frame = requestAnimationFrame(autoScroll);
+        };
+        const onUp = () => {
+            const drag = bulkDragRef.current;
+            bulkDragRef.current = null;
+            cancelAnimationFrame(frame);
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            if (!drag?.moved) return;
+            // A later shift-click extends from where the drag began, as it would from a plain click there.
+            const { sortedVideos: list } = latestGridRef.current;
+            bulkAnchorIdRef.current = list[drag.startIdx]?.id ?? null;
+            bulkAnchorSelectedRef.current = drag.state;
+            bulkBaseSelectionRef.current = drag.base;
+            suppressBulkClickRef.current = true;
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    }, [onBulkSelectRange, videoIndexById, bulkSelectedIds, scrollContainerRef]);
 
     // The grid isn't the scroll pane's first child (the "Videos" heading + Save All row precedes
     // it, and in Library mode WdbsTreePanel sits beside it), so the virtualizer still needs to
@@ -722,6 +819,7 @@ export function VideoList({
                                             bulkAssignMode={bulkAssignMode}
                                             selected={bulkSelectedIds?.has(video.id) ?? false}
                                             onToggleSelect={onToggleBulkSelect ? (e) => handleBulkCardClick(video, e) : undefined}
+                                            onBulkMouseDown={onBulkSelectRange ? (e) => startBulkDrag(video, e) : undefined}
                                             onBulkContextMenu={onBulkContextMenu ? (x, y) => onBulkContextMenu(video, x, y) : undefined}
                                         />
                                     ))}
@@ -760,10 +858,12 @@ interface VideoCardProps {
     bulkAssignMode?: boolean;
     selected?: boolean;
     onToggleSelect?: (e: React.MouseEvent) => void;
+    /** Bulk Assign Mode: a press on the card, which may start a drag-select (VideoList's startBulkDrag). */
+    onBulkMouseDown?: (e: React.MouseEvent) => void;
     onBulkContextMenu?: (x: number, y: number) => void;
 }
 
-function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowDeletion, onSaveImageAs, bulkAssignMode = false, selected = false, onToggleSelect, onBulkContextMenu }: VideoCardProps) {
+function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowDeletion, onSaveImageAs, bulkAssignMode = false, selected = false, onToggleSelect, onBulkMouseDown, onBulkContextMenu }: VideoCardProps) {
     const { flags } = useFlags();
     // Right-clicking a card opens a menu of what can be done with the video (in Bulk Assign Mode it opens that mode's
     // menu instead). Saving the thumbnail, which a right-click on the picture used to do by itself, is one of its entries.
@@ -804,6 +904,9 @@ function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowD
         <div
             className={`group flex flex-col gap-2 cursor-pointer rounded-lg transition-all ${selected ? 'ring-2 ring-[var(--k-accent)] ring-offset-2 ring-offset-[var(--k-bg)]' : ''}`}
             onClick={(e) => bulkAssignMode ? onToggleSelect?.(e) : onSelect(video)}
+            onMouseDown={bulkAssignMode ? onBulkMouseDown : undefined}
+            // How a drag-select finds the card under the pointer.
+            data-video-id={video.id}
             onContextMenu={(e) => {
                 e.preventDefault();
                 // Stopped here so the app-wide "right-click a picture to save it" doesn't also run.

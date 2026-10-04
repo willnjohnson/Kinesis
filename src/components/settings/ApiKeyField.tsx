@@ -1,5 +1,6 @@
 import { AlertCircle, Check } from "lucide-react";
 import { useState } from "react";
+import { ConfirmDialog } from "../ConfirmDialog";
 
 interface Props {
     hasKey: boolean;
@@ -16,6 +17,8 @@ export function ApiKeyField({ hasKey, placeholder, onSave, onRemove }: Props) {
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    // Deactivating erases the saved key (it would have to be found and pasted again), so it asks first.
+    const [confirmRemove, setConfirmRemove] = useState(false);
 
     const save = async () => {
         const key = input.trim();
@@ -55,7 +58,7 @@ export function ApiKeyField({ hasKey, placeholder, onSave, onRemove }: Props) {
                         API Key is Active
                     </div>
                     <button
-                        onClick={remove}
+                        onClick={() => setConfirmRemove(true)}
                         disabled={loading}
                         className="bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] text-white px-4 py-2 rounded-lg font-semibold text-[11px] transition-colors cursor-pointer disabled:opacity-50"
                     >
@@ -87,6 +90,16 @@ export function ApiKeyField({ hasKey, placeholder, onSave, onRemove }: Props) {
                     <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                     <span className="text-xs">{error}</span>
                 </div>
+            )}
+
+            {confirmRemove && (
+                <ConfirmDialog
+                    title="Deactivate API Key"
+                    message="This deletes the saved key. To use it again, you'll need to paste it in again."
+                    confirmLabel="Deactivate"
+                    onConfirm={() => { setConfirmRemove(false); void remove(); }}
+                    onCancel={() => setConfirmRemove(false)}
+                />
             )}
         </div>
     );

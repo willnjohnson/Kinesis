@@ -2,7 +2,7 @@ import { X, Settings, Key, HardDrive, Layers, Monitor, History, Cpu, Palette, Fi
 import { useState, useEffect } from "react";
 import {
     getApiKey, getKeyStatus, getDbDetails, getDisplaySettings, setDisplaySettings,
-    getSearchHistory, clearHistoryBeforeDate, deleteHistoryEntry, clearAllHistory,
+    getSearchHistory, clearHistoryDay, deleteHistoryEntry, clearAllHistory,
     getSetting, setSetting, openDbLocation, selectFolder, setDbPath,
     type DbDetails, type DisplaySettings, type HistoryEntry, type KeyStatus
 } from "../api";
@@ -91,6 +91,7 @@ export function SettingsModal({
         { id: 'photosynthesis', name: 'Photosynthesis', enabled: false, description: 'Enables markdown editing and photo tools (AI generation and local upload).' }
     ]);
     const [loading, setLoading] = useState(false);
+    const [dbLocationError, setDbLocationError] = useState<string | null>(null);
     // Bumped after a sync so the values below (key status, plugin flags, display settings, which a
     // server may have changed) are re-read from the database.
     const [reloadTick, setReloadTick] = useState(0);
@@ -165,6 +166,7 @@ export function SettingsModal({
 
     const handleChangeDbLocation = async () => {
         setLoading(true);
+        setDbLocationError(null);
         try {
             const folder = await selectFolder();
             if (folder) {
@@ -172,7 +174,7 @@ export function SettingsModal({
                 setDbDetails(await getDbDetails());
             }
         } catch (e: any) {
-            alert(`Error: ${e.message || e}`);
+            setDbLocationError(`Couldn't change the location: ${e?.message || e}`);
         } finally {
             setLoading(false);
         }
@@ -266,6 +268,7 @@ export function SettingsModal({
                                 dbDetails={dbDetails}
                                 onOpen={openDbLocation}
                                 onChangeLocation={handleChangeDbLocation}
+                                error={dbLocationError}
                                 loading={loading}
                             />
                         )}
@@ -294,7 +297,7 @@ export function SettingsModal({
                                     setHistory(prev => prev.filter(e => e.id !== id));
                                 }}
                                 onClearDate={async (date) => {
-                                    await clearHistoryBeforeDate(date);
+                                    await clearHistoryDay(date);
                                     setHistory(prev => prev.filter(e => e.searchedAt.split(' ')[0] !== date));
                                 }}
                                 onClearAll={async () => {

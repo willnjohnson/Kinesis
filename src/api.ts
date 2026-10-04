@@ -207,8 +207,9 @@ export async function addSearchHistory(query: string): Promise<void> {
     await invoke("add_search_history", { query });
 }
 
-export async function clearHistoryBeforeDate(date: string): Promise<void> {
-    await invoke("clear_history_before_date", { date });
+/** Deletes the searches made on `date` (YYYY-MM-DD), and only that day. */
+export async function clearHistoryDay(date: string): Promise<void> {
+    await invoke("clear_history_day", { date });
 }
 
 export async function deleteHistoryEntry(id: number): Promise<void> {

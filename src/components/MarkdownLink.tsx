@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react';
+import { isValidElement, type ReactNode } from 'react';
+import { Play } from 'lucide-react';
 import { decodeWdbs } from '../api';
 import { parseInternalHref, openInternalLink, linkKindLabel } from '../lib/internal-links';
 import { openExternalUrlGuarded } from '../lib/external-links';
@@ -9,6 +10,15 @@ import { useBioLinkPreview, useGlossaryPreview } from './GlossaryPreview';
 import { useSequenceLinkPreview } from './SequenceCard';
 import { useVideoPreview } from './VideoPreview';
 import { PlaylistEmbed, VideoEmbed } from './LinkEmbed';
+
+/** A link's text as plain words (its children can be formatting, not just a string). */
+function textOf(node: ReactNode): string {
+    if (node == null || typeof node === 'boolean') return '';
+    if (typeof node === 'string' || typeof node === 'number') return String(node);
+    if (Array.isArray(node)) return node.map(textOf).join('');
+    if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children);
+    return '';
+}
 
 /**
  * The link renderer for every markdown view (pass as `components={{ a: MarkdownLink }}` together
@@ -49,12 +59,25 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed }: { h
                     // "#") — this is what a Terms chip's jump-to-summary click looks for
                     // (see Sidebar.tsx's handleJumpToTerm).
                     {...(internal.kind === 'glossary' ? { 'data-glossary-term': internal.key } : {})}
+                    // And for "Copy as Markdown" on a selection (lib/selection-markdown.ts), the link's real address.
+                    data-md-href={href}
                     className="text-red-500 hover:text-red-400 underline decoration-dotted decoration-red-500/60 underline-offset-4"
                 >
                     {children}
-                    {/* A video link that starts partway through says where, after its text. */}
+                    {/* A video link that starts partway through says where, after its text: a play icon and the time in a
+                        tinted chip (shaped like a [1:23] timestamp chip, lib/remark-timestamps.ts), so it reads as "plays
+                        from here". Same size and font as the paragraph around it (tabular-nums keeps the digits even).
+                        inline-flex keeps the link's dotted underline off it. */}
                     {internal.at !== undefined && (
-                        <span className="ml-1 font-mono text-[0.85em] no-underline inline-block opacity-80" aria-label={`at ${formatClock(internal.at)}`}>▸ {formatClock(internal.at)}</span>
+                        <span
+                            className="ml-1.5 inline-flex items-center gap-1 rounded px-1.5 tabular-nums leading-snug align-baseline bg-red-500/15 text-red-400"
+                            aria-label={`starts at ${formatClock(internal.at)}`}
+                            // Copied as markdown, the time is already in the link's address.
+                            data-md-skip=""
+                        >
+                            <Play className="w-[0.7em] h-[0.7em] fill-current" />
+                            {formatClock(internal.at)}
+                        </span>
                     )}
                 </a>
                 {hover?.card}
@@ -62,9 +85,10 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed }: { h
             </>
         );
         // On a line of its own (lib/remark-embeds.ts marks it), a video or playlist link shows as its card; the plain
-        // link is what shows if the target is gone.
-        if (embed && internal.kind === 'video') return <VideoEmbed videoId={internal.key} at={internal.at} fallback={link} />;
-        if (embed && internal.kind === 'playlist') return <PlaylistEmbed drive={internal.key} fallback={link} />;
+        // link is what shows if the target is gone. Copied as markdown, the card is the link it was written as.
+        const asMarkdown = `[${textOf(children)}](${href})`;
+        if (embed && internal.kind === 'video') return <span className="contents" data-md-replace={asMarkdown}><VideoEmbed videoId={internal.key} at={internal.at} fallback={link} /></span>;
+        if (embed && internal.kind === 'playlist') return <span className="contents" data-md-replace={asMarkdown}><PlaylistEmbed drive={internal.key} fallback={link} /></span>;
         return link;
     }
     return (
@@ -75,6 +99,7 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed }: { h
                 e.preventDefault();
                 if (href) openExternalUrlGuarded(href, typeof children === 'string' ? children : title);
             }}
+            data-md-href={href}
             className="text-red-500 hover:text-red-400 underline decoration-red-500/30 underline-offset-4"
         >
             {children}

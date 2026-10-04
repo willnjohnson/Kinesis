@@ -1,4 +1,4 @@
-import { Check, Info } from "lucide-react";
+import { AlertCircle, Check, Info } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
     getKeyStatus, getSetting, getVeniceApiKey, getVenicePrompt, setSetting,
@@ -21,6 +21,9 @@ export function VeniceApiPanel() {
     const [modelInput, setModelInput] = useState("");
     const [modelSaved, setModelSaved] = useState(false);
     const [modelBusy, setModelBusy] = useState(false);
+    // Why a save failed, shown in the box it belongs to.
+    const [modelError, setModelError] = useState<string | null>(null);
+    const [optionsError, setOptionsError] = useState<string | null>(null);
     // Seeded true/false respectively at DB init (see schema.rs), so a missing row shouldn't
     // normally happen — the ?? fallback just keeps a stale/pre-migration database from reading as
     // unset instead of its documented default.
@@ -46,17 +49,19 @@ export function VeniceApiPanel() {
 
     const toggle = async (key: "stripQuoteblockQuotes" | "stripHeaderEmojis", next: boolean, apply: (v: boolean) => void) => {
         apply(next); // Shown at once; reverted below if the write fails.
+        setOptionsError(null);
         try {
             await setSetting(key, next.toString());
         } catch {
             apply(!next);
-            alert(`Failed to save "${key}".`);
+            setOptionsError("Couldn't save that option. Please try again.");
         }
     };
 
     const saveModel = async () => {
         const next = modelInput.trim() || DEFAULT_VENICE_MODEL;
         setModelBusy(true);
+        setModelError(null);
         try {
             await setSetting("venice_model", next);
             setModel(next);
@@ -64,7 +69,7 @@ export function VeniceApiPanel() {
             setModelSaved(true);
             window.setTimeout(() => setModelSaved(false), 1500);
         } catch {
-            alert("Failed to save Venice model.");
+            setModelError("Couldn't save the model. Please try again.");
         } finally {
             setModelBusy(false);
         }
@@ -129,6 +134,7 @@ export function VeniceApiPanel() {
                         {modelSaved ? <Check className="w-3.5 h-3.5" /> : "Save"}
                     </button>
                 </div>
+                {modelError && <SaveError message={modelError} />}
             </div>
 
             <PromptEditor
@@ -185,7 +191,18 @@ export function VeniceApiPanel() {
                         </span>
                     </label>
                 </div>
+                {optionsError && <SaveError message={optionsError} />}
             </div>
+        </div>
+    );
+}
+
+/** A failed save, in the same red box as an API key's error (ApiKeyField). */
+function SaveError({ message }: { message: string }) {
+    return (
+        <div className="mt-3 flex items-start gap-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="text-xs">{message}</span>
         </div>
     );
 }

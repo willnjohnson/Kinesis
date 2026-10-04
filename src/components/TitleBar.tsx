@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, Copy, Megaphone, Minus, Square, X } from 'lucide
 import { getAppInfo, showSystemMenu } from '../api';
 import { BRAND } from '../branding';
 import { BrandLogo } from './BrandLogo';
+import { MENU_DIVIDER, MENU_PANEL, MENU_ROW } from './ContextMenu';
 import { UpdateButton } from './UpdateButton';
 import { WhatsNewModal } from './WhatsNewModal';
 import { useHasOpenDialog } from '../lib/dialogs';
@@ -397,8 +398,8 @@ export function TitleBar({ history, workspaceButton, leftTools, workspaceName, t
                     ref={menuRef}
                     role="menu"
                     // Above the title bar (z-300); kept inside the window.
-                    style={{ left: Math.min(menuAt.x, window.innerWidth - 200), top: Math.min(menuAt.y, window.innerHeight - 140) }}
-                    className="fixed w-48 bg-[#272727] border border-[#3f3f3f] rounded-lg shadow-xl z-[320] overflow-hidden py-1 select-none"
+                    style={{ left: Math.min(menuAt.x, window.innerWidth - 200), top: Math.min(menuAt.y, window.innerHeight - 156) }}
+                    className={`fixed w-48 z-[320] ${MENU_PANEL}`}
                 >
                     {([
                         { label: 'Restore', icon: Copy, disabled: !maximized, run: (w: ReturnType<typeof getCurrentWindow>) => w.unmaximize() },
@@ -406,17 +407,19 @@ export function TitleBar({ history, workspaceButton, leftTools, workspaceName, t
                         { label: 'Maximize', icon: Square, disabled: maximized, run: (w: ReturnType<typeof getCurrentWindow>) => w.maximize() },
                         { label: 'Close', icon: X, hint: /Mac/.test(navigator.platform) ? undefined : 'Alt+F4', divider: true, run: (w: ReturnType<typeof getCurrentWindow>) => w.close() },
                     ]).map(item => (
-                        <button
-                            key={item.label}
-                            role="menuitem"
-                            disabled={item.disabled}
-                            onClick={() => { setMenuAt(null); windowAction(item.run)(); }}
-                            className={`w-full text-left px-3 py-1.5 flex items-center gap-2.5 text-sm text-gray-300 hover:bg-[#3f3f3f] disabled:text-gray-600 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default ${item.divider ? 'border-t border-[#3f3f3f] mt-1 pt-2' : ''}`}
-                        >
-                            <item.icon className="w-3.5 h-3.5 shrink-0" />
-                            <span className="flex-1">{item.label}</span>
-                            {item.hint && <span className="text-[11px] text-gray-500">{item.hint}</span>}
-                        </button>
+                        <div key={item.label}>
+                            {item.divider && <div className={MENU_DIVIDER} />}
+                            <button
+                                role="menuitem"
+                                disabled={item.disabled}
+                                onClick={() => { setMenuAt(null); windowAction(item.run)(); }}
+                                className={`${MENU_ROW} text-gray-200`}
+                            >
+                                <item.icon className={`w-3.5 h-3.5 shrink-0 ${item.disabled ? '' : 'text-[#aaaaaa]'}`} />
+                                <span className="flex-1">{item.label}</span>
+                                {item.hint && <span className="text-[10px] text-[#666666]">{item.hint}</span>}
+                            </button>
+                        </div>
                     ))}
                 </div>,
                 document.body,

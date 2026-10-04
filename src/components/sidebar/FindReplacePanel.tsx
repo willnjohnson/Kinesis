@@ -80,6 +80,7 @@ export function FindReplacePanel({
                         tabIndex={-1}
                         className="p-1 text-[#888888] hover:text-white transition-colors disabled:opacity-10 cursor-pointer"
                         disabled={matchCount === 0}
+                        title="Previous match (Shift+Enter)"
                     >
                         <ChevronUp className="w-4 h-4" />
                     </button>
@@ -88,6 +89,7 @@ export function FindReplacePanel({
                         tabIndex={-1}
                         className="p-1 text-[#888888] hover:text-white transition-colors disabled:opacity-10 cursor-pointer"
                         disabled={matchCount === 0}
+                        title="Next match (Enter)"
                     >
                         <ChevronDown className="w-4 h-4" />
                     </button>

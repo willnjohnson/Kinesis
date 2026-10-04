@@ -10,7 +10,9 @@ import { useFindReplace } from './sidebar/useFindReplace';
 import { FindReplacePanel } from './sidebar/FindReplacePanel';
 import { GlossaryDetectPanel } from './sidebar/GlossaryDetectPanel';
 import { ConfirmDialog } from './ConfirmDialog';
-import { Modal } from './Modal';
+import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
+import { MENTIONS_ATTR } from './MentionGhost';
 import { TranscriptText } from './sidebar/TranscriptText';
 import { useReadFind, FIND_SCOPE_SELECTOR } from './sidebar/useReadFind';
 import { PhotosynthesisPanel } from './sidebar/PhotosynthesisPanel';
@@ -203,6 +205,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     const [promptTab, setPromptTab] = useState<'local' | 'cloud'>('local');
     const [glossaryTerms, setGlossaryTerms] = useState<GlossaryTerm[]>([]);
     const [selectedTerm, setSelectedTerm] = useState<GlossaryTerm | null>(null);
+    // The Summary and Transcript as read can be selected, and copied as plain text or markdown from a right-click.
+    const summarySelectable = useSelectableText();
+    const transcriptSelectable = useSelectableText();
     // A term's definition opened from here closes when the app goes somewhere else (its "search in Library", a link to
     // a Drive): the Sidebar itself closes then, and this window would otherwise stay on top of the new page.
     useCloseOnNavigate(selectedTerm !== null, () => setSelectedTerm(null));
@@ -1868,6 +1873,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                           </div>
                                                          <textarea
                                                              ref={summaryEditRef}
+                                                             // "@" suggests a Biography handle to link (components/MentionGhost.tsx).
+                                                             {...{ [MENTIONS_ATTR]: '' }}
                                                              value={editedSummary}
                                                              onChange={(e) => setEditedSummary(e.target.value)}
                                                              onScroll={(e) => {
@@ -1965,7 +1972,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                     {/* No separate "Copy Summary" link here any more: the Action Bar's copy
                                                         button below already does this while the Summary is showing, so
                                                         there's one copy control per view, not two disagreeing ones. */}
-                                                    <div data-find-scope className="leading-relaxed prose dark:prose-invert prose-sm max-w-none">
+                                                    {summarySelectable.menu}
+                                                    <div data-find-scope {...summarySelectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none`}>
                                                         <ReactMarkdown
                                                             remarkPlugins={[remarkGfm, remarkHighlight, remarkTimestamps, remarkEmbeds]}
  urlTransform={markdownUrlTransform}
@@ -2078,6 +2086,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                              </div>
                                                             <textarea
                                                                 ref={transcriptEditRef}
+                                                                {...{ [MENTIONS_ATTR]: '' }}
                                                                 value={editedTranscript}
                                                                 onChange={(e) => setEditedTranscript(e.target.value)}
                                                                 onScroll={(e) => {
@@ -2131,7 +2140,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                 </div>
 
                                             ) : (
-                                                <div data-find-scope><TranscriptText text={transcript} onImageClick={setFullscreenImage} /></div>
+                                                <>
+                                                    {transcriptSelectable.menu}
+                                                    <div data-find-scope {...transcriptSelectable.props} className={SELECTABLE_CLASS}><TranscriptText text={transcript} onImageClick={setFullscreenImage} /></div>
+                                                </>
                                             )}
                                         </div>
                                     ) : (
@@ -2322,33 +2334,13 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                 in-progress transcript/summary edit (backdrop click, the X button, or App.tsx opening
                 a different video via the imperative handle above). */}
             {pendingLeave && (
-                <Modal onClose={cancelLeave} title="Unsaved Changes" layer="top" size="sm" footer={
-                    <>
-                        <button
-                            onClick={cancelLeave}
-                            className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button
-                            onClick={discardAndLeave}
-                            className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-red-900/40 hover:border-red-800 cursor-pointer text-white text-sm font-semibold transition-colors"
-                        >
-                            Discard
-                        </button>
-                        <button
-                            onClick={() => void saveAndLeave()}
-                            disabled={isSaving}
-                            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 cursor-pointer text-white text-sm font-semibold transition-colors"
-                        >
-                            {isSaving ? "Saving..." : "Save"}
-                        </button>
-                    </>
-                }>
-                    <p className="text-[#aaaaaa] leading-relaxed">
-                        You have unsaved changes to this {isEditingTranscript ? "transcript" : "summary"}. Save them before leaving?
-                    </p>
-                </Modal>
+                <UnsavedChangesModal
+                    message={<>You have unsaved changes to this {isEditingTranscript ? "transcript" : "summary"}. Save them before leaving?</>}
+                    saving={isSaving}
+                    onCancel={cancelLeave}
+                    onDiscard={discardAndLeave}
+                    onSave={() => void saveAndLeave()}
+                />
             )}
 
             {/* Term Definition Modal */}

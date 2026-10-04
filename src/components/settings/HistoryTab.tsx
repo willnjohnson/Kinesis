@@ -7,6 +7,7 @@ import { parseBool } from "../../lib/flags";
 import { useFlags } from "../../hooks/useFlags";
 import { useWorkspace } from "../../hooks/useWorkspace";
 import { settingsPrimaryBtn } from "./buttons";
+import { ConfirmDialog } from "../ConfirmDialog";
 import { useLockedSettings, LOCKED_TITLE } from "../../hooks/useLockedSettings";
 
 // Settings keys. `saveSearchHistory` is also a DB-owner flag (see docs/customizing.md): when the owner
@@ -47,6 +48,8 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll, on
     const [view, setView] = useState<HistoryView>("timeline");
     const [keepHistory, setKeepHistory] = useState(true);
     const [clearAfter, setClearAfter] = useState("never");
+    // Clear All can't be undone, so it asks first.
+    const [confirmClearAll, setConfirmClearAll] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -102,7 +105,7 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll, on
                 <div className="flex items-center gap-2">
                     {view === "timeline" && canClear && entries.length > 0 && (
                         <button
-                            onClick={onClearAll}
+                            onClick={() => setConfirmClearAll(true)}
                             className={settingsPrimaryBtn}
                         >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -213,6 +216,16 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll, on
                         </div>
                     ))}
                 </div>
+            )}
+
+            {confirmClearAll && (
+                <ConfirmDialog
+                    title="Clear All History"
+                    message={`Delete all ${entries.length === 1 ? "1 saved search" : "saved searches"}? This can't be undone.`}
+                    confirmLabel="Clear All"
+                    onConfirm={() => { setConfirmClearAll(false); onClearAll(); }}
+                    onCancel={() => setConfirmClearAll(false)}
+                />
             )}
         </div>
     );

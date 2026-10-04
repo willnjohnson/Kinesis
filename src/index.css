@@ -99,6 +99,12 @@ input, textarea, [contenteditable=""], [contenteditable="true"] {
     -webkit-user-select: text;
     user-select: text;
 }
+/* So does what's there to be read: a Transcript or Summary in the Sidebar, a Glossary definition, a Biography's
+   description (hooks/useSelectableText.tsx). */
+.k-selectable {
+    -webkit-user-select: text;
+    user-select: text;
+}
 
 /* Backgrounds */
 .bg-\[\#0f0f0f\] { background-color: var(--k-bg) !important; }

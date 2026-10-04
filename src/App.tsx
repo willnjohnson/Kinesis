@@ -16,6 +16,7 @@ import { setInternalLinkHandler, linkKindLabel, type LinkKind } from "./lib/inte
 import { setExternalLinkGuard } from "./lib/external-links";
 import { LinkPicker } from "./components/LinkPicker";
 import { MarkdownContextMenu } from "./components/MarkdownContextMenu";
+import { MentionGhost } from "./components/MentionGhost";
 import { TermDefinitionModal } from "./components/TermDefinitionModal";
 import { saveImageAs } from "./lib/save-image-as";
 import { applyTheme, resolveTheme, loadCustomThemes } from "./lib/themes";
@@ -1764,6 +1765,7 @@ function App() {
                 onOpenBio={handle => { void handleOpenLink('bio', handle); }}
             />
             <MarkdownContextMenu />
+            <MentionGhost />
 
             {library.confirmDelete && flags.confirmBeforeDeleting && (
                 <ConfirmDialog

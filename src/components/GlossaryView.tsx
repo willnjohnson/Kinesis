@@ -12,10 +12,12 @@ import { useEntryPreview } from './GlossaryPreview';
 import { TermDefinitionModal } from './TermDefinitionModal';
 import { useCloseOnNavigate } from '../lib/navigation';
 import { normalizeText } from '../lib/utils';
-import { handleMarkdownKeyDown, handleMarkdownContextMenu, handlePlainContextMenu } from '../lib/markdown-editor';
+import { handlePlainContextMenu } from '../lib/markdown-editor';
+import { MarkdownField } from './MarkdownField';
+import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { foldVideoLinkTimes } from '../lib/internal-links';
 import { isBuiltInTag } from '../lib/glossary';
-import { builtInTagIcon, builtInTagRank } from '../lib/built-in-tags';
+import { builtInTagDescription, builtInTagIcon, builtInTagRank } from '../lib/built-in-tags';
 import { useFlags } from '../hooks/useFlags';
 
 // The dropdown's value for "all Quick Tags" (drive roots look like ":CRYPTO", so this can't clash).
@@ -118,15 +120,18 @@ function DrivePicker({ roots, selected, onChange }: { roots: WdbsRoot[], selecte
     );
 }
 
-/** The name of a term or tag in the list: a button that opens it (the whole row's width is clickable), and previews it
- *  (its definition, or a tag's use) while the pointer is on the name itself, not on the empty space after it. */
+/** The name of a term or tag in the list: a button that opens it, and previews it (its definition, or a tag's use)
+ *  while the pointer is on the name itself. It's only as wide as the name, so the row's edit/delete icons sit right
+ *  after the text. */
 function GlossaryNameButton({ entry, onOpen, badge }: { entry: GlossaryTerm; onOpen: () => void; badge?: ReactNode }) {
     const preview = useEntryPreview(entry, onOpen);
     return (
         <>
             <button
                 onClick={onOpen}
-                className="group-hover:text-[var(--k-accent)] transition-colors cursor-pointer text-base font-medium text-left flex-1 hover:underline hover:decoration-dotted hover:underline-offset-4"
+                // A built-in tag (Watch Later, Favorite, ...) has no definition to preview: its tooltip says what it's for.
+                title={isBuiltInTag(entry) ? builtInTagDescription(entry.term) : undefined}
+                className="group-hover:text-[var(--k-accent)] transition-colors cursor-pointer text-base font-medium text-left min-w-0 hover:underline hover:decoration-dotted hover:underline-offset-4"
             >
                 <span {...preview.handlers}>{entry.term}</span>
                 {badge}
@@ -146,12 +151,17 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
     const [newTerm, setNewTerm] = useState("");
     const [newDefinition, setNewDefinition] = useState("");
     const [newDrives, setNewDrives] = useState<string[]>([]);
+    // The drives the Add dialog opened with, so picking them isn't counted as an unsaved change.
+    const [addInitialDrives, setAddInitialDrives] = useState<string[]>([]);
+    // Which dialog's close is waiting on the Unsaved Changes prompt.
+    const [confirmClose, setConfirmClose] = useState<'add' | 'edit' | null>(null);
     const [selectedTerm, setSelectedTerm] = useState<GlossaryTerm | null>(null);
     // Closes when the app goes somewhere else (lib/navigation.ts).
     useCloseOnNavigate(selectedTerm !== null, () => setSelectedTerm(null));
     const [termToDelete, setTermToDelete] = useState<GlossaryTerm | null>(null);
-    // originalTerm/originalDrives: the entry being edited; its row is replaced on save.
-    const [termToEdit, setTermToEdit] = useState<{ originalTerm: string, originalDrives: string[], term: string, definition: string, drives: string[] } | null>(null);
+    // originalTerm/originalDrives: the entry being edited; its row is replaced on save. originalDefinition: for
+    // telling whether anything's changed.
+    const [termToEdit, setTermToEdit] = useState<{ originalTerm: string, originalDrives: string[], originalDefinition: string, term: string, definition: string, drives: string[] } | null>(null);
     // Top-level drives; each row of `terms` already carries its own drive.
     const [roots, setRoots] = useState<WdbsRoot[]>([]);
     // The one dropdown picks what's shown: '' = all Standard Glossary Tags, QUICK_VIEW = all Quick
@@ -209,13 +219,41 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
         }
         setSaveError(null);
         // Adding while looking at one drive files the new tag there by default.
-        setNewDrives(showGlossaryTags && driveFilter ? [driveFilter] : []);
+        const initialDrives = showGlossaryTags && driveFilter ? [driveFilter] : [];
+        setNewDrives(initialDrives);
+        setAddInitialDrives(initialDrives);
         setShowAddModal(true);
     };
 
-    const handleAdd = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!newTerm.trim() || (showGlossaryTags && !newDefinition.trim())) return;
+    const closeAddModal = () => {
+        setNewTerm("");
+        setNewDefinition("");
+        setNewDrives([]);
+        setShowAddModal(false);
+    };
+
+    const addHasChanges = newTerm.trim() !== '' || newDefinition.trim() !== '' || !sameDrives(newDrives, addInitialDrives);
+
+    const startEdit = (t: GlossaryTerm) => {
+        setSaveError(null);
+        setTermToEdit({ originalTerm: t.term, originalDrives: t.drives, originalDefinition: t.definition, term: t.term, definition: t.definition, drives: t.drives.filter(d => d !== '') });
+    };
+
+    const editHasChanges = termToEdit !== null && (
+        termToEdit.term !== termToEdit.originalTerm
+        || termToEdit.definition !== termToEdit.originalDefinition
+        || !sameDrives(termToEdit.drives, termToEdit.originalDrives.filter(d => d !== ''))
+    );
+
+    // Backdrop click, Esc and the X ask first when there's something unsaved; Cancel discards on purpose.
+    const requestCloseAdd = () => { if (addHasChanges) setConfirmClose('add'); else closeAddModal(); };
+    const requestCloseEdit = () => { if (editHasChanges) setConfirmClose('edit'); else setTermToEdit(null); };
+
+    const saveAdd = async () => {
+        if (!newTerm.trim() || (showGlossaryTags && !newDefinition.trim())) {
+            setSaveError(showGlossaryTags ? 'A term name and definition are both required.' : 'A tag name is required.');
+            return;
+        }
         try {
             // A [5:50] typed straight after a video link becomes that link's ?t= (lib/internal-links.ts), here and below.
             await saveGlossaryTerm(null, newTerm.trim(), foldVideoLinkTimes(newDefinition.trim()), showGlossaryTags ? newDrives : []);
@@ -223,12 +261,14 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
             setSaveError(String(err));
             return;
         }
-        setNewTerm("");
-        setNewDefinition("");
-        setNewDrives([]);
-        setShowAddModal(false);
+        closeAddModal();
         loadTerms();
         onChange?.();
+    };
+
+    const handleAdd = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await saveAdd();
     };
 
     // With Confirm Before Deleting on, a delete asks first (the dialog below); off, it happens at once.
@@ -267,7 +307,15 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
 
     const handleEditSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!termToEdit || !termToEdit.term.trim() || (showGlossaryTags && !termToEdit.definition.trim())) return;
+        await saveEdit();
+    };
+
+    const saveEdit = async () => {
+        if (!termToEdit) return;
+        if (!termToEdit.term.trim() || (showGlossaryTags && !termToEdit.definition.trim())) {
+            setSaveError(showGlossaryTags ? 'A term name and definition are both required.' : 'A tag name is required.');
+            return;
+        }
 
         // One atomic save: a rename or a change of drives replaces the entry's old rows.
         const drives = showGlossaryTags ? termToEdit.drives : [];
@@ -377,8 +425,9 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
             <div className="px-2 pb-20">
                 {terms.length === 0 ? (
                     <div className="text-center text-gray-500 py-24 bg-[#121212] rounded-xl border border-[#272727]">
-                        <p className="text-xl font-bold text-white mb-2">No glossary terms have been added</p>
-                        <p className="text-sm">Click the Add Term button to create your first glossary entry.</p>
+                        <p className="text-xl font-bold text-white mb-2">Nothing in the {labels.aliasGlossary} yet</p>
+                        {/* The Add Term button only exists when this workspace allows editing. */}
+                        {allowModification && <p className="text-sm">Click Add Term to create your first {glossaryLower} entry.</p>}
                     </div>
                 ) : filteredTerms.length === 0 ? (
                     <div className="text-center text-gray-500 py-24 bg-[#121212] rounded-xl border border-[#272727]">
@@ -411,20 +460,19 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                                                     ? <BuiltInIcon className="w-3 h-3 -ml-[3px] mr-[9px] shrink-0 -translate-y-px text-[#777777] group-hover:text-[var(--k-accent)] transition-colors" />
                                                     : <div className="w-1.5 h-1.5 rounded-full bg-[#444] mr-3 shrink-0 group-hover:bg-[var(--k-accent)] transition-colors"></div>;
                                             })()}
+                                            {/* data-preview-anchor: the name's hover preview opens past the icons, not over them. */}
+                                            <div data-preview-anchor className="flex items-center min-w-0">
                                             <GlossaryNameButton
                                                 entry={t}
                                                 onOpen={() => setSelectedTerm(t)}
                                                 badge={multiRowTerms.has(t.term) ? <span className="ml-2 text-[11px] font-semibold text-gray-500 no-underline">{driveBadge(roots, t.drives)}</span> : undefined}
                                             />
-                                            {/* A built-in tag can't be edited or deleted (the backend refuses too). */}
+                                            {/* A built-in tag can't be edited or deleted (the backend refuses too). Hidden
+                                                until the row is hovered (or a button has keyboard focus), right after the name. */}
                                             {allowModification && !isBuiltInTag(t) && (
-                                                <>
+                                                <div className="ml-1.5 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                                                     <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setSaveError(null);
-                                                            setTermToEdit({ originalTerm: t.term, originalDrives: t.drives, term: t.term, definition: t.definition, drives: t.drives.filter(d => d !== '') });
-                                                        }}
+                                                        onClick={(e) => { e.stopPropagation(); startEdit(t); }}
                                                         className="text-gray-500 hover:text-blue-400 transition-colors cursor-pointer p-1"
                                                         title="Edit term"
                                                     >
@@ -437,8 +485,9 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                                                     >
                                                         <X className="w-3.5 h-3.5" />
                                                     </button>
-                                                </>
+                                                </div>
                                             )}
+                                            </div>
                                         </li>
                                     ))}
                                 </ul>
@@ -458,7 +507,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
             {/* Add Modal */}
             {showAddModal && showGlossaryTags && (
                 <Modal
-                    onClose={() => setShowAddModal(false)}
+                    onClose={requestCloseAdd}
                     icon={Plus}
                     title={<>Add {showGlossaryTags ? "Term" : "Tag"}</>}
                     onSubmit={handleAdd}
@@ -467,7 +516,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                         <>
                             <button
                                 type="button"
-                                onClick={() => setShowAddModal(false)}
+                                onClick={closeAddModal}
                                 className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
                             >
                                 Cancel
@@ -495,19 +544,15 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                         />
                     </div>
                     {showGlossaryTags && (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Definition</label>
-                            <textarea
-                                required
-                                value={newDefinition}
-                                onChange={e => setNewDefinition(e.target.value)}
-                                onContextMenu={handleMarkdownContextMenu}
-                                onKeyDown={(e) => handleMarkdownKeyDown(e, newDefinition, setNewDefinition)}
-                                rows={8}
-                                className="w-full bg-[#121212] border border-[#333] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-600 transition-all resize-none placeholder-gray-600"
-                                placeholder="Enter definition (Markdown supported)..."
-                            />
-                        </div>
+                        <MarkdownField
+                            label="Definition"
+                            required
+                            value={newDefinition}
+                            onChange={setNewDefinition}
+                            rows={8}
+                            focusColor="red"
+                            placeholder="Enter definition (Markdown supported)..."
+                        />
                     )}
                     {showGlossaryTags && flags.glossaryDrivePickerVisible && (
                         <DrivePicker roots={roots} selected={newDrives} onChange={setNewDrives} />
@@ -532,7 +577,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
             {/* Edit Modal */}
             {termToEdit && (
                 <Modal
-                    onClose={() => setTermToEdit(null)}
+                    onClose={requestCloseEdit}
                     icon={Pencil}
                     title={<>Edit {showGlossaryTags ? "Term" : "Tag"}</>}
                     onSubmit={handleEditSave}
@@ -560,6 +605,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                         <input
                             type="text"
                             required
+                            autoFocus
                             value={termToEdit.term}
                             onChange={e => setTermToEdit({ ...termToEdit, term: e.target.value })}
                             onContextMenu={handlePlainContextMenu}
@@ -567,18 +613,13 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                         />
                     </div>
                     {showGlossaryTags && (
-                        <div>
-                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Definition</label>
-                             <textarea
-                                 required
-                                 value={termToEdit.definition}
-                                 onChange={e => setTermToEdit(prev => (prev ? { ...prev, definition: e.target.value } : prev))}
-                                 onContextMenu={handleMarkdownContextMenu}
-                                 onKeyDown={(e) => handleMarkdownKeyDown(e, termToEdit.definition, (val) => setTermToEdit(prev => (prev ? { ...prev, definition: val } : prev)))}
-                                 rows={8}
-                                 className="w-full bg-[#121212] border border-[#333] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-600 transition-all resize-none placeholder-gray-600"
-                             />
-                        </div>
+                        <MarkdownField
+                            label="Definition"
+                            required
+                            value={termToEdit.definition}
+                            onChange={val => setTermToEdit(prev => (prev ? { ...prev, definition: val } : prev))}
+                            rows={8}
+                        />
                     )}
                     {showGlossaryTags && flags.glossaryDrivePickerVisible && (
                         <DrivePicker
@@ -593,13 +634,31 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                 </Modal>
             )}
 
-            {/* View Definition Modal */}
-            {selectedTerm && (
+            {confirmClose && (
+                <UnsavedChangesModal
+                    message={<>You have unsaved changes to this {showGlossaryTags ? "term" : "tag"}. Save them before closing?</>}
+                    onCancel={() => setConfirmClose(null)}
+                    onDiscard={() => {
+                        if (confirmClose === 'add') closeAddModal();
+                        else setTermToEdit(null);
+                        setConfirmClose(null);
+                    }}
+                    onSave={() => {
+                        setConfirmClose(null);
+                        void (confirmClose === 'add' ? saveAdd() : saveEdit());
+                    }}
+                />
+            )}
+
+            {/* View Definition Modal. Stepped aside while its entry is being edited, and back (with the saved
+                changes) once the edit's done. */}
+            {selectedTerm && !termToEdit && (
                 <TermDefinitionModal
                     term={selectedTerm}
                     onClose={() => setSelectedTerm(null)}
                     onSearch={onSearchInLibrary}
                     onOpenVideo={onOpenVideo}
+                    onEdit={allowModification && !isBuiltInTag(selectedTerm) ? () => startEdit(selectedTerm) : undefined}
                 />
             )}
 

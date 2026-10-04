@@ -1,4 +1,4 @@
-import { Database, Settings } from "lucide-react";
+import { AlertCircle, Database, Settings } from "lucide-react";
 import { type DbDetails } from "../../api";
 import { useFlags } from "../../hooks/useFlags";
 import { useWorkspace } from "../../hooks/useWorkspace";
@@ -9,6 +9,8 @@ interface Props {
     onOpen: () => void;
     onChangeLocation: () => void;
     loading: boolean;
+    /** Why changing the location failed, shown under the buttons. */
+    error?: string | null;
 }
 
 function formatSize(bytes: number): string {
@@ -19,7 +21,7 @@ function formatSize(bytes: number): string {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
-export function DatabaseTab({ dbDetails, onOpen, onChangeLocation, loading }: Props) {
+export function DatabaseTab({ dbDetails, onOpen, onChangeLocation, loading, error }: Props) {
     const { flags } = useFlags();
     const { labels } = useWorkspace();
     // What the library holds, two per line. Rows for parts of the app a DB owner has
@@ -84,6 +86,12 @@ export function DatabaseTab({ dbDetails, onOpen, onChangeLocation, loading }: Pr
                         </button>
                         )}
                     </div>
+                    )}
+                    {error && (
+                        <div className="flex items-start gap-2 text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">
+                            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span className="text-xs break-words">{error}</span>
+                        </div>
                     )}
                 </div>
             </div>

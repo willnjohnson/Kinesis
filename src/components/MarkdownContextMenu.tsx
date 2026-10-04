@@ -10,6 +10,7 @@ import {
 } from '../lib/markdown-editor';
 import { stripMarkdownFormatting } from '../lib/markdown-format';
 import { readClipboardText } from '../api';
+import { MENU_DIVIDER, MENU_PANEL, MENU_ROW } from './ContextMenu';
 
 const mod = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? '⌘' : 'Ctrl+';
 const shift = mod === '⌘' ? '⇧' : 'Shift+';
@@ -168,7 +169,7 @@ export function MarkdownContextMenu() {
         <button
             key={row.label}
             onClick={() => run(field, row.run)}
-            className="w-full flex items-center gap-2.5 px-3 h-8 rounded-lg text-xs text-gray-200 hover:bg-[#272727] transition-colors cursor-pointer"
+            className={`${MENU_ROW} text-gray-200`}
         >
             <row.Icon className="w-3.5 h-3.5 text-[#aaaaaa] shrink-0" />
             <span className="flex-1 text-left">{row.label}</span>
@@ -185,7 +186,7 @@ export function MarkdownContextMenu() {
             // before Paste could reach it.
             onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
             onContextMenu={(e) => e.preventDefault()}
-            className="fixed z-[300] overflow-y-auto bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl p-1 animate-in fade-in duration-100"
+            className={`fixed z-[300] overflow-y-auto ${MENU_PANEL}`}
         >
             {children}
         </div>
@@ -242,7 +243,7 @@ export function MarkdownContextMenu() {
             </div>
             {groups.map((group, g) => (
                 <div key={g}>
-                    <div className="my-1 h-px bg-[#2a2a2a]" />
+                    <div className={MENU_DIVIDER} />
                     {group.map(row => rowButton(textarea, row))}
                 </div>
             ))}

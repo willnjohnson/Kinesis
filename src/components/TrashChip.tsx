@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Trash2 } from 'lucide-react';
-import { TRASH_RESTORED_EVENT, trashDiscard, trashEmpty, trashRestore, type TrashKind } from '../api';
+import { TRASH_RESTORED_EVENT, trashDiscard, trashRestore, type TrashKind } from '../api';
 import { useTrash } from '../hooks/useTrash';
-import { useMenuDismiss, useMenuPlace } from './ContextMenu';
+import { ConfirmEmptyTrash } from './TrashModal';
+import { MENU_DIVIDER, MENU_PANEL, MENU_ROW, useMenuDismiss, useMenuPlace } from './ContextMenu';
 
 interface Props {
     kind: TrashKind;
@@ -22,10 +23,10 @@ const HIDE_ICON = { '2xl': '@2xl:hidden', '4xl': '@4xl:hidden', '6xl': '@6xl:hid
 /** How many of the newest deleted items the right-click menu lists; the rest are behind "See more". */
 const MENU_ITEMS = 4;
 
-/** The right-click menu on the Trash chip: the newest deleted items, each with Undo (put it back) and Delete (for good), shown while the row is hovered, "See
- *  more" for the Trash window when there are more, and Empty Trash. Stays open for the next one; it goes when the
+/** The right-click menu on the Trash chip: the newest deleted items, each with Restore (put it back) and Delete (for good), shown while the row is hovered, "See
+ *  more" for the Trash window when there are more, and Empty Trash (which asks first: `onEmpty`). Stays open for the next one; it goes when the
  *  Trash is empty (the chip is then gone) or on a click elsewhere. */
-function TrashMenu({ kind, x, y, onClose, onSeeMore }: { kind: TrashKind; x: number; y: number; onClose: () => void; onSeeMore: () => void }) {
+function TrashMenu({ kind, x, y, onClose, onSeeMore, onEmpty }: { kind: TrashKind; x: number; y: number; onClose: () => void; onSeeMore: () => void; onEmpty: () => void }) {
     const { entries } = useTrash(kind);
     const box = useRef<HTMLDivElement>(null);
     // Opens upward: the chip is in the bar along the bottom of the window.
@@ -58,27 +59,28 @@ function TrashMenu({ kind, x, y, onClose, onSeeMore }: { kind: TrashKind; x: num
             ref={box}
             role="menu"
             style={at}
-            className="fixed z-[250] w-[22rem] max-w-[calc(100vw-1rem)] bg-[#272727] border border-[#3f3f3f] rounded-lg shadow-xl py-1 select-none"
+            className={`fixed z-[250] w-[22rem] max-w-[calc(100vw-1rem)] ${MENU_PANEL}`}
             onContextMenu={(e) => e.preventDefault()}
             onClick={(e) => e.stopPropagation()}
         >
+            {/* Not MENU_ROW itself: a row here holds its own buttons and can grow an error line, so no fixed height. */}
             {shown.map(entry => (
-                <div key={entry.id} className="group px-3 py-1.5 hover:bg-[#3f3f3f] transition-colors">
+                <div key={entry.id} className="group px-3 py-1 rounded-lg hover:bg-[#272727] transition-colors">
                     <div className="flex items-center gap-2">
-                        <span className="flex-1 min-w-0 truncate text-sm text-white" title={entry.label}>{entry.label}</span>
+                        <span className="flex-1 min-w-0 truncate text-xs text-gray-200" title={entry.label}>{entry.label}</span>
                         <button
                             type="button"
                             onClick={() => { void restore(entry.id); }}
                             disabled={busy === entry.id}
-                            className="shrink-0 px-2 py-1 rounded-md text-xs font-semibold text-gray-200 hover:text-white hover:bg-[#525252] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50 cursor-pointer transition-colors"
+                            className="shrink-0 px-2 py-1 rounded-md text-xs font-semibold text-gray-200 hover:text-white hover:bg-[#3f3f3f] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50 cursor-pointer transition-colors"
                         >
-                            Undo
+                            Restore
                         </button>
                         <button
                             type="button"
                             onClick={() => { void trashDiscard(entry.id); }}
                             title="Delete for good"
-                            className="shrink-0 px-2 py-1 rounded-md text-xs font-semibold text-gray-300 hover:text-red-400 hover:bg-[#525252] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 cursor-pointer transition-colors"
+                            className="shrink-0 px-2 py-1 rounded-md text-xs font-semibold text-gray-300 hover:text-red-400 hover:bg-[#3f3f3f] opacity-0 group-hover:opacity-100 focus-visible:opacity-100 cursor-pointer transition-colors"
                         >
                             Delete
                         </button>
@@ -90,21 +92,20 @@ function TrashMenu({ kind, x, y, onClose, onSeeMore }: { kind: TrashKind; x: num
                 <button
                     type="button"
                     onClick={() => { onClose(); onSeeMore(); }}
-                    className="w-full text-left px-3 py-1.5 text-sm text-gray-300 hover:bg-[#3f3f3f] cursor-pointer"
+                    className={`${MENU_ROW} text-gray-200`}
                 >
                     See more ({remaining} remaining)
                 </button>
             )}
-            <div className="border-t border-[#3f3f3f] mt-1 pt-1">
-                <button
-                    type="button"
-                    onClick={() => { onClose(); void trashEmpty(kind); }}
-                    className="w-full text-left px-3 py-1.5 flex items-center gap-2 text-sm text-red-400 hover:bg-[#3f3f3f] cursor-pointer"
-                >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Empty Trash
-                </button>
-            </div>
+            <div className={MENU_DIVIDER} />
+            <button
+                type="button"
+                onClick={() => { onClose(); onEmpty(); }}
+                className={`${MENU_ROW} text-red-400`}
+            >
+                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                Empty Trash
+            </button>
         </div>,
         document.body,
     );
@@ -116,9 +117,11 @@ function TrashMenu({ kind, x, y, onClose, onSeeMore }: { kind: TrashKind; x: num
 export function TrashChip({ kind, labelFrom = '4xl', onOpen }: Props) {
     const { count } = useTrash(kind);
     const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+    // Empty Trash's "are you sure?", here rather than in the menu: the menu closes as soon as Empty Trash is picked.
+    const [confirmEmpty, setConfirmEmpty] = useState(false);
     // The chip stays mounted (drawing nothing) while the Trash is empty, so an open menu has to be closed here, or it
     // would come back the next time something is deleted.
-    useEffect(() => { if (count === 0) setMenu(null); }, [count]);
+    useEffect(() => { if (count === 0) { setMenu(null); setConfirmEmpty(false); } }, [count]);
     if (count === 0) return null;
 
     return (
@@ -134,7 +137,8 @@ export function TrashChip({ kind, labelFrom = '4xl', onOpen }: Props) {
                 <Trash2 className={`w-3 h-3 ${HIDE_ICON[labelFrom]}`} />
                 <span className={`hidden ${SHOW_WORDS[labelFrom]}`}><span className="text-white">{count}</span> in Trash</span>
             </button>
-            {menu && <TrashMenu kind={kind} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onSeeMore={onOpen} />}
+            {menu && <TrashMenu kind={kind} x={menu.x} y={menu.y} onClose={() => setMenu(null)} onSeeMore={onOpen} onEmpty={() => setConfirmEmpty(true)} />}
+            {confirmEmpty && <ConfirmEmptyTrash kind={kind} count={count} onDone={() => setConfirmEmpty(false)} />}
         </>
     );
 }

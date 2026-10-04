@@ -12,6 +12,7 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { getTagVideosPreview, searchLibrary, type Video, type GlossaryTerm } from '../api';
 import { TagVideosPreview } from './TagVideosPreview';
 import { recordRecent } from '../lib/recents';
+import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
 
 interface Props {
     term: GlossaryTerm;
@@ -19,18 +20,22 @@ interface Props {
     onSearch: (term: string, mode: 'tag' | 'term' | 'library') => void;
     /** A Quick Tag's video tiles open the video when this is given; without it they're plain. */
     onOpenVideo?: (video: Video) => void;
+    /** Shows an Edit button in the header when given (left out for entries that can't be edited). */
+    onEdit?: () => void;
 }
 
 // How many of a Quick Tag's videos the preview loads (newest first); the footer button opens the rest.
 const TAG_PREVIEW_LIMIT = 12;
 
-export function TermDefinitionModal({ term, onClose, onSearch, onOpenVideo }: Props) {
+export function TermDefinitionModal({ term, onClose, onSearch, onOpenVideo, onEdit }: Props) {
     const shownDrives = term.drives;
     // Which "search" buttons this modal offers is up to the DB owner (see lib/flags.ts).
     const { flags } = useFlags();
     const { labels } = useWorkspace();
     // A term has a definition; a Quick Tag doesn't. They're searched separately in the library.
     const isTerm = term.definition.trim() !== '';
+    // The definition can be selected, and copied as plain text or markdown from a right-click.
+    const selectable = useSelectableText();
     // Ctrl+K lists what was opened lately; a Quick Tag has no page to come back to.
     useEffect(() => { if (isTerm) void recordRecent({ kind: 'term', key: term.term, label: term.term }); }, [isTerm, term.term]);
     // For a Quick Tag, one button (showGlossarySearchByTag): there's no "general mention" search
@@ -110,17 +115,25 @@ export function TermDefinitionModal({ term, onClose, onSearch, onOpenVideo }: Pr
                             </span>
                         )}
                     </div>
-                    <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
-                        <X className="w-5 h-5" />
-                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
+                        {onEdit && (
+                            <button onClick={onEdit} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 cursor-pointer">
+                                Edit {isTerm ? 'Term' : 'Tag'}
+                            </button>
+                        )}
+                        <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
                 </div>
 
+                {selectable.menu}
                 {/* Content */}
                 <div className="p-6 bg-[#0f0f0f] overflow-y-auto flex-1">
                     {isTerm ? (
                         // prose-sm, not prose-lg — kept in parity with BiographyModal/Sidebar's Summary
                         // panel, both of which moved off prose-lg for reading oversized next to them.
-                        <div className="leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400">
+                        <div {...selectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400`}>
                             <ReactMarkdown
                                 remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
      urlTransform={markdownUrlTransform}

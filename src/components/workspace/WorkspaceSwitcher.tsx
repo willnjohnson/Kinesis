@@ -4,6 +4,7 @@ import { Check, ChevronsUpDown, Layers } from "lucide-react";
 import { getWorkspaceStatus, openWorkspace, type WorkspaceStatus } from "../../api";
 import { useFlags } from "../../hooks/useFlags";
 import { WorkspaceLauncher } from "./WorkspaceLauncher";
+import { MENU_DIVIDER, MENU_PANEL, MENU_ROW } from "../ContextMenu";
 import { errText, reloadApp } from "./helpers";
 
 interface Props {
@@ -103,9 +104,9 @@ export function WorkspaceSwitcher({ variant, name, showName = false }: Props) {
 
             {open && createPortal(
                 <div ref={menu} role="menu" style={at} // Above the Workspaces screen (z-70) and the title bar (z-300), which the title bar layout's button lives in.
-                className="fixed w-64 bg-[#272727] border border-[#3f3f3f] rounded-lg shadow-xl z-[310] overflow-hidden">
-                    {error && <div className="px-4 py-2 text-[11px] text-red-400 break-words border-b border-[#3f3f3f]">{error}</div>}
-                    {!status && !error && <div className="px-4 py-3 text-xs text-gray-500">Loading...</div>}
+                className={`fixed w-64 z-[310] ${MENU_PANEL}`}>
+                    {error && <div className="px-3 py-2 text-[11px] text-red-400 break-words">{error}</div>}
+                    {!status && !error && <div className="px-3 py-2 text-xs text-gray-500">Loading...</div>}
                     {recents.map(w => (
                         <button
                             key={w.folder}
@@ -113,19 +114,22 @@ export function WorkspaceSwitcher({ variant, name, showName = false }: Props) {
                             disabled={!w.available || switching !== null}
                             onClick={() => (w.current ? setOpen(false) : choose(w.folder))}
                             title={w.available ? w.path : `${w.path} (not found)`}
-                            className={`w-full text-left px-4 py-2 flex items-center gap-2 text-sm hover:bg-[#3f3f3f] disabled:hover:bg-transparent ${w.available ? "cursor-pointer" : "cursor-default"} ${w.available ? (w.current ? "text-white font-bold" : "text-gray-300") : "text-gray-600"}`}
+                            // MENU_ROW's look, minus its grey-when-disabled: rows are also disabled mid-switch, and only a
+                            // missing workspace should grey out.
+                            className={`w-full flex items-center gap-2.5 px-3 h-8 rounded-lg text-xs text-left hover:bg-[#272727] disabled:hover:bg-transparent transition-colors ${w.available ? "cursor-pointer" : "cursor-default"} ${w.available ? (w.current ? "text-white font-bold" : "text-gray-200") : "text-gray-600"}`}
                         >
                             <span className="flex-1 min-w-0 truncate">{w.name}</span>
-                            {w.current && <Check className="w-4 h-4 shrink-0" />}
+                            {w.current && <Check className="w-3.5 h-3.5 shrink-0" />}
                             {!w.available && <span className="text-[10px] uppercase tracking-wider shrink-0">Not found</span>}
                         </button>
                     ))}
+                    {(recents.length > 0 || error) && <div className={MENU_DIVIDER} />}
                     <button
                         role="menuitem"
                         onClick={() => { setOpen(false); setPicker(true); }}
-                        className="w-full text-left px-4 py-2 flex items-center gap-2 text-sm text-gray-300 hover:bg-[#3f3f3f] cursor-pointer border-t border-[#3f3f3f]"
+                        className={`${MENU_ROW} text-gray-200`}
                     >
-                        <Layers className="w-4 h-4 shrink-0" />
+                        <Layers className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" />
                         Workspaces
                     </button>
                 </div>,

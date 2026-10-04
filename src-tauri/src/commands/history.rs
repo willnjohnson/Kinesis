@@ -22,9 +22,9 @@ pub fn get_search_history(app: tauri::AppHandle, limit: Option<i64>) -> Result<V
 }
 
 #[command]
-pub fn clear_history_before_date(app: tauri::AppHandle, date: String) -> Result<usize, String> {
+pub fn clear_history_day(app: tauri::AppHandle, date: String) -> Result<usize, String> {
     let path = get_db_path(&app);
-    history::clear_history_before(&path, &date).map_err(|e| e.to_string())
+    history::clear_history_day(&path, &date).map_err(|e| e.to_string())
 }
 
 #[command]

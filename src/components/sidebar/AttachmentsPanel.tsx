@@ -6,6 +6,7 @@ import {
     pickAttachmentFiles, removeAttachment, reorderAttachments, saveAttachmentAs, saveVideoNote, updateAttachmentLink, type AttachmentInfo,
 } from '../../api';
 import { ConfirmDialog } from '../ConfirmDialog';
+import { UnsavedChangesModal } from '../UnsavedChangesModal';
 import { useFlags } from '../../hooks/useFlags';
 import { useDragReorder, DropIndicator } from '../../hooks/useDragReorder';
 
@@ -62,6 +63,10 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
     // Set while editing an existing link's title/address instead of adding a new one; the form above is reused for
     // both (its title and buttons change to match).
     const [editingLinkId, setEditingLinkId] = useState<number | null>(null);
+    // What the form opened with (blank for a new link), for telling whether anything's been typed, and the
+    // Unsaved Changes prompt shown when it's closed with something changed.
+    const [linkOriginal, setLinkOriginal] = useState({ title: '', url: '' });
+    const [confirmCloseLink, setConfirmCloseLink] = useState(false);
     const [linkToOpen, setLinkToOpen] = useState<{ url: string; title: string } | null>(null);
     const [noteSaved, setNoteSaved] = useState(false);
     // Only shown as separate tabs once both kinds actually have something in them — otherwise
@@ -167,6 +172,15 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
         setLinkTitle('');
         setLinkUrl('');
         setLinkError(null);
+        setLinkOriginal({ title: '', url: '' });
+        setConfirmCloseLink(false);
+    };
+
+    // A click outside, Esc and the X ask first when something's been typed or changed; Cancel discards on purpose.
+    const requestCloseLinkForm = () => {
+        if (addingLink) return;
+        if (linkTitle !== linkOriginal.title || linkUrl !== linkOriginal.url) setConfirmCloseLink(true);
+        else closeLinkForm();
     };
 
     const handleAddLink = async () => {
@@ -195,6 +209,7 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
             const url = await getAttachmentLink(a.id);
             setLinkTitle(a.name);
             setLinkUrl(url);
+            setLinkOriginal({ title: a.name, url });
             setLinkError(null);
             setEditingLinkId(a.id);
             setErrors([]);
@@ -430,8 +445,9 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
                 // the panel's contents.
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200"
-                    onClick={() => { if (!addingLink) closeLinkForm(); }}
-                    onKeyDown={e => { if (e.key === 'Escape' && !addingLink) closeLinkForm(); }}
+                    onClick={requestCloseLinkForm}
+                    // preventDefault: App's own Esc handling (which "clicks" the top backdrop) then leaves it alone.
+                    onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); requestCloseLinkForm(); } }}
                 >
                     <form
                         onSubmit={e => { e.preventDefault(); handleAddLink(); }}
@@ -443,7 +459,7 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
                                 <Link2 className="w-4 h-4" />
                                 <h2 className="text-lg font-bold">{editingLinkId != null ? 'Edit URL' : 'Add URL'}</h2>
                             </div>
-                            <button type="button" onClick={closeLinkForm} disabled={addingLink} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
+                            <button type="button" onClick={requestCloseLinkForm} disabled={addingLink} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
@@ -495,6 +511,17 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
                     </form>
                 </div>,
                 document.body,
+            )}
+
+            {confirmCloseLink && (
+                <UnsavedChangesModal
+                    message={<>You have unsaved changes to this URL. Save them before closing?</>}
+                    saving={addingLink}
+                    onCancel={() => setConfirmCloseLink(false)}
+                    onDiscard={closeLinkForm}
+                    // A failed save (a bad address, say) leaves the form open with the reason shown in it.
+                    onSave={() => { setConfirmCloseLink(false); void handleAddLink(); }}
+                />
             )}
 
             {linkToOpen && (

@@ -5,7 +5,7 @@ mod http_server;
 
 const APP_NAME: &str = "Kinesis";
 
-const VERSION: &str = "0.5.1";
+const VERSION: &str = "0.5.2";
 
 /// The smallest the window can be dragged to (logical pixels). 800 is also the smallest size
 /// offered under Settings > Display, so every choice there still fits; below this the header
@@ -263,7 +263,7 @@ pub fn run() {
             // History
             commands::add_search_history,
             commands::get_search_history,
-            commands::clear_history_before_date,
+            commands::clear_history_day,
             commands::delete_history_entry,
             commands::clear_all_history,
             // IO

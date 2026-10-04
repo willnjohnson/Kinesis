@@ -54,7 +54,10 @@ export function TooltipLayer() {
         const onOver = (e: PointerEvent) => {
             if (e.pointerType === 'touch') return;
             const target = e.target as Element | null;
-            const el = target?.closest?.(`[title],[${SET_ASIDE}]`) ?? null;
+            const found = target?.closest?.(`[title],[${SET_ASIDE}]`) ?? null;
+            // An iframe's title (the video player's "YouTube video player") names it for screen readers; it isn't
+            // something to show on hover.
+            const el = found?.tagName === 'IFRAME' ? null : found;
             if (el === current) return;
             leave();
             if (!el) return;

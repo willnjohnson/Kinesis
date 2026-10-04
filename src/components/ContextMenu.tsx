@@ -18,6 +18,12 @@ export interface ContextMenuItem {
     peek?: { title: string; load: () => Promise<string | null> };
 }
 
+/** The look every menu shares (taken from the markdown editor's, MarkdownContextMenu.tsx): the panel, a row, and the line
+ *  between groups. A row's text color is left to the caller (danger rows are red). */
+export const MENU_PANEL = 'bg-[#1a1a1a] border border-[#333] rounded-xl shadow-2xl p-1 select-none animate-in fade-in duration-100';
+export const MENU_ROW = 'w-full flex items-center gap-2.5 px-3 h-8 rounded-lg text-xs text-left hover:bg-[#272727] transition-colors cursor-pointer disabled:text-gray-600 disabled:hover:bg-transparent disabled:cursor-default';
+export const MENU_DIVIDER = 'my-1 h-px bg-[#2a2a2a]';
+
 /**
  * A right-click menu at the pointer, in the same style as the workspace and window menus. It stays inside the window, and
  * closes on a choice, a click elsewhere, Esc, a scroll, a resize or the window losing focus. Esc is taken here (marked
@@ -64,28 +70,31 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
             ref={box}
             role="menu"
             style={at}
-            // Above the video sidebar and dialogs, below the title bar's own menus and the tooltip.
-            className="fixed z-[250] w-60 bg-[#272727] border border-[#3f3f3f] rounded-lg shadow-xl py-1 select-none"
+            // Above the video sidebar and dialogs, below the title bar's own menus and the tooltip. Same look as the
+            // markdown editor's menu (MarkdownContextMenu.tsx): rounded rows inset from the edge, so the hovered one stands out.
+            className={`fixed z-[250] w-60 ${MENU_PANEL}`}
             onContextMenu={(e) => e.preventDefault()}
             // A portal still passes clicks up to the React parent (here, the card it was opened from, which would open the video).
             onClick={(e) => e.stopPropagation()}
         >
             {items.map(item => (
-                <button
-                    key={item.label}
-                    role="menuitem"
-                    disabled={item.disabled}
-                    onMouseEnter={(e) => startPeek(item, e.currentTarget)}
-                    onMouseLeave={endPeekSoon}
-                    onClick={(e) => { e.stopPropagation(); onClose(); item.onClick(); }}
-                    className={`w-full text-left px-3 py-1.5 flex items-center gap-2.5 text-sm hover:bg-[#3f3f3f] disabled:text-gray-600 disabled:hover:bg-transparent cursor-pointer disabled:cursor-default ${item.danger ? 'text-red-400' : 'text-gray-300'} ${item.divider ? 'border-t border-[#3f3f3f] mt-1 pt-2' : ''}`}
-                >
-                    {item.icon && <item.icon className="w-3.5 h-3.5 shrink-0" />}
-                    <span className="flex-1 truncate">{item.label}</span>
-                    {item.hint && <span className="text-[11px] text-gray-500">{item.hint}</span>}
-                </button>
+                <div key={item.label}>
+                    {item.divider && <div className={MENU_DIVIDER} />}
+                    <button
+                        role="menuitem"
+                        disabled={item.disabled}
+                        onMouseEnter={(e) => startPeek(item, e.currentTarget)}
+                        onMouseLeave={endPeekSoon}
+                        onClick={(e) => { e.stopPropagation(); onClose(); item.onClick(); }}
+                        className={`${MENU_ROW} ${item.danger ? 'text-red-400' : 'text-gray-200'}`}
+                    >
+                        {item.icon && <item.icon className={`w-3.5 h-3.5 shrink-0 ${item.danger || item.disabled ? '' : 'text-[#aaaaaa]'}`} />}
+                        <span className="flex-1 truncate">{item.label}</span>
+                        {item.hint && <span className="text-[10px] text-[#666666]">{item.hint}</span>}
+                    </button>
+                </div>
             ))}
-            {peek && <SnippetCard anchor={peek.rect} side="right" title={peek.title} markdown={peek.markdown} copyText={peek.full} onMouseEnter={keepPeek} onMouseLeave={endPeekSoon} />}
+            {peek && <SnippetCard anchor={peek.rect} side="right" tone="menu" title={peek.title} markdown={peek.markdown} copyText={peek.full} onMouseEnter={keepPeek} onMouseLeave={endPeekSoon} />}
         </div>,
         document.body,
     );

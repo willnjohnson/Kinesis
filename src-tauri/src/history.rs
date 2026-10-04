@@ -38,11 +38,11 @@ pub fn get_history(path: &str, limit: i64) -> Result<Vec<HistoryEntry>> {
     Ok(rows.filter_map(|r| r.ok()).collect())
 }
 
-/// Delete all entries on or before the given date (YYYY-MM-DD).
-pub fn clear_history_before(path: &str, date: &str) -> Result<usize> {
+/// Delete the entries made on the given date (YYYY-MM-DD), and only that date: Settings' "Clear day".
+pub fn clear_history_day(path: &str, date: &str) -> Result<usize> {
     let conn = Connection::open(path)?;
     let n = conn.execute(
-        "DELETE FROM SearchHistory WHERE date(searched_at) <= date(?1)",
+        "DELETE FROM SearchHistory WHERE date(searched_at) = date(?1)",
         params![date],
     )?;
     Ok(n)
