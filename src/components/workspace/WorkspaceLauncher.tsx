@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, ChevronRight, FolderOpen, FolderPlus, HardDrive, PackageOpen, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ChevronRight, FolderOpen, FolderPlus, HardDrive, Info, PackageOpen, X } from "lucide-react";
+import { AboutKinesisModal } from "./AboutKinesisModal";
 import { BRAND } from "../../branding";
 import { BrandLogo } from "../BrandLogo";
 import { useFlags } from "../../hooks/useFlags";
@@ -22,6 +23,9 @@ interface Props {
 
 type View = "home" | "create" | "import";
 
+/** Set once the About walkthrough has opened by itself on a fresh install, so it doesn't again. */
+const ABOUT_SEEN_KEY = "kinesis.about.seen";
+
 /**
  * Where you pick a workspace: on a fresh install, when the most recent one can't be opened, or on
  * demand. Recents on the left (name, with its path underneath), the three ways in on the right.
@@ -33,6 +37,16 @@ export function WorkspaceLauncher({ status: initial, onClose }: Props) {
     const [busyFolder, setBusyFolder] = useState<string | null>(null);
     // The entry asking "remove from the list?", so a stray click can't do it.
     const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+    // On a fresh install (no workspaces yet), the walkthrough opens by itself, once: someone new gets the tour without
+    // looking for it. After that it's the About button (and Ctrl+K inside the app).
+    const [showAbout, setShowAbout] = useState(() => {
+        if (status.current || status.recents.length > 0) return false;
+        try {
+            if (localStorage.getItem(ABOUT_SEEN_KEY)) return false;
+            localStorage.setItem(ABOUT_SEEN_KEY, "1");
+        } catch { /* storage unavailable: show it, it just isn't remembered */ }
+        return true;
+    });
     // A DB owner can take importing away (see lib/flags.ts). Before any workspace is open there are
     // no flags to consult, so a fresh launcher always offers it.
     const { flags } = useFlags();
@@ -263,7 +277,16 @@ export function WorkspaceLauncher({ status: initial, onClose }: Props) {
                     </div>
                 </div>
                 </div>
+                {/* What Kinesis is and how it's used, for someone new to it (it's the first screen on a fresh install). */}
+                <button
+                    onClick={() => setShowAbout(true)}
+                    className="absolute bottom-4 right-4 flex items-center gap-1.5 bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] text-[#aaaaaa] hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                >
+                    <Info className="w-3.5 h-3.5" />
+                    About {BRAND.name}
+                </button>
             </main>
+            {showAbout && <AboutKinesisModal onClose={() => setShowAbout(false)} />}
         </div>
     );
 }

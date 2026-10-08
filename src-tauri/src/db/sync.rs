@@ -344,6 +344,7 @@ fn apply_biography(conn: &Connection, item: &Item) -> R<bool> {
         &item.key,
         &[
             ("display_name", s(&d.display_name)),
+            ("alias", s(&d.alias)),
             ("bio", s(&d.bio)),
             ("wikipedia", s(&d.wikipedia)),
             ("website", s(&d.website)),

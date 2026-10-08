@@ -39,6 +39,9 @@
     --k-border-303030: #303030; --k-border-333: #333333; --k-border-333333: #333333; --k-border-383838: #383838;
     /* The app's own title bar (components/TitleBar.tsx): what sits below it starts here. */
     --k-titlebar-height: 1.75rem;
+    /* Sunk into the title bar (its workspace switcher): a shade darker than the bar in any theme. A light theme takes
+       a lighter touch (the :root:not(.dark) value further down). */
+    --k-titlebar-sunken: color-mix(in srgb, var(--k-bg) 88%, black);
     --k-border-404040: #404040; --k-border-444: #444444; --k-border-505050: #505050;
     --k-border-gray-700: #374151; --k-border-gray-800: #1f2937; --k-border-white-5: rgba(255,255,255,0.05);
 
@@ -341,6 +344,9 @@ input, textarea, [contenteditable=""], [contenteditable="true"] {
    do — see index.css's header comment and themes.ts's own module comment for the reasoning. */
 /* ==================== */
 
+/* The title bar's sunken switcher: a light page only needs a touch of gray to read as set in. */
+:root:not(.dark) { --k-titlebar-sunken: color-mix(in srgb, var(--k-bg) 92%, black); }
+
 :root:not(.dark) .bg-white.text-black { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #cccccc !important; }
 :root:not(.dark) .bg-white.text-black:hover { background-color: #f5f5f5 !important; border-color: #aaaaaa !important; }
 
@@ -579,7 +585,7 @@ body.k-enter-forward { animation: k-enter-forward 0.4s cubic-bezier(0.2, 0.8, 0.
 .k-enter-back { animation: k-enter-back 0.32s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .k-leave-back { animation: k-leave-back 0.22s ease-in forwards; }
 /* On the Workspaces screen the title bar has no use for the open workspace's name or its switcher. */
-body:has([data-workspaces-screen]) [data-app-titlebar] :is([data-workspace-name], [data-workspace-switch]) { display: none; }
+body:has([data-workspaces-screen]) [data-app-titlebar] :is([data-workspace-name], [data-workspace-switch], [data-pins-button]) { display: none; }
 
 /* The page's own title bar sits still under the switching screen's copy of it, but it is part of the zoomed page: it
    slides down past the copy's edge (and back up on arrival). Hidden while switching, it can't. */

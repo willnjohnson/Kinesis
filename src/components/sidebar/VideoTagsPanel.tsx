@@ -35,7 +35,7 @@ interface Props {
     priorityLabel?: string;
     /** False = read-only: tags are shown and open their definition, but can't be added or removed
      *  (a DB owner's allowEditTermsAndTags flag — one flag for both, since this is the same component
-     *  for either tab). */
+     *  for either tab). The Essential tags are the exception: they can always be added and removed. */
     canEdit?: boolean;
     onGlossaryChanged?: () => void;
     /** `kind="tags"` only: the dropdown's "Manage tags in <Glossary>", which goes to the Glossary's tags list. */
@@ -54,6 +54,12 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
     const { labels } = useWorkspace();
     // Terms are never user-editable any more — see the doc comment above.
     const editable = canEdit && kind === 'tags';
+    // The Essential tags (Watch Later, Favorite, ...) are the reader's own bookkeeping, like checking off a Calendar
+    // item, so they can be added and removed even where tags are locked (Read-only, or the Terms & Tags permission
+    // off). The workspace's other tags stay as whoever set it up chose.
+    const isEssential = (name: string) => kind === 'tags' && builtInTagRank(name) >= 0;
+    const removable = (name: string) => editable || isEssential(name);
+    const canAdd = editable || kind === 'tags';
     // A Quick Tag is a name with no definition in any Drive; a term has one in at least one.
     const ofKind = useMemo(
         () => [...termKinds(glossaryTerms)].filter(([, isTerm]) => isTerm === (kind === 'terms')).map(([name]) => name),
@@ -121,8 +127,10 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
         return a.localeCompare(b);
     };
     const filtered = kind === 'terms' ? (detectedTerms ?? []) : [...videoTags].filter(tag => ofKind.includes(tag)).sort(tagOrder);
+    // Locked tags offer only the Essentials (see `isEssential`).
     const availableTerms = ofKind.filter(name =>
         !videoTags.includes(name) &&
+        (editable || isEssential(name)) &&
         name.toLowerCase().includes(tagFilter.toLowerCase())
     ).sort((a, b) => a.localeCompare(b));
     // The video's Drive's own terms go first; the rest follow without repeating them.
@@ -188,12 +196,12 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                                     onSelectTerm(term);
                                 }
                             }}
-                            className={`flex items-center gap-1 cursor-pointer ${BuiltInIcon ? 'pl-[9px] py-[3px]' : 'pl-2.5 py-1'} ${editable ? 'pr-1' : BuiltInIcon ? 'pr-[9px]' : 'pr-2.5'}`}
+                            className={`flex items-center gap-1 cursor-pointer ${BuiltInIcon ? 'pl-[9px] py-[3px]' : 'pl-2.5 py-1'} ${removable(tag) ? 'pr-1' : BuiltInIcon ? 'pr-[9px]' : 'pr-2.5'}`}
                         >
                             {BuiltInIcon && <BuiltInIcon className="w-3 h-3 shrink-0 -translate-y-px text-[#aaaaaa]" />}
                             {tag}
                         </button>
-                        {editable && (
+                        {removable(tag) && (
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -210,7 +218,7 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                     );
                 })}
 
-                {editable && filtered.length === 0 && (
+                {canAdd && filtered.length === 0 && (
                     <span className="text-[11px] text-[#666666] font-medium italic select-none">
                         Add a {noun}
                     </span>
@@ -221,7 +229,7 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                     </span>
                 )}
 
-                {editable && (
+                {canAdd && (
                 <div className="relative tag-dropdown-container">
                     <button
                         ref={plusRef}
@@ -277,6 +285,8 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                                 )}
                             </div>
                             <div className="shrink-0 border-t border-[#303030] p-1">
+                                {/* Making a tag changes the workspace's own tags: only where tags aren't locked. */}
+                                {editable && (
                                 <button
                                     onClick={() => {
                                         setShowTagDropdown(false);
@@ -288,6 +298,7 @@ export function VideoTagsPanel({ kind, videoTags, detectedTerms, glossaryTerms, 
                                     <Plus className="w-3.5 h-3.5" />
                                     Create new tag
                                 </button>
+                                )}
                                 {kind === 'tags' && onManageTags && (
                                     <button
                                         onClick={() => {

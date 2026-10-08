@@ -46,3 +46,10 @@ export function formatBytes(n: number): string {
     if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
     return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
+
+/** A transcript or summary as preview text: null when there is nothing real in it (empty, or the "NA" or "." a cleared
+ *  transcript holds). Used by the video card's menu peeks (VideoList.tsx) and the Calendar's video previews. */
+export function usableText(text: string | null | undefined): string | null {
+    const t = text?.trim() ?? '';
+    return t === '' || t === '.' || t.toUpperCase() === 'NA' || t.toUpperCase() === 'N/A' ? null : t;
+}

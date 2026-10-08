@@ -269,6 +269,48 @@ pub fn apply_link_edits_recorded(db_path: &str, edits: &[LinkEdit]) -> Result<Ve
     Ok(changed)
 }
 
+/// `apply_link_edits_recorded` for several deletes at once (a bulk delete), in one pass over the texts: each group of
+/// edits is applied in turn, and each group's own changes are returned in its place, so each delete can still be
+/// undone by itself (the Trash restores one item at a time). A text is written once, with every group applied.
+pub fn apply_link_edit_groups_recorded(db_path: &str, groups: &[Vec<LinkEdit>]) -> Result<Vec<Vec<TextChange>>> {
+    let mut changed: Vec<Vec<TextChange>> = groups.iter().map(|_| Vec::new()).collect();
+    if groups.iter().all(|g| g.is_empty()) {
+        return Ok(changed);
+    }
+    let mut conn = Connection::open(db_path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(10))?;
+    for (table, column) in TEXT_COLUMNS {
+        if !table_exists(&conn, table)? {
+            continue;
+        }
+        let rows: Vec<(i64, String)> = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL AND INSTR({column}, ?1) > 0"
+            ))?;
+            let mapped = stmt.query_map(params![SCHEME], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            mapped.filter_map(|r| r.ok()).collect()
+        };
+        if rows.is_empty() {
+            continue;
+        }
+        let tx = conn.transaction()?;
+        for (rowid, original) in rows {
+            let mut text = original.clone();
+            for (i, edits) in groups.iter().enumerate() {
+                if let Some(next) = apply_edits(&text, edits) {
+                    changed[i].push(TextChange { table, column, rowid, before: text.clone(), after: next.clone() });
+                    text = next;
+                }
+            }
+            if text != original {
+                tx.execute(&format!("UPDATE {table} SET {column} = ?1 WHERE rowid = ?2"), params![text, rowid])?;
+            }
+        }
+        tx.commit()?;
+    }
+    Ok(changed)
+}
+
 /// How many stored texts hold at least one link to any of the `targets` (each a kind and its keys): what
 /// a rename or delete of those targets would rewrite, counted up front for its confirmation. A text
 /// linking to several of them counts once.
@@ -475,7 +517,7 @@ mod tests {
             Some("First see [the target](kinesis://video/target00001?t=5:50), then **again** [here](kinesis://video/target00001?t=5:50) and [later](kinesis://video/target00001?t=12:00).")).unwrap();
         save_video(&db, "unrelated01", "Unrelated", "C", 60, "words", 1, "2026-01-01T00:00:00Z", "@c", Some("Links [someone else](kinesis://video/other000001).")).unwrap();
         crate::db::upsert_biography_from_video(&db, "@ann", "Ann", None, -1).unwrap();
-        crate::db::update_biography_details(&db, "@ann", "Ann talks in [The Target](kinesis://video/target00001).", "", "", "", "", "", "", "", "", "", "", "").unwrap();
+        crate::db::update_biography_details(&db, "@ann", "Ann talks in [The Target](kinesis://video/target00001).", "", "", "", "", "", "", "", "", "", "", "", "").unwrap();
 
         let found = find_backlinks(&db, LinkKind::Video, "target00001").unwrap();
         assert_eq!(found.len(), 2, "{found:#?}");

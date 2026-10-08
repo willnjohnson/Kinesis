@@ -11,6 +11,7 @@ pub struct ExportSummary {
     pub videos_exported: i64,
     pub glossary_terms: i64,
     pub biographies: i64,
+    pub calendar_tracks: i64,
     pub folder_path: String,
 }
 
@@ -23,14 +24,102 @@ pub struct ObsidianOptions {
     pub transcripts: bool,
     pub glossary: bool,
     pub biographies: bool,
+    /// A note per Calendar track: its items as a checklist.
+    pub calendar: bool,
     /// Drives to leave out and what to do with what touches them.
     pub drives: DriveScope,
 }
 
 impl Default for ObsidianOptions {
     fn default() -> Self {
-        ObsidianOptions { videos: true, transcripts: true, glossary: true, biographies: true, drives: DriveScope::default() }
+        ObsidianOptions { videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, drives: DriveScope::default() }
     }
+}
+
+/// How each way a track advances is named (as the Calendar names them, components/CalendarView.tsx's MODE_LABEL).
+fn mode_label(mode: &str) -> &'static str {
+    match mode {
+        "calendar" => "On a schedule",
+        "hybrid" => "Schedule and finish",
+        _ => "One after another",
+    }
+}
+
+/// "Mon, Sep 7, 2026" for "2026-09-07" (the text as it is, if it isn't a date).
+fn nice_date(iso: &str) -> String {
+    chrono::NaiveDate::parse_from_str(iso, "%Y-%m-%d").map(|d| d.format("%a, %b %-d, %Y").to_string()).unwrap_or_else(|_| iso.to_string())
+}
+
+/// A track's note: what it is up top, then its items (the current run) as a checklist, with each one's day, priority and
+/// description. `video_link` gives a video's note to link to, when it's in the vault; one that isn't keeps its title.
+fn build_track_note(summary: &db::TrackSummary, links: &LinkResolver, video_link: impl Fn(&str) -> Option<String>) -> String {
+    const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let (track, state) = (&summary.track, &summary.state);
+    let dated = track.advance_mode != "completion";
+
+    let mut fm = String::from("---\ntype: calendar-track\n");
+    fm.push_str(&format!("name: {}\n", yaml_str(&track.name)));
+    fm.push_str(&format!("mode: {}\n", yaml_str(mode_label(&track.advance_mode))));
+    if dated {
+        let days: Vec<&str> = track.weekdays.iter().filter_map(|d| WEEKDAYS.get((*d as usize).wrapping_sub(1)).copied()).collect();
+        fm.push_str(&format!("days: [{}]\n", days.join(", ")));
+        let time = match (track.time_start, track.time_duration) {
+            (Some(s), Some(d)) => format!("{}:{:02}-{}:{:02}", s / 60, s % 60, (s + d) / 60, (s + d) % 60),
+            _ => "any time".into(),
+        };
+        fm.push_str(&format!("time: {}\n", yaml_str(&time)));
+        fm.push_str(&format!("start_date: {}\n", yaml_str(&track.start_date)));
+    }
+    if !track.drive.is_empty() {
+        fm.push_str(&format!("drive: {}\n", yaml_str(&track.drive)));
+    }
+    if track.loop_entries {
+        fm.push_str(&format!("round: {}\n", state.round + 1));
+    }
+    if track.archived {
+        fm.push_str("archived: true\n");
+    }
+    fm.push_str("---\n");
+
+    let mut body = format!("# {}\n\n", track.name);
+    let status = if state.total == 0 {
+        "Nothing in this track yet.".to_string()
+    } else if state.finished {
+        format!("All {} done.", state.total)
+    } else {
+        format!("{} of {} done{}.", state.done, state.total, if track.loop_entries { format!(" in round {}", state.round + 1) } else { String::new() })
+    };
+    body.push_str(&format!("{status}\n\n"));
+    for (i, e) in state.entries.iter().enumerate() {
+        let name = e.video_id.as_deref().and_then(&video_link).map(|n| format!("[[{n}]]")).unwrap_or_else(|| e.title.clone());
+        // A folder's entries are a checklist nested under it (the folder's own box is ticked once they all are).
+        let indent = if e.folder_id.is_some() { "    " } else { "" };
+        let name = if e.is_folder { format!("**{name}**") } else { name };
+        let mut line = format!("{indent}- [{}] {name}", if e.done { "x" } else { " " });
+        // A folder's entries share its day: the date is on the folder's line.
+        if let Some(due) = e.due_date.as_ref().filter(|_| e.folder_id.is_none()) {
+            line.push_str(&format!(" · {}", nice_date(due)));
+        }
+        match e.priority {
+            3 => line.push_str(" · High priority"),
+            2 => line.push_str(" · Medium priority"),
+            1 => line.push_str(" · Low priority"),
+            _ => {}
+        }
+        if e.in_progress {
+            line.push_str(" · In progress");
+        }
+        if state.current == Some(i) && !e.done {
+            line.push_str(" · **Up next**");
+        }
+        body.push_str(&line);
+        body.push('\n');
+        // Indented under its item, so Obsidian keeps it with the checkbox.
+        for desc_line in links.wikilinks(e.description.trim()).lines().filter(|l| !l.trim().is_empty()) {
+            body.push_str(&format!("{indent}    {desc_line}\n"));
+        }
+    }
+    format!("{fm}{body}")
 }
 
 /// One Drive as the export pickers list it.
@@ -228,7 +317,7 @@ fn youtube_embed(video_id: &str) -> Option<String> {
     })
 }
 
-fn build_video_note(video: &crate::Video, links: &LinkResolver, sequences: Option<&[SequenceLine]>) -> String {
+fn build_video_note(video: &crate::Video, links: &LinkResolver, sequences: Option<&[SequenceLine]>, tracks: Option<&[String]>) -> String {
     let tag_list = parse_tags(video.tags.as_deref());
 
     let mut fm = String::from("---\n");
@@ -275,6 +364,10 @@ fn build_video_note(video: &crate::Video, links: &LinkResolver, sequences: Optio
         let links: Vec<String> = tag_list.iter().map(|t| format!("[[{}]]", glossary_note_basename(t))).collect();
         body.push_str(&format!("Tags: {}\n\n", links.join(" ")));
     }
+    // The Calendar tracks it's on (their notes, path-qualified: see the track notes in run_export_with).
+    if let Some(tracks) = tracks.filter(|t| !t.is_empty()) {
+        body.push_str(&format!("Tracks: {}\n\n", tracks.join(" ")));
+    }
     if let Some(lines) = sequences.filter(|l| !l.is_empty()) {
         body.push_str("## Playlist\n\n");
         for line in lines {
@@ -312,6 +405,10 @@ fn build_biography_note(bio: &db::BiographyExportRow, links_to: &LinkResolver) -
     fm.push_str(&format!("handle: {}\n", yaml_str(&handle)));
     if !bio.display_name.trim().is_empty() {
         fm.push_str(&format!("display_name: {}\n", yaml_str(bio.display_name.trim())));
+    }
+    // The reader's alias for the channel as an Obsidian alias, so [[John Jackson]] finds this note too.
+    if !bio.alias.trim().is_empty() {
+        fm.push_str(&format!("aliases:\n  - {}\n", yaml_str(bio.alias.trim())));
     }
     if bio.subscriber_count >= 0 {
         fm.push_str(&format!("subscriber_count: {}\n", bio.subscriber_count));
@@ -405,6 +502,12 @@ fn run_export_with(
     // definition in different Drives.
     let mut glossary_entries = db::get_glossary_terms(db_path).map_err(|e| e.to_string())?;
     let mut biographies = db::get_all_biographies_for_export(db_path).map_err(|e| e.to_string())?;
+    // Archived ones too: a finished course is still worth having in the vault.
+    let mut tracks = if options.calendar {
+        db::list_calendar_tracks(db_path, true, db::local_today()).map_err(|e| e.to_string())?
+    } else {
+        vec![]
+    };
 
     // What the user chose to include. A link to something that isn't exported becomes plain text
     // by itself (the resolver below only knows what is written), so nothing else is needed for those.
@@ -447,6 +550,8 @@ fn run_export_with(
             })
             .collect();
         biographies.retain(|b| scope.handle_kept(&b.handle));
+        // A track in a left-out Drive goes with it (its videos that are kept elsewhere stay in the vault).
+        tracks.retain(|t| t.track.drive.is_empty() || scope.category_kept(&t.track.drive));
     }
     drop(conn);
 
@@ -519,6 +624,37 @@ fn run_export_with(
         videos: basename_by_id.clone(),
     };
 
+    // The Calendar's track notes: named after the track ("(archived)" after an archived one, which can share an active
+    // one's name), and linked to by their path, "<Calendar>/<name>", so a track named like a video or a term can't be
+    // mistaken for it.
+    let calendar_folder = sanitize_path_component(&names["aliasCalendar"], 60);
+    let calendar_root = root.join(&calendar_folder);
+    let mut track_notes: Vec<String> = Vec::with_capacity(tracks.len());
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for t in &tracks {
+        let base = sanitize_path_component(&if t.track.archived { format!("{} (archived)", t.track.name) } else { t.track.name.clone() }, 80);
+        let mut name = base.clone();
+        let mut n = 2;
+        while !taken.insert(name.to_lowercase()) {
+            name = format!("{base} ({n})");
+            n += 1;
+        }
+        track_notes.push(name);
+    }
+    // Each exported video's tracks, for its note's "Tracks:" line.
+    let mut tracks_by_video: HashMap<String, Vec<String>> = HashMap::new();
+    for (t, note) in tracks.iter().zip(&track_notes) {
+        for e in &t.state.entries {
+            if let Some(v) = e.video_id.as_ref().filter(|v| basename_by_id.contains_key(*v)) {
+                let link = format!("[[{calendar_folder}/{note}|{}]]", t.track.name);
+                let list = tracks_by_video.entry(v.clone()).or_default();
+                if !list.contains(&link) {
+                    list.push(link);
+                }
+            }
+        }
+    }
+
     // Prev/Next per Drive a video is sequenced in. `drive_sequences` is already grouped by Drive
     // (its SQL order) and scope-filtered above, so each Drive's remaining videos, in order, are
     // exactly what that Drive's Prev/Next should walk — no separate query per video.
@@ -565,7 +701,8 @@ fn run_export_with(
         fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {}", dir.display(), e))?;
         let file_path = dir.join(format!("{}.md", basename));
         let sequences = sequence_by_video.get(&video.id).map(Vec::as_slice);
-        fs::write(&file_path, build_video_note(video, &resolver, sequences)).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
+        let on_tracks = tracks_by_video.get(&video.id).map(Vec::as_slice);
+        fs::write(&file_path, build_video_note(video, &resolver, sequences, on_tracks)).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
 
         if i % 10 == 0 || i + 1 == total {
             on_progress(&format!("Exporting videos ({}/{})...", i + 1, total));
@@ -636,11 +773,22 @@ fn run_export_with(
         fs::write(&file_path, build_biography_note(bio, &resolver)).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
     }
 
+    if !tracks.is_empty() {
+        on_progress(&format!("Writing {}...", names["aliasCalendar"]));
+        fs::create_dir_all(&calendar_root).map_err(|e| format!("Failed to create {}: {}", calendar_root.display(), e))?;
+        for (t, note) in tracks.iter().zip(&track_notes) {
+            let file_path = calendar_root.join(format!("{note}.md"));
+            let content = build_track_note(t, &resolver, |id| basename_by_id.get(id).cloned());
+            fs::write(&file_path, content).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
+        }
+    }
+
     on_progress("Done.");
     Ok(ExportSummary {
         videos_exported: videos.len() as i64,
         glossary_terms: rows_by_term.len() as i64,
         biographies: biographies.len() as i64,
+        calendar_tracks: tracks.len() as i64,
         folder_path: root.to_string_lossy().to_string(),
     })
 }
@@ -836,6 +984,49 @@ mod tests {
         assert!(!out_dir.join("TestApp/Glossary/By Drive").exists());
         fs::remove_dir_all(&work_dir).ok();
         fs::remove_dir_all(&out_dir).ok();
+    }
+
+    #[test]
+    fn calendar_tracks_become_checklists_linked_both_ways() {
+        let work_dir = temp_dir("cal");
+        let db_path = work_dir.join("test.db").to_string_lossy().to_string();
+        db::init_db(&db_path).unwrap();
+        db::save_video(&db_path, "vid1abcdefg", "First Talk", "Ann", 60, "words", 1, "2026-01-01T00:00:00Z", "@ann", None).unwrap();
+        let input = db::TrackInput {
+            name: "Course".into(),
+            drive: String::new(),
+            advance_mode: "completion".into(),
+            loop_entries: false,
+            source_drive_sequence: false,
+            weekdays: vec![],
+            start_date: Some("2026-01-05".into()),
+            time_start: None,
+            time_duration: None,
+        };
+        let t = db::create_calendar_track(&db_path, &input).unwrap();
+        let watch = db::add_calendar_entry(&db_path, t, Some("vid1abcdefg"), "", &db::EntryExtras::default()).unwrap();
+        let extras = db::EntryExtras { icon: String::new(), description: "Chapter 1".into(), priority: 3 };
+        db::add_calendar_entry(&db_path, t, None, "Read", &extras).unwrap();
+        db::set_calendar_completion(&db_path, t, Some(watch), None, 0, true).unwrap();
+
+        let out_dir = temp_dir("calout");
+        let summary = run_export(&db_path, &out_dir.join("V"), |_| {}).unwrap();
+        assert_eq!(summary.calendar_tracks, 1);
+        let note = fs::read_to_string(out_dir.join("V/Calendar/Course.md")).unwrap();
+        assert!(note.contains("type: calendar-track") && note.contains("mode: \"One after another\""), "{note}");
+        assert!(note.contains("- [x] [[First Talk (vid1abcdefg)]]\n"), "{note}");
+        assert!(note.contains("- [ ] Read · High priority · **Up next**\n    Chapter 1\n"), "{note}");
+        let video = fs::read_to_string(out_dir.join("V/Library/_Unsorted/First Talk (vid1abcdefg).md")).unwrap();
+        assert!(video.contains("Tracks: [[Calendar/Course|Course]]"), "{video}");
+
+        // Left out: no Calendar folder, and no Tracks line.
+        let off = temp_dir("caloff");
+        run_export_with(&db_path, &off.join("V"), &ObsidianOptions { calendar: false, ..ObsidianOptions::default() }, |_| {}).unwrap();
+        assert!(!off.join("V/Calendar").exists());
+        assert!(!fs::read_to_string(off.join("V/Library/_Unsorted/First Talk (vid1abcdefg).md")).unwrap().contains("Tracks:"));
+        for d in [&work_dir, &out_dir, &off] {
+            fs::remove_dir_all(d).ok();
+        }
     }
 
     #[test]

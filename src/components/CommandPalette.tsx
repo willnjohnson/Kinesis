@@ -5,6 +5,7 @@ import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { driveSegmentLabel, normalizeText } from '../lib/utils';
 import { clearRecents, forgetRecent, loadRecents, type Recent } from '../lib/recents';
+import { backdropProps } from '../lib/backdrop';
 
 /** One action the palette can run: going to a section, opening Settings, switching the layout... */
 export interface PaletteCommand {
@@ -239,7 +240,7 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
 
     let lastGroup = '';
     return (
-        <div className={`fixed inset-0 z-[200] bg-black/60 animate-in fade-in duration-150 ${anchor ? '' : 'flex items-start justify-center px-4 pt-[12vh]'}`} onClick={onClose}>
+        <div className={`fixed inset-0 z-[200] bg-black/60 animate-in fade-in duration-150 ${anchor ? '' : 'flex items-start justify-center px-4 pt-[12vh]'}`} {...backdropProps(onClose)}>
             <div
                 onClick={e => e.stopPropagation()}
                 onKeyDown={onKeyDown}

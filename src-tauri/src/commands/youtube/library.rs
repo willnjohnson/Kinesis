@@ -346,6 +346,13 @@ pub async fn delete_video(app: tauri::AppHandle, video_id: String) -> Result<Opt
     crate::trash::delete_video(crate::trash::store(&app), &db_path, &video_id)
 }
 
+/// Many videos at once (the Orphaned window's Delete All), each to the Trash as its own item. Returns how many went.
+#[command]
+pub async fn delete_videos(app: tauri::AppHandle, video_ids: Vec<String>) -> Result<usize, String> {
+    let db_path = get_db_path(&app);
+    crate::trash::delete_videos(crate::trash::store(&app), &db_path, &video_ids)
+}
+
 /// One saved video (with its summary and transcript), for opening a link that points at it.
 /// None when it isn't in this library.
 #[command]

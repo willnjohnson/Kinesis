@@ -10,6 +10,7 @@ import { useWorkspace } from "../../hooks/useWorkspace";
 import { KinpakExport } from "./KinpakExport";
 import { settingsPrimaryBtn } from "./buttons";
 import { DriveScopePicker } from "./DriveScopePicker";
+import { UnderlineTabs } from "../ui/UnderlineTabs";
 import { ProgressLine } from "../workspace/shared";
 
 const EXPORT_PATH_SETTING_KEY = "obsidianExportPath";
@@ -40,19 +41,12 @@ export function ExportTab() {
             <div>
                 {/* With a single export left there's nothing to switch between. */}
                 {views.length > 1 && (
-                <div className="flex items-center gap-4 mb-4">
-                    {views.map(({ id, label, Icon }) => (
-                        <button
-                            key={id}
-                            onClick={() => setView(id)}
-                            className={`flex items-center gap-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${view === id ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                        >
-                            <Icon className="w-3.5 h-3.5" />
-                            {label}
-                            {view === id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                        </button>
-                    ))}
-                </div>
+                    <UnderlineTabs
+                        className="flex items-center gap-4 mb-4"
+                        active={view}
+                        onChange={setView}
+                        tabs={views.map(({ id, label, Icon }) => ({ id, label, icon: Icon }))}
+                    />
                 )}
                 {/* The available ones stay mounted (just hidden) so switching tabs doesn't drop a running export's progress. */}
                 {flags.exportObsidianVisible && <div className={view === 'obsidian' ? '' : 'hidden'}><ObsidianExport /></div>}
@@ -70,10 +64,10 @@ function ObsidianExport() {
     const [error, setError] = useState<string | null>(null);
     const [summary, setSummary] = useState<ExportSummary | null>(null);
     const [options, setOptions] = useState<ObsidianOptions>({
-        videos: true, transcripts: true, glossary: true, biographies: true, drives: DEFAULT_DRIVE_SCOPE,
+        videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, drives: DEFAULT_DRIVE_SCOPE,
     });
     // A vault with nothing ticked would be empty.
-    const anything = options.videos || options.glossary || options.biographies;
+    const anything = options.videos || options.glossary || options.biographies || options.calendar;
 
     useEffect(() => {
         getSetting(EXPORT_PATH_SETTING_KEY).then(setFolderPath).catch(() => {});
@@ -124,7 +118,8 @@ function ObsidianExport() {
                             { key: "transcripts", label: "Include transcripts", hint: "The bulk of the vault's size. Leave off for much smaller notes.", needsVideos: true },
                             { key: "glossary", label: labels.aliasGlossary },
                             { key: "biographies", label: labels.aliasBiography },
-                        ] as { key: "videos" | "transcripts" | "glossary" | "biographies"; label: string; hint?: string; needsVideos?: boolean }[]).map(({ key, label, hint, needsVideos }) => {
+                            { key: "calendar", label: labels.aliasCalendar, hint: "A note per track, its items as a checklist. A snapshot: ticking boxes in Obsidian doesn't change Kinesis." },
+                        ] as { key: "videos" | "transcripts" | "glossary" | "biographies" | "calendar"; label: string; hint?: string; needsVideos?: boolean }[]).map(({ key, label, hint, needsVideos }) => {
                             const dependent = needsVideos && !options.videos;
                             return (
                                 <label key={key} className={`flex items-start gap-2 text-xs cursor-pointer ${dependent ? "opacity-40" : ""}`} title={hint}>
@@ -170,8 +165,8 @@ function ObsidianExport() {
 
                 {summary && (
                     <div className="mt-4 p-3 bg-green-900/10 border border-green-500/30 rounded-lg text-green-400 text-xs leading-relaxed">
-                        Exported {summary.videos_exported} videos, {summary.glossary_terms} glossary terms, and{" "}
-                        {summary.biographies} creator bios to {summary.folder_path}.
+                        Exported {summary.videos_exported} videos, {summary.glossary_terms} glossary terms,{" "}
+                        {summary.biographies} creator bios and {summary.calendar_tracks} {labels.aliasCalendar.toLowerCase()} tracks to {summary.folder_path}.
                     </div>
                 )}
             </div>

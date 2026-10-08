@@ -24,6 +24,8 @@ const optionLabels = (labels: WorkspaceLabels): { key: ToggleKey; label: string;
     { key: "taxonomy", label: `${labels.aliasDriveName} categories`, hint: "The category tree with aliases and icons." },
     { key: "glossary", label: labels.aliasGlossary },
     { key: "biographies", label: labels.aliasBiography },
+    { key: "calendar", label: labels.aliasCalendar, hint: "Tracks, with their items, schedules and holidays." },
+    { key: "calendarProgress", label: `Include ${labels.aliasCalendar} progress`, hint: "What's been checked off. Leave off to share a plan without your own checkmarks." },
     { key: "prompts", label: "Custom summary prompts", more: true },
     { key: "sequences", label: `${labels.aliasSequence}s`, hint: `Which order videos play in, per ${labels.aliasDriveName}.`, more: true },
     { key: "notes", label: "Video notes", more: true },
@@ -33,8 +35,10 @@ const optionLabels = (labels: WorkspaceLabels): { key: ToggleKey; label: string;
     { key: "settings", label: "Settings and feature flags", hint: "Never includes API keys, tokens, sync-server details or folder paths.", more: true },
 ];
 
-// Options that only mean something alongside the videos they belong to.
-const NEEDS_VIDEOS: ToggleKey[] = ["transcripts", "notes", "attachments", "sequences"];
+// Options that only mean something alongside another: the videos they belong to, or the Calendar's tracks.
+const NEEDS: Partial<Record<ToggleKey, ToggleKey>> = {
+    transcripts: "videos", notes: "videos", attachments: "videos", sequences: "videos", calendarProgress: "calendar",
+};
 
 // Default Save As name, stamped so repeated exports don't collide.
 function defaultKinpakName(workspaceName: string): string {
@@ -50,6 +54,7 @@ export function KinpakExport() {
     const [options, setOptions] = useState<KinpakOptions>({
         taxonomy: true, videos: true, transcripts: true, glossary: true, biographies: true, prompts: true,
         sequences: true, settings: true, workspace: true, history: true, notes: true, attachments: true,
+        calendar: true, calendarProgress: true,
         drives: DEFAULT_DRIVE_SCOPE,
     });
     // The export's state lives outside this component, so it's still here (running, or how it ended)
@@ -73,18 +78,19 @@ export function KinpakExport() {
     };
 
     // A kinpak with nothing ticked would be an empty file.
-    const anything = Object.entries(options).some(([key, on]) => on && key !== "transcripts" && key !== "drives");
+    const anything = Object.entries(options).some(([key, on]) => on && key !== "transcripts" && key !== "calendarProgress" && key !== "drives");
 
     const items = optionLabels(labels);
     const moreItems = items.filter(i => i.more);
-    // Options that only mean something alongside the videos they belong to are off while videos are.
-    const isOn = (key: ToggleKey) => options[key] && !(NEEDS_VIDEOS.includes(key) && !options.videos);
+    // An option that only means something alongside another is off (and greyed) while that one is.
+    const blocked = (key: ToggleKey) => { const parent = NEEDS[key]; return parent !== undefined && !options[parent]; };
+    const isOn = (key: ToggleKey) => options[key] && !blocked(key);
     const moreOn = moreItems.filter(i => isOn(i.key)).length;
 
     const renderOptions = (list: typeof moreItems) => (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
             {list.map(({ key, label, hint }) => {
-                const dependent = NEEDS_VIDEOS.includes(key) && !options.videos;
+                const dependent = blocked(key);
                 return (
                     <label key={key} className={`flex items-start gap-2 text-xs cursor-pointer ${dependent ? "opacity-40" : ""}`} title={hint}>
                         <input
@@ -114,11 +120,11 @@ export function KinpakExport() {
                 <div className="space-y-1">
                     <span className="block text-[11px] text-[#aaaaaa]">Also include</span>
                     <CheckboxDropdown
-                        options={moreItems.map(i => ({ value: i.key, label: i.label, hint: i.hint, disabled: NEEDS_VIDEOS.includes(i.key) && !options.videos }))}
+                        options={moreItems.map(i => ({ value: i.key, label: i.label, hint: i.hint, disabled: blocked(i.key) }))}
                         selected={moreItems.filter(i => isOn(i.key)).map(i => i.key)}
                         onChange={(next) => setOptions(prev => {
                             const updated = { ...prev };
-                            for (const i of moreItems) if (!(NEEDS_VIDEOS.includes(i.key) && !prev.videos)) updated[i.key] = next.includes(i.key);
+                            for (const i of moreItems) if (!blocked(i.key)) updated[i.key] = next.includes(i.key);
                             return updated;
                         })}
                         summary={moreOn === moreItems.length ? `All ${moreItems.length}` : moreOn === 0 ? "None" : `${moreOn} of ${moreItems.length}`}
@@ -160,7 +166,7 @@ export function KinpakExport() {
                 <div className="mt-4 p-3 bg-green-900/10 border border-green-500/30 rounded-lg text-green-400 text-xs leading-relaxed break-words">
                     Exported {(summary.counts.video ?? 0).toLocaleString()} videos, {(summary.counts.wdbs ?? 0).toLocaleString()} categories,{" "}
                     {(summary.counts.glossary ?? 0).toLocaleString()} glossary terms, {(summary.counts.biography ?? 0).toLocaleString()} bios,{" "}
-                    {(summary.counts.drive_sequence ?? 0).toLocaleString()} {labels.aliasSequence.toLowerCase()} entries, {(summary.counts.attachment ?? 0).toLocaleString()} attachments and{" "}
+                    {(summary.counts.drive_sequence ?? 0).toLocaleString()} {labels.aliasSequence.toLowerCase()} entries, {(summary.counts.attachment ?? 0).toLocaleString()} attachments, {(summary.counts.calendar_track ?? 0).toLocaleString()} {labels.aliasCalendar.toLowerCase()} tracks and{" "}
                     {summary.settings} settings ({formatBytes(summary.bytes)}) to {summary.path}.
                 </div>
             )}

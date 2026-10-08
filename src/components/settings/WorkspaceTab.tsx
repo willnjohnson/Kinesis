@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeftRight, BookA, BookMarked, ChevronDown, ChevronRight, FolderOpen, HardDrive, Search, Shield, UserSearch, type LucideIcon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ArrowLeftRight, ChevronDown, ChevronRight, FolderOpen } from "lucide-react";
 import { getWorkspaceStatus, revealWorkspace, setWorkspaceLabel, type WorkspaceStatus } from "../../api";
 import { WorkspaceLauncher } from "../workspace/WorkspaceLauncher";
 import { ErrorBox } from "../workspace/shared";
@@ -22,8 +22,9 @@ interface FieldProps {
     onSaved: () => Promise<void>;
 }
 
-/** One name: type, then Enter or Save to keep it. Saving an empty box goes back to the default. */
-function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled, disabledNote, onSaved }: FieldProps) {
+/** Editing one name: what's typed, why it can't be saved (if it can't), and saving it. Saving an empty box goes back to
+ *  the default. Shared by the workspace name's field and the section names' rows. */
+function useLabelDraft(labelKey: LabelKey, max: number, defaultValue: string, value: string, onSaved: () => Promise<void>) {
     const [draft, setDraft] = useState(value);
     const [error, setError] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
@@ -31,8 +32,8 @@ function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled,
     // Follow the stored value when it changes underneath (a reload, a sync).
     useEffect(() => { setDraft(value); setError(null); }, [value]);
 
-    const commit = async (next: string) => {
-        const checked = checkLabel(next, max);
+    const commit = async () => {
+        const checked = checkLabel(draft, max);
         if (checked.error) { setError(checked.error); return; }
         // checkLabel's own invariant already guarantees this (error is null only alongside a real value), but the
         // check itself doesn't narrow the type here, so this backstops it plainly for TypeScript's sake too.
@@ -50,8 +51,21 @@ function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled,
         }
     };
 
-    // Unsaved edits: what's typed differs from what's stored (an empty box means the default).
-    const dirty = (draft.trim() || defaultValue) !== value;
+    return {
+        draft,
+        change: (next: string) => { setDraft(next); setError(null); },
+        error,
+        saving,
+        // Unsaved edits: what's typed differs from what's stored (an empty box means the default).
+        dirty: (draft.trim() || defaultValue) !== value,
+        commit,
+    };
+}
+
+/** The workspace's own name: a full-width field with its hint underneath. */
+function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled, disabledNote, onSaved }: FieldProps) {
+    const { draft, change, error, saving, dirty, commit } = useLabelDraft(labelKey, max, defaultValue, value, onSaved);
+    const setDraft = change;
     return (
         <div>
             <div className="flex items-baseline justify-between mb-1.5">
@@ -64,15 +78,15 @@ function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled,
                     maxLength={max}
                     disabled={disabled || saving}
                     placeholder={defaultValue}
-                    onChange={e => { setDraft(e.target.value); setError(null); }}
-                    onKeyDown={e => { if (e.key === 'Enter') void commit(draft); }}
+                    onChange={e => setDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') void commit(); }}
                     className="flex-1 min-w-0 bg-[#121212] border border-[#303030] rounded-lg px-3 py-2 text-[11px] text-white outline-none focus:border-[#555555] disabled:opacity-50"
                 />
                 {!disabled && (
                     <button
                         type="button"
                         disabled={saving || !dirty}
-                        onClick={() => void commit(draft)}
+                        onClick={() => void commit()}
                         className={settingsSecondaryBtn}
                     >
                         Save
@@ -88,52 +102,111 @@ function LabelField({ labelKey, title, hint, max, defaultValue, value, disabled,
     );
 }
 
-// The Advanced names grouped by the part of the app they rename, in navigation order, plus
-// Permissions (which renders PermissionsPanel instead of LabelFields — see its `keys: []` and the
-// branch in the render below). Same underline-tab styling as the Export tab. Icons match the main
-// nav rail's own icons for these exact views (App.tsx), so "Library" always means BookMarked, etc.
-const ADVANCED_TABS: { id: string; label: string; icon: LucideIcon; keys: LabelKey[] }[] = [
-    { id: 'search', label: 'Search', icon: Search, keys: ['aliasSearch'] },
-    { id: 'library', label: 'Library', icon: BookMarked, keys: ['aliasLibrary'] },
-    { id: 'glossary', label: 'Glossary', icon: BookA, keys: ['aliasGlossary'] },
-    { id: 'biography', label: 'Biography', icon: UserSearch, keys: ['aliasBiography', 'aliasBiographyItem'] },
-    { id: 'drive', label: 'Drive', icon: HardDrive, keys: ['aliasDriveName', 'aliasDriveLink', 'aliasDriveSymlink', 'aliasSequence'] },
-    { id: 'permissions', label: 'Permissions', icon: Shield, keys: [] },
+/** One section name as a compact row: its name (with the hint as its tooltip), the box, and Save. A sub-name (one of a
+ *  section's extra names, like Drive's "Link") is indented under its section's row. */
+function NameRow({ labelKey, title, hint, max, defaultValue, value, sub, onSaved }: {
+    labelKey: LabelKey;
+    title: string;
+    hint: string;
+    max: number;
+    defaultValue: string;
+    value: string;
+    sub: boolean;
+    onSaved: () => Promise<void>;
+}) {
+    const { draft, change, error, saving, dirty, commit } = useLabelDraft(labelKey, max, defaultValue, value, onSaved);
+    return (
+        <div>
+            <div className="grid grid-cols-[7.5rem_minmax(0,1fr)_auto] items-center gap-2">
+                <label
+                    className={sub ? 'pl-3 text-[11px] font-semibold text-[#888888] truncate' : 'text-[10px] uppercase font-bold text-[#aaaaaa] tracking-widest truncate'}
+                    title={hint}
+                >
+                    {title}
+                </label>
+                <input
+                    value={draft}
+                    maxLength={max}
+                    disabled={saving}
+                    placeholder={defaultValue}
+                    aria-label={title}
+                    onChange={e => change(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') void commit(); }}
+                    className="min-w-0 bg-[#121212] border border-[#303030] rounded-lg px-3 py-1.5 text-[11px] text-white outline-none focus:border-[#555555] disabled:opacity-50"
+                />
+                <button type="button" disabled={saving || !dirty} onClick={() => void commit()} className={settingsSecondaryBtn}>
+                    Save
+                </button>
+            </div>
+            {error && <p className="text-[11px] text-red-400 mt-1 ml-[8rem]">{error}</p>}
+        </div>
+    );
+}
+
+// The section names, in navigation order: each section's own name, then any extra names that belong to it (shown indented,
+// under the short title given here).
+const NAME_GROUPS: { key: LabelKey; subs?: { key: LabelKey; title: string }[] }[] = [
+    { key: 'aliasSearch' },
+    { key: 'aliasLibrary' },
+    { key: 'aliasGlossary' },
+    { key: 'aliasBiography', subs: [{ key: 'aliasBiographyItem', title: 'One entry' }] },
+    { key: 'aliasCalendar' },
+    {
+        key: 'aliasDriveName',
+        subs: [
+            { key: 'aliasDriveLink', title: 'Link' },
+            { key: 'aliasDriveSymlink', title: 'Symlink' },
+            { key: 'aliasSequence', title: 'Sequence' },
+        ],
+    },
 ];
 
-// Below this width (px), the sub-tab row shows icons alone (with a tooltip) instead of icon + label —
-// same ResizeObserver approach as the sequence bar's Previous/Next labels (SequenceDock.tsx): a
-// Settings modal can be small, and 6 labelled tabs don't always fit.
-const TABS_ICON_ONLY_BELOW = 480;
+/** A collapsible part of this tab, its one-line description under the heading. */
+function Collapsible({ title, description, open, onToggle, children }: { title: string; description: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
+    return (
+        <div>
+            <button type="button" onClick={onToggle} className="flex items-center gap-1.5 text-sm font-bold text-white cursor-pointer">
+                {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                {title}
+            </button>
+            <p className="text-[11px] text-[#666666] mt-1">{description}</p>
+            {open && <div className="mt-4">{children}</div>}
+        </div>
+    );
+}
 
 export function WorkspaceTab() {
     const { flags } = useFlags();
     const { labels, reload } = useWorkspace();
-    const [advancedOpen, setAdvancedOpen] = useState(false);
-    const [advancedTab, setAdvancedTab] = useState(ADVANCED_TABS[0].id);
+    const [namesOpen, setNamesOpen] = useState(false);
+    const [permissionsOpen, setPermissionsOpen] = useState(false);
     const [status, setStatus] = useState<WorkspaceStatus | null>(null);
     const [launcherOpen, setLauncherOpen] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
-    // Collapses the sub-tab row to icons alone once it's too narrow for icon + label.
-    const tabsRowRef = useRef<HTMLDivElement>(null);
-    const [tabsIconOnly, setTabsIconOnly] = useState(false);
-    useEffect(() => {
-        const el = tabsRowRef.current;
-        if (!el) return;
-        const observer = new ResizeObserver(([entry]) => setTabsIconOnly(entry.contentRect.width < TABS_ICON_ONLY_BELOW));
-        observer.observe(el);
-        return () => observer.disconnect();
-    }, []);
 
     // Re-read when the name changes: renaming the workspace renames its folder too.
     useEffect(() => {
         getWorkspaceStatus().then(setStatus).catch(e => setError(errText(e)));
     }, [labels.workspaceName]);
 
-    const [nameDef, ...aliasDefs] = LABEL_DEFS;
-    const activeTab = ADVANCED_TABS.find(t => t.id === advancedTab) ?? ADVANCED_TABS[0];
-    const tabDefs = aliasDefs.filter(d => (activeTab.keys as readonly string[]).includes(d.key));
+    const nameDef = LABEL_DEFS[0];
+    const defOf = (key: LabelKey) => LABEL_DEFS.find(d => d.key === key)!;
+    const nameRow = (key: LabelKey, title: string, sub: boolean) => {
+        const def = defOf(key);
+        return (
+            <NameRow
+                key={key}
+                labelKey={key}
+                title={title}
+                hint={def.hint}
+                max={def.max}
+                defaultValue={def.default}
+                value={labels[key]}
+                sub={sub}
+                onSaved={reload}
+            />
+        );
+    };
     // Renaming can be switched off, but a workspace that was never named can always be named once.
     const nameLocked = !flags.allowWorkspaceRename && labels.workspaceName !== nameDef.default;
 
@@ -170,58 +243,34 @@ export function WorkspaceTab() {
                 {error && <div className="mt-3"><ErrorBox>{error}</ErrorBox></div>}
             </div>
 
+            {/* Two separate things, so two sections: what the parts of the app are called, and what this workspace
+                allows. Every name is in one list (most sections have just one), rather than a tab per section. */}
             {flags.showWorkspaceAdvanced && (
-                <div>
-                    <button
-                        type="button"
-                        onClick={() => setAdvancedOpen(o => !o)}
-                        className="flex items-center gap-1.5 text-sm font-bold text-white cursor-pointer"
+                <>
+                    <Collapsible
+                        title="Section Names"
+                        description="Rename sections to fit your workspace. Up to 18 characters: letters, numbers and spaces. Leave one empty and save to go back to its default."
+                        open={namesOpen}
+                        onToggle={() => setNamesOpen(o => !o)}
                     >
-                        {advancedOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                        Advanced
-                    </button>
-                    <p className="text-[11px] text-[#666666] mt-1">
-                        {activeTab.id === 'permissions'
-                            ? "Turn specific editing permissions on or off for this workspace."
-                            : "Rename sections to fit your workspace. Up to 18 characters: letters, numbers and spaces."}
-                    </p>
-                    {advancedOpen && (
-                        <div className="mt-4">
-                            <div ref={tabsRowRef} className="flex items-center gap-4 mb-4">
-                                {ADVANCED_TABS.map(({ id, label, icon: Icon }) => (
-                                    <button
-                                        key={id}
-                                        type="button"
-                                        onClick={() => setAdvancedTab(id)}
-                                        title={tabsIconOnly ? label : undefined}
-                                        className={`flex items-center gap-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeTab.id === id ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                    >
-                                        {tabsIconOnly ? <Icon className="w-3.5 h-3.5 shrink-0" /> : label}
-                                        {activeTab.id === id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                    </button>
-                                ))}
-                            </div>
-                            {activeTab.id === 'permissions' ? (
-                                <PermissionsPanel />
-                            ) : (
-                            <div className="grid grid-cols-1 gap-4">
-                            {tabDefs.map(def => (
-                                <LabelField
-                                    key={def.key}
-                                    labelKey={def.key}
-                                    title={def.title}
-                                    hint={def.hint}
-                                    max={def.max}
-                                    defaultValue={def.default}
-                                    value={labels[def.key]}
-                                    onSaved={reload}
-                                />
+                        <div className="space-y-2">
+                            {NAME_GROUPS.map(group => (
+                                <div key={group.key} className="space-y-2">
+                                    {nameRow(group.key, defOf(group.key).title, false)}
+                                    {group.subs?.map(s => nameRow(s.key, s.title, true))}
+                                </div>
                             ))}
-                            </div>
-                            )}
                         </div>
-                    )}
-                </div>
+                    </Collapsible>
+                    <Collapsible
+                        title="Permissions"
+                        description="Turn specific editing permissions on or off for this workspace."
+                        open={permissionsOpen}
+                        onToggle={() => setPermissionsOpen(o => !o)}
+                    >
+                        <PermissionsPanel />
+                    </Collapsible>
+                </>
             )}
 
             {launcherOpen && status && <WorkspaceLauncher status={status} onClose={() => setLauncherOpen(false)} />}

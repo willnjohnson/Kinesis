@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo, type ReactNode, type RefObject } from 'react';
 import { getGlossaryTerms, deleteGlossaryTerm, trashRestore, saveGlossaryTerm, getWdbsRoots, type GlossaryTerm, type WdbsRoot, type Video } from '../api';
-import { Plus, X, Pencil, Check, ChevronDown } from 'lucide-react';
+import { Plus, X, Pencil, Check, ChevronDown, GalleryVerticalEnd } from 'lucide-react';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
@@ -19,6 +19,8 @@ import { foldVideoLinkTimes } from '../lib/internal-links';
 import { isBuiltInTag } from '../lib/glossary';
 import { builtInTagDescription, builtInTagIcon, builtInTagRank } from '../lib/built-in-tags';
 import { useFlags } from '../hooks/useFlags';
+import { SecondaryButton } from './ui/Button';
+import { Select } from './ui/Select';
 
 // The dropdown's value for "all Quick Tags" (drive roots look like ":CRYPTO", so this can't clash).
 const QUICK_VIEW = '__quick__';
@@ -141,7 +143,7 @@ function GlossaryNameButton({ entry, onOpen, badge }: { entry: GlossaryTerm; onO
     );
 }
 
-export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allowModification = true, onChange, onNotify, onOpenTrash, reloadSignal, scrollContainerRef, startInTags = false }: { onNotify?: (n: NotificationContent) => void, onOpenTrash?: () => void, reloadSignal?: number, /** Open on the tags list (the sidebar's "Manage tags in ..."), not the terms. */ startInTags?: boolean, searchQuery: string, onSearchInLibrary: (term: string, mode: 'tag' | 'term' | 'library') => void, onOpenVideo?: (video: Video) => void, allowModification?: boolean, onChange?: () => void, scrollContainerRef: RefObject<HTMLDivElement | null> }) {
+export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOpenFlashcards, allowModification = true, onChange, onNotify, onOpenTrash, reloadSignal, scrollContainerRef, startInTags = false }: { /** Opens Flashcards for the terms on screen (App owns the window: it's a place in Back/Forward). */ onOpenFlashcards: (entries: GlossaryTerm[], deckName: string) => void, onNotify?: (n: NotificationContent) => void, onOpenTrash?: () => void, reloadSignal?: number, /** Open on the tags list (the sidebar's "Manage tags in ..."), not the terms. */ startInTags?: boolean, searchQuery: string, onSearchInLibrary: (term: string, mode: 'tag' | 'term' | 'library') => void, onOpenVideo?: (video: Video) => void, allowModification?: boolean, onChange?: () => void, scrollContainerRef: RefObject<HTMLDivElement | null> }) {
     const { labels } = useWorkspace();
     const glossaryLower = labels.aliasGlossary.toLowerCase();
     const [terms, setTerms] = useState<GlossaryTerm[]>([]);
@@ -393,19 +395,20 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                 <h2 className="text-xl font-bold text-white">{labels.aliasGlossary}</h2>
                 <div className="flex items-center gap-3">
                     {(flags.showQuickTags || (flags.glossaryDriveFilterVisible && roots.length > 0)) && (
-                    <select
+                    <Select
                         value={view}
-                        onChange={e => setView(e.target.value)}
+                        onValueChange={setView}
                         aria-label={`Show ${glossaryLower} entries: all terms, all tags, or by ${labels.aliasDriveName}`}
                         // A fixed width, so the drives arriving after the terms (see loadRoots) don't resize it.
-                        className="w-40 px-3 py-1.5 bg-[#272727] hover:bg-[#3f3f3f] text-white rounded-md transition-colors text-[11px] font-semibold cursor-pointer outline-none"
+                        wrapperClassName="w-40"
+                        className="w-full"
                     >
                         <option value="">All Terms</option>
                         {flags.showQuickTags && <option value={QUICK_VIEW}>All Tags</option>}
                         {flags.glossaryDriveFilterVisible && roots.map(r => (
                             <option key={r.path} value={r.path} title={r.alias ?? undefined}>{r.segment}</option>
                         ))}
-                    </select>
+                    </Select>
                     )}
                     {allowModification && (
                         <button
@@ -501,7 +504,23 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                 idPrefix="glossary-az"
                 available={groupKeys}
                 scrollContainerRef={scrollContainerRef}
-                trailing={onOpenTrash ? <TrashChip kind="glossary" labelFrom="2xl" onOpen={onOpenTrash} /> : undefined}
+                trailing={
+                    <>
+                        {/* Flashcards from the terms on screen (all of them, or one Drive's). Not for tags: they have no definitions. */}
+                        {showGlossaryTags && filteredTerms.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => onOpenFlashcards(filteredTerms, driveFilter ? nameOfRoot(roots, driveFilter) : 'All Terms')}
+                                title={`Study the ${filteredTerms.length} term${filteredTerms.length === 1 ? '' : 's'} shown as flashcards`}
+                                className="shrink-0 flex items-center gap-1.5 whitespace-nowrap px-1.5 py-0.5 text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                            >
+                                <GalleryVerticalEnd className="w-3 h-3" />
+                                Flashcards
+                            </button>
+                        )}
+                        {onOpenTrash && <TrashChip kind="glossary" labelFrom="2xl" onOpen={onOpenTrash} />}
+                    </>
+                }
             />
 
             {/* Add Modal */}
@@ -514,13 +533,11 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                     bodyClassName="p-6 space-y-6"
                     footer={
                         <>
-                            <button
-                                type="button"
+                            <SecondaryButton
                                 onClick={closeAddModal}
-                                className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
                             >
                                 Cancel
-                            </button>
+                            </SecondaryButton>
                             <button
                                 type="submit"
                                 className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all text-sm font-bold cursor-pointer"
@@ -584,13 +601,11 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, allo
                     bodyClassName="p-6 space-y-6"
                     footer={
                         <>
-                            <button
-                                type="button"
+                            <SecondaryButton
                                 onClick={() => setTermToEdit(null)}
-                                className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
                             >
                                 Cancel
-                            </button>
+                            </SecondaryButton>
                             <button
                                 type="submit"
                                 className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-all text-sm font-bold cursor-pointer"

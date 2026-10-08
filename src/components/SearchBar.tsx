@@ -1,6 +1,7 @@
-import { Search, AtSign, ListVideo, Filter, X, Lightbulb, History, Clock, Type, FileText } from 'lucide-react';
+import { Search, AtSign, ListVideo, Filter, X, Lightbulb, History, Clock, Type, FileText, ListChecks, SignalHigh, CircleCheck, Shapes, HardDrive } from 'lucide-react';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { addSearchHistory, getSearchHistory, getGlossaryTerms, getSearchSuggestions, type HistoryEntry } from '../api';
+import { addSearchHistory, getSearchHistory, getGlossaryTerms, getSearchSuggestions, listCalendarTracks, getWdbsSuggestions, decodeWdbs, type HistoryEntry } from '../api';
+import { CALENDAR_FACET_VALUES } from '../lib/calendar-filter';
 import { decodeHtmlEntities } from '../lib/utils';
 import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { useFlags } from '../hooks/useFlags';
@@ -16,7 +17,7 @@ interface Props {
     onLiveFilter?: (query: string) => void;
     loading: boolean;
     placeholder?: string;
-    viewMode?: 'search' | 'library' | 'glossary' | 'biography';
+    viewMode?: 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
     initialFacets?: Facet[];
     initialQuery?: string;
     /** The bar's outer spacing, in place of the page header's `mb-2 px-4` (Manage Drive's Unsorted list sits it in a pane). */
@@ -33,7 +34,11 @@ function unescapeSpecial(text: string): string {
     return text.replace(/^(\s*)\\([#^@>!\\])/, '$1$2');
 }
 
-export type SearchFacet = 'handle' | 'channel_name' | 'playlist' | 'video' | 'title_search' | 'term_search' | 'definition_search' | 'tag_search' | 'person_search' | 'bio_search' | 'no_tags';
+export type SearchFacet = 'handle' | 'channel_name' | 'playlist' | 'video' | 'title_search' | 'term_search' | 'definition_search' | 'tag_search' | 'person_search' | 'bio_search' | 'no_tags'
+    // The Biography's: creators with videos filed under a Drive (its path is the chip's own value, ":MWD-JOHN").
+    | 'drive'
+    // The Calendar's (lib/calendar-filter.ts).
+    | 'track' | 'importance' | 'status' | 'kind';
 
 /**
  * Search input with facet detection and mode-specific keyboard shortcuts. Typing (or pasting) a
@@ -59,18 +64,38 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
     const isLibrary = viewMode === 'library';
     const isGlossary = viewMode === 'glossary';
     const isBiography = viewMode === 'biography';
-    const isLibraryOrGlossary = isLibrary || isGlossary || isBiography;
+    // The Calendar's bar filters its tracks and items as you type (lib/calendar-filter.ts): plain words or one facet,
+    // with no search history (its Enter jumps to the next match).
+    const isCalendar = viewMode === 'calendar';
+    const isLibraryOrGlossary = isLibrary || isGlossary || isBiography || isCalendar;
     // Ghost-text completion: as a value is typed into a filter chip, the rest of the first saved one that starts
     // that way is drawn faintly after it. Tab (or the right arrow at the end) takes it, and Up/Down step through
     // the other ones that fit. Nothing is drawn over the results. What it completes depends on the chip:
     // a Tag or Term (Library) from the glossary, a handle from the saved channels, and a video ID from the
     // saved videos. A handle also says which channel it is (its name) and a video ID which video (its title),
-    // in parentheses.
-    const [suggestionData, setSuggestionData] = useState<{ tags: string[]; terms: string[]; handles: { handle: string; name: string }[]; channels: { name: string; handle: string }[]; videos: { id: string; title: string }[] }>(
-        { tags: [], terms: [], handles: [], channels: [], videos: [] });
-    // Library only: Search looks things up on YouTube, so what's saved here isn't what it's after.
-    const wantsSuggestions = isLibrary;
+    // in parentheses. In the Calendar, a Track from the track names, and the other facets from their few values.
+    const [suggestionData, setSuggestionData] = useState<{ tags: string[]; terms: string[]; handles: { handle: string; name: string }[]; channels: { name: string; handle: string }[]; videos: { id: string; title: string }[]; tracks: string[]; drives: string[] }>(
+        { tags: [], terms: [], handles: [], channels: [], videos: [], tracks: [], drives: [] });
+    // Not Search: it looks things up on YouTube, so what's saved here isn't what it's after. The Biography's only
+    // suggestion is a Drive path, while one is typed after ":".
+    const wantsSuggestions = isLibrary || isCalendar || isBiography;
     const loadSuggestions = useCallback(() => {
+        if (isBiography) {
+            // The Drives in use, and each one's parents (":MWD" for ":MWD-JOHN"), so a whole branch can be picked.
+            getWdbsSuggestions().then(paths => {
+                const all = new Set<string>();
+                for (const p of paths) {
+                    const parts = decodeWdbs(p).split('-');
+                    for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('-'));
+                }
+                setSuggestionData(d => ({ ...d, drives: [...all].filter(x => x.length > 1).sort((a, b) => a.localeCompare(b)) }));
+            }).catch(() => {});
+            return;
+        }
+        if (isCalendar) {
+            listCalendarTracks(true).then(rows => setSuggestionData(d => ({ ...d, tracks: rows.map(r => r.track.name).sort((a, b) => a.localeCompare(b)) }))).catch(() => {});
+            return;
+        }
         getGlossaryTerms().then(rows => {
             // A name is a Term when any of its rows (one per Drive) has a definition; otherwise a Quick Tag.
             const isTerm = new Map<string, boolean>();
@@ -79,10 +104,13 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             setSuggestionData(d => ({ ...d, tags: names.filter(n => !isTerm.get(n)), terms: names.filter(n => isTerm.get(n)) }));
         }).catch(() => {});
         getSearchSuggestions().then(({ handles, channels, videos }) => setSuggestionData(d => ({ ...d, handles, channels, videos }))).catch(() => {});
-    }, []);
+    }, [isCalendar, isBiography]);
     useEffect(() => { if (wantsSuggestions) loadSuggestions(); }, [wantsSuggestions, loadSuggestions]);
     const facetType = facets.length === 1 ? facets[0].type : null;
-    const suggestKind = wantsSuggestions && (facetType === 'handle' || facetType === 'video' || (facetType === 'tag_search' || facetType === 'term_search' || facetType === 'channel_name')) ? facetType : null;
+    // The Biography: a Drive path being typed (":" and on, before it becomes a chip).
+    const typingDrive = isBiography && facets.length === 0 && query.startsWith(':');
+    const suggestKind = typingDrive ? 'drive' as const
+        : wantsSuggestions && !isBiography && facetType !== null && facetType !== 'no_tags' ? facetType : null;
     // A * in what's typed stands for any run of characters (`*beast` finds "mrbeast"), so a name that starts
     // with the typed text, or, with a *, fits the pattern from its start. The filter itself reads the * the
     // same way (see star_to_like in db/search.rs).
@@ -103,6 +131,11 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             case 'channel_name': return suggestionData.channels.filter(c => fits(c.name)).map(c => ({ text: c.name, title: c.handle ? `@${c.handle}` : undefined }));
             // IDs are case-sensitive (see caseSensitive above); a hint shows from the first character, like the other facets.
             case 'video': return suggestionData.videos.filter(v => fits(v.id)).map(v => ({ text: v.id, title: v.title }));
+            case 'track': return suggestionData.tracks.filter(fits).map(text => ({ text }));
+            case 'drive': return suggestionData.drives.filter(fits).map(text => ({ text }));
+            case 'importance':
+            case 'status':
+            case 'kind': return CALENDAR_FACET_VALUES[suggestKind].filter(fits).map(text => ({ text }));
             default: return [];
         }
     }, [suggestKind, query, wildcard, suggestionData]);
@@ -192,6 +225,9 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         // db::search::untagged_clause).
         const fullQuery = facets.length === 1 && facets[0].type === 'no_tags'
             ? `no_tags: ${unescapeSpecial(query)}`.trim()
+            // A Drive chip carries its own path; what's typed after it searches names, as with no chip.
+            : facets.length === 1 && facets[0].type === 'drive'
+            ? `drive:${facets[0].value} ${unescapeSpecial(query)}`.trim()
             : facets.map(f => {
                 const val = f.value || query;
                 const escapedValue = (val.includes(' ') && !val.startsWith('"')) ? `"${val}"` : val;
@@ -242,15 +278,25 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             case 'term_search': return isLibrary ? <span className="text-xs font-bold">^</span> : <Type className="w-3 h-3" />;
             case 'person_search': return <AtSign className="w-3 h-3" />;
             case 'bio_search': return <FileText className="w-3 h-3" />;
+            case 'drive': return <HardDrive className="w-3 h-3" />;
             case 'tag_search': return <span className="text-xs font-bold">#</span>;
             case 'no_tags': return <span className="text-xs font-bold">!#</span>;
+            case 'track': return <ListChecks className="w-3 h-3" />;
+            case 'importance': return <SignalHigh className="w-3 h-3" />;
+            case 'status': return <CircleCheck className="w-3 h-3" />;
+            case 'kind': return <Shapes className="w-3 h-3" />;
             default: return <Filter className="w-3 h-3" />;
         }
     };
 
     const facetPatterns = useMemo(() => {
         const patterns: Record<string, SearchFacet> = {};
-        if (isGlossary) {
+        if (isCalendar) {
+            patterns['track:'] = 'track';
+            patterns['importance:'] = 'importance';
+            patterns['status:'] = 'status';
+            patterns['kind:'] = 'kind';
+        } else if (isGlossary) {
             patterns['definition_search:'] = 'definition_search';
         } else if (isBiography) {
             patterns['person_search:'] = 'person_search';
@@ -268,7 +314,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             patterns['playlist:'] = 'playlist';
         }
         return patterns;
-    }, [isLibrary, isGlossary, isBiography]);
+    }, [isLibrary, isGlossary, isBiography, isCalendar]);
 
     const extractPlaylistId = (val: string) => {
         const match = val.match(/[?&]list=([^#&?]+)/);
@@ -312,7 +358,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             }
         }
 
-        if (!isGlossary && !isBiography && (facets.length === 0 || (isLibrary && facets.length === 1 && (facets[0].type === 'tag_search' || facets[0].type === 'term_search')))) {
+        if (!isGlossary && !isBiography && !isCalendar && (facets.length === 0 || (isLibrary && facets.length === 1 && (facets[0].type === 'tag_search' || facets[0].type === 'term_search')))) {
             const handle = extractHandle(val);
             const videoId = extractVideoId(val);
             const playlistId = !isLibrary ? extractPlaylistId(val) : null;
@@ -362,7 +408,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                 }
             }
         }
-        // Library mode shortcut: !# → filter to untagged videos. Always reachable, like !d/!b/!m
+        // Library mode shortcut: !# → filter to untagged videos. Always reachable, like !d/!w/!b
         // below, regardless of what's already active. Unlike every other facet here, whatever
         // follows it (`!#foo`, no space needed) is never consumed as the facet's own value — it
         // stays a normal search on top of the filter, so "!#foo" means "untagged AND matches foo",
@@ -381,13 +427,31 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                 return;
             }
         }
+        // Calendar shortcuts: !t track, !i importance (an item's priority), !s status, !k kind (video or task).
+        if (isCalendar) {
+            const shortcut = val.match(/^!([tisk])(?: |$)/);
+            if (shortcut) {
+                const type = ({ t: 'track', i: 'importance', s: 'status', k: 'kind' } as const)[shortcut[1] as 't' | 'i' | 's' | 'k'];
+                setFacets([{ type, value: '' }]);
+                setQuery(val.slice(2).trimStart());
+                return;
+            }
+        }
         if (isBiography) {
-            if (val === '!b' || val.startsWith('!b ')) {
+            // ":MWD-JOHN " (a Drive path and a space) becomes a Drive chip; what follows searches names within it.
+            const drive = facets.length === 0 ? val.match(/^(:\S+)\s(.*)$/) : null;
+            if (drive) {
+                setFacets([{ type: 'drive', value: drive[1].toUpperCase() }]);
+                setQuery(drive[2]);
+                return;
+            }
+            // !w: who (a name); !b: what a bio says.
+            if (val === '!w' || val.startsWith('!w ')) {
                 setFacets([{ type: 'person_search', value: '' }]);
                 setQuery(val.slice(2).trimStart());
                 return;
             }
-            if (val === '!m' || val.startsWith('!m ')) {
+            if (val === '!b' || val.startsWith('!b ')) {
                 setFacets([{ type: 'bio_search', value: '' }]);
                 setQuery(val.slice(2).trimStart());
                 return;
@@ -482,7 +546,8 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             const lastFacet = facets[facets.length - 1];
             setFacets(facets.slice(0, -1));
             // A handle chip goes back to the "@" that made it, so one more Backspace clears it.
-            setQuery(lastFacet.type === 'handle' ? '@' : lastFacet.type === 'channel_name' ? '@@' : lastFacet.type + ':');
+            // A Drive chip goes back to its path, to edit.
+            setQuery(lastFacet.type === 'handle' ? '@' : lastFacet.type === 'channel_name' ? '@@' : lastFacet.type === 'drive' ? lastFacet.value : lastFacet.type + ':');
             e.preventDefault();
         }
         if (e.key === 'Escape') {
@@ -502,12 +567,22 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         if (isFilterSearchActive && !isLibraryOrGlossary && !isYouTubeMode) return;
         // A chip with nothing after it (just typed "@") has nothing to look up.
         if (isYouTubeMode && !query.trim()) return;
-        const fullQuery = facets.map(f => `${f.type}:${query}`).join(' ') + (facets.length === 0 ? unescapeSpecial(query) : "");
+        // Enter on a Drive path still being typed makes it a chip.
+        if (typingDrive && /^:\S+$/.test(query.trim())) {
+            userActionRef.current = true;
+            setFacets([{ type: 'drive', value: query.trim().toUpperCase() }]);
+            setQuery('');
+            return;
+        }
+        const fullQuery = facets.length === 1 && facets[0].type === 'drive'
+            ? `drive:${facets[0].value} ${unescapeSpecial(query)}`
+            : facets.map(f => `${f.type}:${query}`).join(' ') + (facets.length === 0 ? unescapeSpecial(query) : "");
         const trimmed = fullQuery.trim();
         if (trimmed) {
             onSearch(trimmed);
             const hasOnlyTagSearch = facets.length > 0 && facets.every(f => f.type === 'tag_search' || f.type === 'term_search');
-            if (!hasOnlyTagSearch) {
+            // The Calendar's Enter jumps to the next matching item (CalendarView.tsx), it isn't a search to remember.
+            if (!hasOnlyTagSearch && !isCalendar) {
                 addSearchHistory(trimmed);
             }
             setShowHistory(false);
@@ -537,6 +612,14 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
 
     // The order here is the order of the tips list (the lightbulb) above, so the two always read the same.
     const availableFacets = useMemo(() => {
+        if (viewMode === 'calendar') {
+            return [
+                { type: 'track' as const, label: 'Track (!t)' },
+                { type: 'importance' as const, label: 'Importance (!i)' },
+                { type: 'status' as const, label: 'Status (!s)' },
+                { type: 'kind' as const, label: 'Kind (!k)' },
+            ];
+        }
         if (viewMode === 'glossary') {
             // No "Term" entry: a plain search already filters by term name (see GlossaryView's filteredTerms), so a
             // facet that did the same thing again would be redundant. Definition search is the one real addition.
@@ -546,8 +629,8 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         }
         if (viewMode === 'biography') {
             return [
-                { type: 'person_search' as const, label: `${labels.aliasBiographyItem} (!b)` },
-                { type: 'bio_search' as const, label: `${labels.aliasBiography} (!m)` },
+                { type: 'person_search' as const, label: 'Who (!w)' },
+                { type: 'bio_search' as const, label: 'Bio Text (!b)' },
             ];
         }
         if (viewMode === 'search') {
@@ -599,6 +682,13 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                     <div className={`flex flex-wrap items-center bg-[#121212] border border-[#404040] ${isLibraryOrGlossary ? 'rounded-full' : 'rounded-l-full'} focus-within:ring-1 focus-within:ring-[var(--k-accent)] transition-all min-h-11 py-1 px-3 gap-2`}>
                         {facets.map((f, i) => (
                             <div key={`${f.type}-${i}`} className="relative flex items-center gap-1.5 bg-[#272727] border border-[#444444] text-[#aaaaaa] rounded-full px-3 py-0.5 animate-in zoom-in-95 duration-200 shrink-0 select-none facet-menu-container">
+                                {f.type === 'drive' ? (
+                                    // A Drive chip names its Drive; it has no other kind of filter to switch to.
+                                    <span className="flex items-center gap-1.5 text-white" title={`${labels.aliasBiography} with videos in ${f.value} or below it`}>
+                                        {getFacetIcon(f.type)}
+                                        <span className="text-[11px] font-bold tracking-wider font-mono">{f.value}</span>
+                                    </span>
+                                ) : (
                                 <button
                                     type="button"
                                     onClick={() => setFacetMenuIndex(facetMenuIndex === i ? null : i)}
@@ -607,6 +697,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                     {getFacetIcon(f.type)}
                                     <span className="text-[11px] font-bold uppercase tracking-wider group-hover:underline decoration-dotted transition-all underline-offset-2">{f.type.replace(/_/g, ' ')}</span>
                                 </button>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => removeFacet(i)}
@@ -644,6 +735,8 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                         <div className="relative flex-1 min-w-[120px]">
                             <input
                                 ref={inputRef}
+                                // How a view tells its Enter happened here (the Calendar's next-match jump).
+                                data-k-search=""
                                 type="text"
                                 value={query}
                                 onChange={(e) => handleInput(e.target.value)}
@@ -675,24 +768,76 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                             )}
                         </div>
 
+                        {/* The Calendar's own tips: its filter's shortcuts and facets (lib/calendar-filter.ts), in the same
+                            popup as the other modes'. */}
+                        {isCalendar && (
+                            <div className="group/hint relative flex items-center pr-1">
+                                <Lightbulb className="w-4 h-4 text-gray-500 hover:text-orange-400 transition-colors cursor-help" />
+                                <div className="absolute top-full right-0 mt-3 w-[22rem] bg-[#1a1a1a] border border-[#333] rounded-xl p-4 opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-[100]">
+                                    <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">{labels.aliasSearch} Tips</h4>
+                                    <div className="space-y-4">
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Filter Mode</span>
+                                            <p className="text-[12px] text-gray-300">
+                                                Words find tasks by name, description or track, and are marked where they show. <span className="text-white">Enter</span> jumps to the next match, <span className="text-white">Shift+Enter</span> to the one before.
+                                            </p>
+                                        </div>
+                                        <div className="flex flex-col gap-1">
+                                            <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Facet Options</span>
+                                            <div className="grid grid-cols-1 gap-1.5 pt-1 text-[11px]">
+                                                {[
+                                                    { facet: 'track:', keys: '!t', what: 'Track name' },
+                                                    { facet: 'importance:', keys: '!i', what: 'High, medium, low' },
+                                                    { facet: 'status:', keys: '!s', what: 'Overdue, in progress, to do, done' },
+                                                    { facet: 'kind:', keys: '!k', what: 'Video, task' },
+                                                ].map(row => (
+                                                    <code key={row.facet} className="bg-black/40 px-2 py-1 rounded text-white flex justify-between gap-2 whitespace-nowrap group/code transition-colors">
+                                                        <span>{row.facet}</span>
+                                                        <span className="text-gray-500 group-hover/code:text-gray-300 text-right">
+                                                            {row.keys && <span className="text-orange-400 font-bold mr-1">{row.keys}</span>}/ {row.what}
+                                                        </span>
+                                                    </code>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
                          {/* Hints Lightbulb */}
-                        {!isBiography && (
+                        {!isCalendar && (
                             <div className="group/hint relative flex items-center pr-1">
                                 <Lightbulb className="w-4 h-4 text-gray-500 hover:text-orange-400 transition-colors cursor-help" />
 
-                                <div className="absolute top-full right-0 mt-3 w-80 bg-[#1a1a1a] border border-[#333] rounded-xl p-4 opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-[100]">
+                                <div className="absolute top-full right-0 mt-3 w-[22rem] bg-[#1a1a1a] border border-[#333] rounded-xl p-4 opacity-0 translate-y-2 pointer-events-none group-hover/hint:opacity-100 group-hover/hint:translate-y-0 transition-all duration-200 z-[100]">
                                     <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">{labels.aliasSearch} Tips</h4>
                                 <div className="space-y-4">
                                     <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{isGlossary ? `${labels.aliasGlossary} Mode` : isLibrary ? `${labels.aliasLibrary} Mode` : "Paste Mode"}</span>
+                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{isBiography ? `${labels.aliasBiography} Mode` : isGlossary ? `${labels.aliasGlossary} Mode` : isLibrary ? `${labels.aliasLibrary} Mode` : "Paste Mode"}</span>
                                         <p className="text-[12px] text-gray-300">
-                                            {isGlossary ? "Filter your glossary terms." : isLibrary ? "Filter your saved videos using facets." : "Paste any YouTube URL directly into the search bar."}
+                                            {isBiography ? `Filter ${labels.aliasBiography.toLowerCase()} by name, by what their bio says, or by the Drive their videos are in.` : isGlossary ? "Filter your glossary terms." : isLibrary ? "Filter your saved videos using facets." : "Paste any YouTube URL directly into the search bar."}
                                         </p>
                                     </div>
                                     <div className="flex flex-col gap-1">
                                         <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">Facet Options</span>
                                         <div className="grid grid-cols-1 gap-1.5 pt-1 text-[11px]">
-                                            {isGlossary ? (
+                                            {isBiography ? (
+                                                <>
+                                                    <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                        <span>drive:</span>
+                                                        <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">:</span>/ Drive and sublevels</span>
+                                                    </code>
+                                                    <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                        <span>person_search:</span>
+                                                        <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!w</span>/ Who</span>
+                                                    </code>
+                                                    <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                        <span>bio_search:</span>
+                                                        <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!b</span>/ Bio Text</span>
+                                                    </code>
+                                                </>
+                                            ) : isGlossary ? (
                                                 <>
                                                     <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                         <span>definition_search:</span>
@@ -726,13 +871,13 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!p</span>/ ID / URL</span>
                                                 </code>
                                             )}
-                                            {!isGlossary && (
+                                            {!isGlossary && !isBiography && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>video:</span>
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">{'>'}</span>/ ID / URL</span>
                                                 </code>
                                             )}
-                                            {!isGlossary && (
+                                            {!isGlossary && !isBiography && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>handle:</span>
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">@</span>/ ID / URL</span>
@@ -741,7 +886,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                             {isLibrary && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>channel_name:</span>
-                                                    <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">@@</span>/ Channel Name</span>
+                                                    <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">@@</span>/ Channel Name or Alias</span>
                                                 </code>
                                             )}
                                         </div>

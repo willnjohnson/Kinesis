@@ -10,6 +10,8 @@ import { useBioLinkPreview, useGlossaryPreview } from './GlossaryPreview';
 import { useSequenceLinkPreview } from './SequenceCard';
 import { useVideoPreview } from './VideoPreview';
 import { PlaylistEmbed, VideoEmbed } from './LinkEmbed';
+import { AliasBadge } from './ui/AliasBadge';
+import { useAliasOnly, useBioAlias, useShowAlias } from '../hooks/useBioAlias';
 
 /** A link's text as plain words (its children can be formatting, not just a string). */
 function textOf(node: ReactNode): string {
@@ -25,9 +27,15 @@ function textOf(node: ReactNode): string {
  * with `urlTransform={markdownUrlTransform}`). An ordinary link opens in the browser; an in-app
  * link (`kinesis://glossary/...`) opens that part of the app.
  */
-export function MarkdownLink({ href, title, children, 'data-embed': embed }: { href?: string; title?: string; children?: ReactNode; 'data-embed'?: string }) {
+export function MarkdownLink({ href, title, children, 'data-embed': embed, 'data-channel-info': channelInfo }: { href?: string; title?: string; children?: ReactNode; 'data-embed'?: string; 'data-channel-info'?: string }) {
     const { labels } = useWorkspace();
     const internal = parseInternalHref(href);
+    // The creator in a summary's "Channel Info:" footer (lib/remark-embeds.ts marks it): their alias badge goes first.
+    const alias = useBioAlias(channelInfo && internal?.kind === 'bio' ? internal.key : '');
+    const [showAlias] = useShowAlias();
+    const [aliasOnly] = useAliasOnly();
+    // Alias Only: the alias is the link's text, in place of the channel's own name.
+    const aliasAlone = !!alias && showAlias && aliasOnly;
     // A glossary link previews its definition on hover, in place of the plain tooltip the other kinds get.
     const preview = useGlossaryPreview(internal?.kind === 'glossary' ? internal.key : '');
     const bioPreview = useBioLinkPreview(internal?.kind === 'bio' ? internal.key : '');
@@ -46,6 +54,7 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed }: { h
             : null;
         const link = (
             <>
+                {alias && showAlias && !aliasAlone && <AliasBadge alias={alias} displayName={textOf(children)} className="mr-1.5" />}
                 <a
                     href="#"
                     onClick={(e) => {
@@ -63,7 +72,7 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed }: { h
                     data-md-href={href}
                     className="text-red-500 hover:text-red-400 underline decoration-dotted decoration-red-500/60 underline-offset-4"
                 >
-                    {children}
+                    {aliasAlone ? <AliasBadge alias={alias} displayName={textOf(children)} /> : children}
                     {/* A video link that starts partway through says where, after its text: a play icon and the time in a
                         tinted chip (shaped like a [1:23] timestamp chip, lib/remark-timestamps.ts), so it reads as "plays
                         from here". Same size and font as the paragraph around it (tabular-nums keeps the digits even).

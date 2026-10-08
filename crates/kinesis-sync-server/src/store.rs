@@ -254,7 +254,7 @@ pub(crate) mod tests {
              CREATE TABLE IF NOT EXISTS Glossary (term TEXT NOT NULL, definition TEXT NOT NULL, drives TEXT NOT NULL DEFAULT '', PRIMARY KEY (term, drives));
              CREATE TABLE IF NOT EXISTS Biographies (handle TEXT PRIMARY KEY, display_name TEXT, bio TEXT, wikipedia TEXT, website TEXT,
                 twitter TEXT, instagram TEXT, facebook TEXT, threads TEXT, youtube TEXT, tiktok TEXT, twitch TEXT, reddit TEXT,
-                discord TEXT, channel_id TEXT, subscriber_count INTEGER);
+                discord TEXT, channel_id TEXT, subscriber_count INTEGER, alias TEXT);
              CREATE TABLE IF NOT EXISTS CustomPrompts (handle TEXT PRIMARY KEY, local_prompt_text TEXT, cloud_prompt_text TEXT);
              CREATE TABLE IF NOT EXISTS Settings (key TEXT PRIMARY KEY, value TEXT);",
         )

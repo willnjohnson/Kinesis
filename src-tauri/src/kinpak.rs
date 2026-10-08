@@ -55,9 +55,11 @@ const K_HISTORY: &str = "history";
 const K_NOTE: &str = "video_note";
 const K_BLOB: &str = "attachment_blob";
 const K_ATTACHMENT: &str = "attachment";
+/// A whole Calendar track (db/calendar.rs's TrackPack).
+const K_CALENDAR: &str = "calendar_track";
 
 fn is_local_kind(kind: &str) -> bool {
-    matches!(kind, K_LABEL | K_HISTORY | K_NOTE | K_BLOB | K_ATTACHMENT)
+    matches!(kind, K_LABEL | K_HISTORY | K_NOTE | K_BLOB | K_ATTACHMENT | K_CALENDAR)
 }
 
 fn yes() -> bool {
@@ -88,6 +90,13 @@ pub struct ExportOptions {
     pub notes: bool,
     #[serde(default = "yes")]
     pub attachments: bool,
+    /// The Calendar's tracks, with their entries, terms and holiday rules.
+    #[serde(default = "yes")]
+    pub calendar: bool,
+    /// With the tracks, what's been checked off. Off, they arrive as a fresh plan (round 1, nothing done): sharing a
+    /// course without your own progress.
+    #[serde(default = "yes")]
+    pub calendar_progress: bool,
     /// Drives to leave out, and what to do with what touches them (see drive_scope.rs).
     #[serde(default)]
     pub drives: DriveScope,
@@ -119,6 +128,9 @@ pub struct ImportSummary {
     pub settings_applied: u64,
     pub settings_skipped: u64,
     pub counts: BTreeMap<String, u64>,
+    /// What was left out on purpose, in words (a Calendar track whose name this workspace already has, say): not errors,
+    /// but worth telling whoever imported.
+    pub notices: Vec<String>,
 }
 
 /// What a pack says about itself, read from its first lines without loading the rest.
@@ -291,6 +303,25 @@ fn write_pack(
     if opts.attachments {
         header.counts.insert(K_ATTACHMENT.into(), count_rows_kept(&conn, "VideoAttachments", scope.as_ref()));
     }
+    // The Calendar's tracks, read up front (there are few, and the header counts them). A track in a left-out Drive is left
+    // out with it; its entries keep their videos' ids either way (the importer turns any video it doesn't have into a task).
+    let tracks: Vec<db::TrackPack> = if opts.calendar {
+        let mut all = db::export_calendar_tracks(&conn, opts.calendar_progress).map_err(|e| e.to_string())?;
+        if let Some(scope) = &scope {
+            all.retain(|t| t.drive.is_empty() || scope.category_kept(&t.drive));
+            for t in &mut all {
+                for e in &mut t.entries {
+                    if let Some(clean) = scope.clean_text(&e.description) {
+                        e.description = clean;
+                    }
+                }
+            }
+        }
+        header.counts.insert(K_CALENDAR.into(), all.len() as u64);
+        all
+    } else {
+        vec![]
+    };
     out.writer.write_header(&header).map_err(|e| e.to_string())?;
 
     // The workspace's name and aliases come first, so a reader can offer the name without reading
@@ -387,6 +418,15 @@ fn write_pack(
 
     if opts.attachments && sqlite::table_exists(&conn, "VideoAttachments") && sqlite::table_exists(&conn, "AttachmentBlobs") {
         export_attachments(&conn, &mut out, chunk_bytes, scope.as_ref(), progress)?;
+    }
+
+    // After the videos, so an importer has them when it reaches the tracks that use them.
+    if !tracks.is_empty() {
+        progress("Exporting calendar…");
+        for t in tracks {
+            let key = format!("{}|{}", t.name, t.created_at);
+            out.item(K_CALENDAR, &key, serde_json::to_value(&t).map_err(|e| e.to_string())?)?;
+        }
     }
 
     let mut settings_count = 0u64;
@@ -562,6 +602,8 @@ struct BlobInProgress {
 enum Local {
     Applied,
     Skipped,
+    /// Skipped, with why (for the summary's notices).
+    Notice(String),
 }
 
 struct LocalApplier {
@@ -619,6 +661,13 @@ impl LocalApplier {
                 Ok(if changed > 0 { Local::Applied } else { Local::Skipped })
             }
             K_BLOB => self.blob_chunk(conn, d),
+            K_CALENDAR => {
+                let pack: db::TrackPack = serde_json::from_value(d.clone()).map_err(|e| format!("not a track this version can read ({e})"))?;
+                match db::import_calendar_track(conn, &pack).map_err(e)? {
+                    db::TrackImport::Added => Ok(Local::Applied),
+                    db::TrackImport::Skipped(why) => Ok(Local::Notice(why)),
+                }
+            }
             K_ATTACHMENT => {
                 let (video_id, name, ext, hash) = (field(d, "video_id")?, field(d, "name")?, field(d, "ext")?, field(d, "hash")?);
                 let added = d.get("added_at").and_then(Value::as_str).unwrap_or("");
@@ -859,6 +908,10 @@ pub fn import_pack(
                             summary.skipped += 1;
                         }
                     }
+                    Ok(Local::Notice(why)) => {
+                        summary.skipped += 1;
+                        summary.notices.push(why);
+                    }
                     Err(m) => {
                         let what = if is_chunk { "attachment".to_string() } else { format!("{} {}", item.kind, item.key) };
                         note_error(&mut summary, format!("{what}: {m}"));
@@ -943,8 +996,69 @@ mod tests {
             history: true,
             notes: true,
             attachments: true,
+            calendar: true,
+            calendar_progress: true,
             drives: DriveScope::default(),
         }
+    }
+
+    #[test]
+    fn calendar_tracks_travel_and_never_replace_the_readers_own() {
+        let today = db::local_today();
+        let src = temp_db("cal_src");
+        seed(&src);
+        let course = |name: &str| db::TrackInput {
+            name: name.into(),
+            drive: String::new(),
+            advance_mode: "completion".into(),
+            loop_entries: false,
+            source_drive_sequence: false,
+            weekdays: vec![],
+            start_date: Some("2026-01-05".into()),
+            time_start: None,
+            time_duration: None,
+        };
+        let t = db::create_calendar_track(&src, &course("Course")).unwrap();
+        let watch = db::add_calendar_entry(&src, t, Some("vid1"), "", &db::EntryExtras::default()).unwrap();
+        let extras = db::EntryExtras { icon: "book-open".into(), description: "Chapter 1".into(), priority: 2 };
+        db::add_calendar_entry(&src, t, None, "Read", &extras).unwrap();
+        db::set_calendar_completion(&src, t, Some(watch), None, 0, true).unwrap();
+        db::create_calendar_track(&src, &course("Mine")).unwrap();
+
+        // Into a workspace with a "Mine" of its own: "Course" arrives whole, "Mine" is left as it was, and said so.
+        let dst = temp_db("cal_dst");
+        Connection::open(&dst).unwrap().execute("INSERT INTO Videos (video_id, title) VALUES ('vid1', 'Title')", []).unwrap();
+        let theirs = db::create_calendar_track(&dst, &course("Mine")).unwrap();
+        let dir = temp_dir("cal");
+        let out = dir.join("cal.kinpak");
+        export_pack(&src, &out, "Kinesis", "Kinesis", &all(), |_| {}).unwrap();
+        let imported = import_pack(&dst, &out, import_all(), |_| {}).unwrap();
+        assert_eq!(imported.notices.len(), 1, "{:?}", imported.notices);
+        assert!(imported.notices[0].contains("\"Mine\""));
+        let tracks = db::list_calendar_tracks(&dst, false, today).unwrap();
+        let got = tracks.iter().find(|s| s.track.name == "Course").expect("Course arrived");
+        assert_eq!(got.state.entries.len(), 2);
+        assert_eq!(got.state.entries[0].video_id.as_deref(), Some("vid1"));
+        assert!(got.state.entries[0].done, "progress came along");
+        assert_eq!((got.state.entries[1].title.as_str(), got.state.entries[1].description.as_str(), got.state.entries[1].priority), ("Read", "Chapter 1", 2));
+        assert!(tracks.iter().any(|s| s.track.id == theirs), "the reader's own Mine is untouched");
+        // Imported again: nothing doubles.
+        import_pack(&dst, &out, import_all(), |_| {}).unwrap();
+        assert_eq!(db::list_calendar_tracks(&dst, false, today).unwrap().len(), 2);
+
+        // Without videos or progress, into an empty workspace: the video becomes a task named after it, unchecked, and
+        // the video arriving later takes its place.
+        let fresh = temp_db("cal_fresh");
+        let plan = dir.join("plan.kinpak");
+        let opts = ExportOptions { videos: false, calendar_progress: false, ..all() };
+        export_pack(&src, &plan, "Kinesis", "Kinesis", &opts, |_| {}).unwrap();
+        let imported = import_pack(&fresh, &plan, import_all(), |_| {}).unwrap();
+        assert!(imported.notices.is_empty(), "{:?}", imported.notices);
+        let course_here = |db: &str| db::list_calendar_tracks(db, false, today).unwrap().into_iter().find(|s| s.track.name == "Course").unwrap();
+        let first = &course_here(&fresh).state.entries[0];
+        assert_eq!((first.video_id.as_deref(), first.title.as_str(), first.done), (None, "Title", false));
+        Connection::open(&fresh).unwrap().execute("INSERT INTO Videos (video_id, title) VALUES ('vid1', 'Title')", []).unwrap();
+        assert_eq!(course_here(&fresh).state.entries[0].video_id.as_deref(), Some("vid1"));
     }
 
     fn import_all() -> ImportOptions {

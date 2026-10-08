@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit, listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { LinkKind } from "./lib/internal-links";
 
@@ -156,6 +157,14 @@ export async function deleteVideo(id: string): Promise<number | null> {
     const trashId = await invoke<number | null>("delete_video", { videoId: id });
     notifyTrashChanged();
     return trashId;
+}
+
+/** Deletes many videos at once (the Orphaned window's Delete All), each to the Trash as its own item to put back. */
+export async function deleteVideos(ids: string[]): Promise<number> {
+    if (ids.length === 0) return 0;
+    const count = await invoke<number>("delete_videos", { videoIds: ids });
+    notifyTrashChanged();
+    return count;
 }
 
 export async function bulkSaveVideos(ids: string[]): Promise<any[]> {
@@ -370,6 +379,7 @@ export interface ExportSummary {
     videos_exported: number;
     glossary_terms: number;
     biographies: number;
+    calendar_tracks: number;
     folder_path: string;
 }
 
@@ -407,6 +417,8 @@ export interface ObsidianOptions {
     transcripts: boolean;
     glossary: boolean;
     biographies: boolean;
+    /** A note per Calendar track, its items as a checklist. */
+    calendar: boolean;
     drives: DriveScopeOptions;
 }
 
@@ -458,6 +470,9 @@ export interface BiographyEntry {
     twitch: string;
     reddit: string;
     discord: string;
+    /** Optional: the reader's own name for the channel (the person behind it, say), shown as a badge before its display
+     *  name. "" when there's none. */
+    alias: string;
 }
 export async function addGlossaryTerm(term: string, definition: string): Promise<void> {
     await invoke("add_glossary_term", { term, definition });
@@ -499,6 +514,91 @@ export const TRASH_CHANGED_EVENT = 'kinesis-trash-changed';
 export const TRASH_RESTORED_EVENT = 'kinesis-trash-restored';
 function notifyTrashChanged() {
     window.dispatchEvent(new Event(TRASH_CHANGED_EVENT));
+}
+
+/** Fired on `window` when the list of orphaned videos may have changed (a video was found gone, or answered again). */
+export const ORPHANS_CHANGED_EVENT = 'kinesis-orphans-changed';
+
+/** What opening a saved video found out from YouTube (by its ID, no API key): "ok" (with the old and new title when it
+ *  was renamed, already taken over), "orphaned" (YouTube no longer has it), or "unknown" (YouTube couldn't be asked). */
+export interface VideoIdentityCheck {
+    status: 'ok' | 'orphaned' | 'unknown';
+    oldTitle: string | null;
+    newTitle: string | null;
+    reason: string | null;
+}
+
+export async function checkVideoIdentity(videoId: string): Promise<VideoIdentityCheck> {
+    const result = await invoke<VideoIdentityCheck>("check_video_identity", { videoId });
+    if (result.status !== 'unknown') window.dispatchEvent(new Event(ORPHANS_CHANGED_EVENT));
+    return result;
+}
+
+/** Where the reader left a saved video (seconds in, and its length when known), for the sidebar's Resume. */
+export interface VideoPosition {
+    seconds: number;
+    duration: number | null;
+}
+
+export async function getVideoPosition(videoId: string): Promise<VideoPosition | null> {
+    return await invoke("get_video_position", { videoId });
+}
+
+/** Records where the reader is in a saved video; 0 forgets it (it played to its end). */
+export async function setVideoPosition(videoId: string, seconds: number, duration: number | null): Promise<void> {
+    await invoke("set_video_position", { videoId, seconds, duration });
+}
+
+/** Fired on `window` when the Continue Watching or Watched lists may have changed. */
+export const WATCH_LISTS_CHANGED_EVENT = 'kinesis-watch-lists-changed';
+const watchListsChanged = () => window.dispatchEvent(new Event(WATCH_LISTS_CHANGED_EVENT));
+
+/** A video in the pin menu's Continue Watching or Watched lists. */
+export interface ListedVideo {
+    videoId: string;
+    title: string;
+    author: string;
+    /** Continue Watching: where it was left, and its length when known. */
+    seconds: number | null;
+    duration: number | null;
+    /** When it was last watched (Continue Watching) or finished (Watched): "2026-10-06 14:03:12.000", UTC. */
+    at: string;
+}
+
+/** Saved videos started and not finished, the most recent first. */
+export async function listContinueWatching(): Promise<ListedVideo[]> {
+    return await invoke("list_continue_watching");
+}
+
+/** Every video marked watched, the most recently finished first. */
+export async function listWatchedVideos(): Promise<ListedVideo[]> {
+    return await invoke("list_watched_videos");
+}
+
+/** Marks a saved video watched (which forgets where it was left) or not. */
+export async function setVideoWatched(videoId: string, watched: boolean): Promise<void> {
+    await invoke("set_video_watched", { videoId, watched });
+    watchListsChanged();
+}
+
+/** Continue Watching's Mark as Completed: watched, and done on every Calendar track it's on. */
+export async function completeVideo(videoId: string): Promise<number> {
+    const marked = await changeCalendar<number>("complete_video", { videoId, today: calendarToday() });
+    watchListsChanged();
+    return marked;
+}
+
+/** A saved video YouTube no longer has: kept in the library for the record, listed in the Orphaned window. */
+export interface OrphanedVideo {
+    videoId: string;
+    title: string;
+    author: string;
+    reason: string;
+    foundAt: string;
+}
+
+export async function listOrphanedVideos(): Promise<OrphanedVideo[]> {
+    return await invoke("list_orphaned_videos");
 }
 
 export async function trashList(kind: TrashKind): Promise<TrashEntry[]> {
@@ -644,6 +744,364 @@ export async function clearDriveSequence(drive: string): Promise<void> {
     await invoke("clear_drive_sequence", { drive });
 }
 
+// ── Calendar (src-tauri/src/db/calendar.rs) ──────────────────────────────────────────────────────
+
+/** How a track moves along: when the last entry is done, on its schedule's days, or both. */
+export type CalendarAdvanceMode = 'completion' | 'calendar' | 'hybrid';
+
+export interface CalendarTrack {
+    id: number;
+    name: string;
+    /** The Drive it belongs to (":CS-DSA"), or "" for none. */
+    drive: string;
+    advanceMode: CalendarAdvanceMode;
+    loopEntries: boolean;
+    /** Its order is read live off its Drive's sequence. */
+    sourceDriveSequence: boolean;
+    /** The days its schedule runs on, 1 (Monday) to 7 (Sunday). Empty for a `completion` track. */
+    weekdays: number[];
+    startDate: string;
+    archived: boolean;
+    createdAt: string;
+    /** A dated track's time window: its start in minutes after midnight, and its length in minutes. Null for any time that day. */
+    timeStart: number | null;
+    timeDuration: number | null;
+    /** The cycle its current run began at (0 until it's started over). */
+    cycleOffset: number;
+}
+
+export interface CalendarTrackInput {
+    name: string;
+    drive: string;
+    advanceMode: CalendarAdvanceMode;
+    loopEntries: boolean;
+    sourceDriveSequence: boolean;
+    weekdays: number[];
+    /** When its schedule starts ("2026-09-07"); today when left out. */
+    startDate?: string;
+    /** A time window on its days; both null for any time that day. It can't clash with another track's (the backend refuses). */
+    timeStart: number | null;
+    timeDuration: number | null;
+}
+
+export interface CalendarEntry {
+    /** 0 for a video in a Drive's sequence that has no row of its own yet. */
+    id: number;
+    videoId: string | null;
+    label: string;
+    /** What to call it: its label, else its video's title. */
+    title: string;
+    targetDate: string | null;
+    /** A task's icon, a name from lib/calendar-icons.ts ("tree-palm"); "" for the default. */
+    icon: string;
+    description: string;
+    /** 0 none, 1 low, 2 medium, 3 high: a marker only (it doesn't change the entry's place or day). */
+    priority: number;
+    /** Marked done in the track's current cycle. */
+    done: boolean;
+    /** Marked In progress in the current cycle (started, not finished; never true with `done`). */
+    inProgress: boolean;
+    /** The day the schedule gives it this cycle (dated tracks only). */
+    dueDate: string | null;
+    /** A folder: a group of the entries after it (theirs is `folderId`) that share one place, so one day on a dated track.
+     *  Its `done` is all of them done, its `inProgress` some started or done but not all (both worked out, never set). */
+    isFolder: boolean;
+    /** The folder it's in, if any. */
+    folderId: number | null;
+    /** Its place among the track's videos and tasks, from 1 ("4 of 12"); 0 for a folder. */
+    place: number;
+}
+
+export interface CalendarTrackState {
+    entries: CalendarEntry[];
+    /** Which entry is up (an index into `entries`); null once a track that doesn't loop is finished, or is empty. */
+    current: number | null;
+    currentOverdue: boolean;
+    currentWaiting: boolean;
+    currentDue: string | null;
+    nextDate: string | null;
+    done: number;
+    total: number;
+    /** The cycle to mark completions under now (counts on past a Start over: show `round` instead). */
+    cycle: number;
+    /** Which time through the list the current run is on, 0 the first. */
+    round: number;
+    finished: boolean;
+    /** Whether its last Start over can be undone (nothing's been marked done in the run since). */
+    canUndoStartOver: boolean;
+}
+
+export interface CalendarTrackSummary {
+    track: CalendarTrack;
+    state: CalendarTrackState;
+}
+
+export interface CalendarTerm {
+    id: number;
+    trackId: number;
+    name: string;
+    startDate: string;
+    endDate: string;
+    annual: boolean;
+}
+
+export interface CalendarHolidayRule {
+    setId: number;
+    mode: 'exclude' | 'include';
+}
+
+export interface CalendarTrackDetail extends CalendarTrackSummary {
+    terms: CalendarTerm[];
+    rules: CalendarHolidayRule[];
+}
+
+export interface CalendarHolidaySet {
+    id: number;
+    name: string;
+    annual: boolean;
+    /** "us_federal" for the built-in set, "" for one made by hand. */
+    builtin: string;
+    dates: { date: string; name: string }[];
+}
+
+/** Today on this computer's clock, as the Calendar's commands take it ("2026-09-07"). */
+export function calendarToday(): string {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+export async function listCalendarTracks(includeArchived = false): Promise<CalendarTrackSummary[]> {
+    return await invoke("list_calendar_tracks", { includeArchived, today: calendarToday() });
+}
+
+/** One thing on one day: a dated track's entry on its scheduled day, or an undated track's on the day it was done. */
+export interface CalendarDayItem {
+    trackId: number;
+    date: string;
+    /** 0 for a video in a Drive's sequence with no row of its own yet. */
+    entryId: number;
+    videoId: string | null;
+    title: string;
+    icon: string;
+    description: string;
+    priority: number;
+    cycle: number;
+    done: boolean;
+    /** Marked In progress in its cycle (never true with `done`). */
+    inProgress: boolean;
+    overdue: boolean;
+    kind: 'scheduled' | 'completed';
+    /** The folder it's in (its id and name), so the week can label a day's group. */
+    folderId: number | null;
+    folder: string | null;
+    /** An empty folder, shown on its day as itself. */
+    isFolder: boolean;
+}
+
+/** What's on each day from `from` to `to` ("2026-09-07"), across the tracks that aren't archived. */
+export async function listCalendarDays(from: string, to: string): Promise<CalendarDayItem[]> {
+    return await invoke("list_calendar_days", { from, to, today: calendarToday() });
+}
+
+export async function getCalendarTrack(id: number): Promise<CalendarTrackDetail> {
+    return await invoke("get_calendar_track", { id, today: calendarToday() });
+}
+
+/** Sent on `window` after anything on the Calendar changes (a track, an entry, a check-off), so what shows a count of it
+ *  elsewhere (the title bar's pin, PinsMenu.tsx) can refresh. */
+export const CALENDAR_CHANGED_EVENT = 'kinesis:calendar-changed';
+
+/** The same, between windows: the tray popup's Today tab and the main window check off the same items. */
+const CALENDAR_CHANGED_APP_EVENT = 'kinesis-calendar-changed';
+// Every window with this module turns the app-wide event into its own CALENDAR_CHANGED_EVENT.
+try {
+    void listen(CALENDAR_CHANGED_APP_EVENT, () => window.dispatchEvent(new Event(CALENDAR_CHANGED_EVENT))).catch(() => {});
+} catch { /* not in the app (a plain browser) */ }
+
+/** A command that changes the Calendar, then CALENDAR_CHANGED_EVENT, in every window, once it has. */
+async function changeCalendar<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+    const result = await invoke<T>(command, args);
+    // Sent to every window (this one included, which hears it through the listener above); outside the app, just here.
+    emit(CALENDAR_CHANGED_APP_EVENT).catch(() => window.dispatchEvent(new Event(CALENDAR_CHANGED_EVENT)));
+    return result;
+}
+
+export async function createCalendarTrack(input: CalendarTrackInput): Promise<number> {
+    return await changeCalendar("create_calendar_track", { input });
+}
+
+export async function updateCalendarTrack(id: number, input: CalendarTrackInput): Promise<void> {
+    await changeCalendar("update_calendar_track", { id, input });
+}
+
+export async function setCalendarTrackArchived(id: number, archived: boolean): Promise<void> {
+    await changeCalendar("set_calendar_track_archived", { id, archived });
+}
+
+export async function deleteCalendarTrack(id: number): Promise<void> {
+    await changeCalendar("delete_calendar_track", { id });
+}
+
+/** What adding or editing an entry gives it: a video, or (with none) a task's label; and its icon, description and priority. */
+export interface CalendarEntryInput {
+    videoId?: string;
+    label?: string;
+    icon?: string;
+    description?: string;
+    priority?: number;
+}
+
+/** Adds a video, or (with no video) a task, to the end of a track. */
+export async function addCalendarEntry(trackId: number, entry: CalendarEntryInput): Promise<number> {
+    return await changeCalendar("add_calendar_entry", {
+        trackId, videoId: entry.videoId, label: entry.label, icon: entry.icon, description: entry.description, priority: entry.priority,
+    });
+}
+
+export async function updateCalendarEntry(id: number, entry: { label: string; targetDate?: string | null; icon?: string; description?: string; priority?: number }): Promise<void> {
+    await changeCalendar("update_calendar_entry", {
+        id, label: entry.label, targetDate: entry.targetDate ?? null, icon: entry.icon, description: entry.description, priority: entry.priority,
+    });
+}
+
+/** Exports the chosen tracks' schedules from `from` to `to` as an .ics file for other calendar apps, asking where to save
+ *  it. The path it was saved to, or null when the save was cancelled. */
+export async function exportCalendarIcs(trackIds: number[], from: string, to: string, fileName: string): Promise<string | null> {
+    return await invoke("export_calendar_ics", { trackIds, from, to, today: calendarToday(), fileName });
+}
+
+/** Starts a track over from today: its first entry again, round 1, with what was done before kept as history. */
+export async function startCalendarTrackOver(id: number): Promise<void> {
+    await changeCalendar("start_calendar_track_over", { id, today: calendarToday() });
+}
+
+/** A video as the title bar's pin menu lists it. */
+export interface MenuVideo {
+    videoId: string;
+    title: string;
+    author: string;
+}
+
+/** The pinned videos, newest pin first. */
+export async function listPins(): Promise<MenuVideo[]> {
+    return await invoke("list_pins");
+}
+
+/** Pins or unpins a video. Pinning one that isn't saved to the library is refused. */
+export async function setPinned(videoId: string, pinned: boolean): Promise<void> {
+    await invoke("set_pinned", { videoId, pinned });
+}
+
+export async function clearPins(): Promise<void> {
+    await invoke("clear_pins");
+}
+
+export type GraphNodeKind = 'video' | 'glossary' | 'bio';
+
+export interface GraphNode {
+    kind: GraphNodeKind;
+    /** What opening it is given (a video id, a term, a handle), as an in-app link would be. */
+    key: string;
+    label: string;
+    /** False for a link's target with no entry here (a term or person not written up yet, a video not saved). */
+    exists: boolean;
+}
+
+export interface LinkGraph {
+    nodes: GraphNode[];
+    /** Indexes into `nodes`; "link" for an in-app link between their texts, "creator" for a video and its creator. */
+    edges: { a: number; b: number; kind: 'link' | 'creator' }[];
+}
+
+/** Every video, term and person, and the links and creators connecting them (the graph view). */
+export async function getLinkGraph(): Promise<LinkGraph> {
+    return await invoke("get_link_graph");
+}
+
+/** The saved videos carrying a tag (any case), newest saved first. */
+export async function listVideosWithTag(tag: string): Promise<MenuVideo[]> {
+    return await invoke("list_videos_with_tag", { tag });
+}
+
+/** Puts a track back to the start date and run it had before its last Start over. */
+export async function undoCalendarTrackStartOver(id: number): Promise<void> {
+    await changeCalendar("undo_calendar_track_start_over", { id });
+}
+
+export async function removeCalendarEntry(id: number): Promise<void> {
+    await changeCalendar("remove_calendar_entry", { id });
+}
+
+export async function setCalendarEntryOrder(trackId: number, entryIds: number[]): Promise<void> {
+    await changeCalendar("set_calendar_entry_order", { trackId, entryIds });
+}
+
+/** Adds an empty folder to the end of a track: entries dragged into it share one place (one day, on a dated track). */
+export async function addCalendarFolder(trackId: number, name: string): Promise<number> {
+    return await changeCalendar("add_calendar_folder", { trackId, name });
+}
+
+/** Lays a track's entries out anew, as drag and drop leaves them: every entry in reading order, each with its folder. */
+export async function setCalendarEntryLayout(trackId: number, layout: { id: number; folderId: number | null }[]): Promise<void> {
+    await changeCalendar("set_calendar_entry_layout", { trackId, layout });
+}
+
+/** Marks an entry done (or not) in a loop cycle. A video in a Drive's sequence with no row yet is named by its video. */
+export async function setCalendarCompletion(trackId: number, entry: Pick<CalendarEntry, 'id' | 'videoId'>, cycle: number, done: boolean): Promise<void> {
+    await changeCalendar("set_calendar_completion", {
+        trackId,
+        entryId: entry.id > 0 ? entry.id : undefined,
+        videoId: entry.id > 0 ? undefined : entry.videoId ?? undefined,
+        cycle,
+        done,
+    });
+}
+
+/** Marks an entry In progress in a cycle, or takes the mark off. Only a marker: marking it done is what moves a track on
+ *  (and clears this). Refused for an entry already done in that cycle. */
+export async function setCalendarProgress(trackId: number, entry: Pick<CalendarEntry, 'id' | 'videoId'>, cycle: number, on: boolean): Promise<void> {
+    await changeCalendar("set_calendar_progress", {
+        trackId,
+        entryId: entry.id > 0 ? entry.id : undefined,
+        videoId: entry.id > 0 ? undefined : entry.videoId ?? undefined,
+        cycle,
+        on,
+    });
+}
+
+export async function addCalendarTerm(trackId: number, term: { name: string; startDate: string; endDate: string; annual: boolean }): Promise<number> {
+    return await changeCalendar("add_calendar_term", { trackId, ...term });
+}
+
+export async function removeCalendarTerm(id: number): Promise<void> {
+    await changeCalendar("remove_calendar_term", { id });
+}
+
+export async function listCalendarHolidaySets(year?: number): Promise<CalendarHolidaySet[]> {
+    return await invoke("list_calendar_holiday_sets", { year });
+}
+
+export async function createCalendarHolidaySet(name: string, annual: boolean): Promise<number> {
+    return await changeCalendar("create_calendar_holiday_set", { name, annual });
+}
+
+export async function deleteCalendarHolidaySet(id: number): Promise<void> {
+    await changeCalendar("delete_calendar_holiday_set", { id });
+}
+
+export async function addCalendarHolidayDate(setId: number, date: string, name?: string): Promise<void> {
+    await changeCalendar("add_calendar_holiday_date", { setId, date, name });
+}
+
+export async function removeCalendarHolidayDate(setId: number, date: string): Promise<void> {
+    await changeCalendar("remove_calendar_holiday_date", { setId, date });
+}
+
+/** Has a track exclude or include a holiday set; `null` for neither. */
+export async function setCalendarTrackHolidayRule(trackId: number, setId: number, mode: 'exclude' | 'include' | null): Promise<void> {
+    await changeCalendar("set_calendar_track_holiday_rule", { trackId, setId, mode });
+}
+
 /** A Drive that some of a channel's saved videos are filed under. */
 export interface HandleDrive {
     /** Storage form, e.g. "θψCRYPTO_DOAC". */
@@ -744,6 +1202,12 @@ export async function getSearchSuggestions(): Promise<{ handles: { handle: strin
     return await invoke("get_search_suggestions");
 }
 
+/** Every channel's Drives at once: handle (lowercased, no "@") to the display paths of the Drives its saved videos are
+ *  filed under (":MWD-JOHN"). For the Biography search bar's Drive facet. */
+export async function getBiographyDrives(): Promise<Record<string, string[]>> {
+    return await invoke("get_biography_drives");
+}
+
 /** Every Drive a channel's saved videos appear in (its category or an "Also in" link). */
 export async function getHandleDrives(handle: string): Promise<HandleDrive[]> {
     return await invoke("get_handle_drives", { handle });
@@ -764,6 +1228,7 @@ type RawBiographyEntry = {
     twitch: string;
     reddit: string;
     discord: string;
+    alias?: string;
 };
 
 const mapBiography = (entry: RawBiographyEntry): BiographyEntry => ({
@@ -781,6 +1246,7 @@ const mapBiography = (entry: RawBiographyEntry): BiographyEntry => ({
     twitch: entry.twitch,
     reddit: entry.reddit,
     discord: entry.discord,
+    alias: entry.alias ?? '',
 });
 
 export async function getBiographies(): Promise<BiographyEntry[]> {
@@ -822,6 +1288,39 @@ export async function getBiography(handle: string): Promise<BiographyEntry | nul
     return row ? mapBiography(row) : null;
 }
 
+/** What opening a biography found out from its channel's YouTube page (looked up by channel ID, no API key): the handle
+ *  it goes by now (`renamedFrom` when that just changed, already carried over), and a name change waiting on the
+ *  reader's say. */
+export interface ChannelIdentityCheck {
+    handle: string;
+    renamedFrom: string | null;
+    newDisplayName: string | null;
+    oldDisplayName: string | null;
+}
+
+export async function checkChannelIdentity(handle: string): Promise<ChannelIdentityCheck> {
+    const result = await invoke<ChannelIdentityCheck>("check_channel_identity", { handle });
+    if (result.renamedFrom) window.dispatchEvent(new Event(BIOGRAPHY_CHANGED_EVENT));
+    return result;
+}
+
+/** Edit Bio's Handle tab: the same handle in different capitals (@john to @John), never a different one. Rejects with
+ *  the reason otherwise. Resolves to the handle as stored now. */
+export async function setBiographyHandleCase(handle: string, newHandle: string): Promise<string> {
+    const stored = await invoke<string>("set_biography_handle_case", { handle, newHandle });
+    window.dispatchEvent(new Event(BIOGRAPHY_CHANGED_EVENT));
+    return stored;
+}
+
+/** Takes a channel's new name, keeping the old one as its alias or not. */
+export async function renameBiographyDisplayName(handle: string, name: string, keepOldAsAlias: boolean): Promise<void> {
+    await invoke("rename_biography_display_name", { handle, name, keepOldAsAlias });
+    window.dispatchEvent(new Event(BIOGRAPHY_CHANGED_EVENT));
+}
+
+/** A window event sent when a biography was edited here (its alias, say), so what shows it can reload. */
+export const BIOGRAPHY_CHANGED_EVENT = 'kinesis-biography-changed';
+
 export async function updateBiography(entry: BiographyEntry): Promise<void> {
     await invoke("update_biography", {
         handle: entry.handle,
@@ -837,7 +1336,9 @@ export async function updateBiography(entry: BiographyEntry): Promise<void> {
         twitch: entry.twitch,
         reddit: entry.reddit,
         discord: entry.discord,
+        alias: entry.alias.trim(),
     });
+    window.dispatchEvent(new Event(BIOGRAPHY_CHANGED_EVENT));
 }
 
 export async function openExternalUrl(url: string): Promise<void> {
@@ -1453,6 +1954,10 @@ export interface KinpakOptions {
     history: boolean;
     notes: boolean;
     attachments: boolean;
+    /** The Calendar's tracks, with their entries, terms and holiday rules. */
+    calendar: boolean;
+    /** With the tracks, what's been checked off (off: they arrive as a fresh plan). */
+    calendarProgress: boolean;
     drives: DriveScopeOptions;
 }
 
@@ -1473,6 +1978,8 @@ export interface KinpakImportSummary {
     settings_applied: number;
     settings_skipped: number;
     counts: Record<string, number>;
+    /** Left out on purpose, in words (a Calendar track whose name the workspace already has): not errors. */
+    notices: string[];
 }
 
 export interface KinpakPreview {

@@ -965,6 +965,31 @@ pub fn get_handle_drives(db_path: &str, handle: &str) -> Result<Vec<HandleDrive>
     Ok(out)
 }
 
+/// Every channel's Drives at once (the Biography search bar's Drive facet): its handle (lowercased, without the "@") to
+/// the Drives its saved videos are filed under, home or "Also in", in display form (":MWD-JOHN").
+pub fn get_biography_drives(db_path: &str) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let conn = Connection::open(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT handle, wdbs FROM (
+             SELECT LOWER(LTRIM(v.handle, '@')) AS handle, v.WDBS AS wdbs FROM Videos v
+              WHERE v.handle IS NOT NULL AND v.WDBS IS NOT NULL AND v.WDBS != ''
+             UNION
+             SELECT LOWER(LTRIM(v.handle, '@')), l.wdbs FROM VideoWDBSLinks l JOIN Videos v ON v.video_id = l.video_id
+              WHERE v.handle IS NOT NULL
+         )
+         WHERE handle != '' AND wdbs != ''",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (handle, wdbs) in rows.filter_map(|r| r.ok()) {
+        if is_unassigned_sentinel(&wdbs) {
+            continue;
+        }
+        out.entry(handle).or_default().push(storage_to_display_path(&wdbs));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod handle_drive_tests {
     use super::*;
@@ -980,6 +1005,25 @@ mod handle_drive_tests {
 
     fn video(db: &str, id: &str, handle: &str) {
         save_video(db, id, id, "Author", 60, "words", 1, "2026-01-01T00:00:00Z", handle, None).unwrap();
+    }
+
+    #[test]
+    fn maps_every_channel_to_its_drives_at_once() {
+        let db = temp_db("all");
+        video(&db, "a1", "@Creator");
+        video(&db, "b1", "@Other");
+        video(&db, "c1", "@nowhere");
+        update_video_wdbs(&db, "a1", "θψMWD_JOHN").unwrap();
+        add_video_wdbs_link(&db, "a1", "θψNEWS").unwrap();
+        update_video_wdbs(&db, "b1", "θψMWD_JACK").unwrap();
+        update_video_wdbs(&db, "c1", ":").unwrap(); // unassigned
+        let mut all = get_biography_drives(&db).unwrap();
+        for drives in all.values_mut() {
+            drives.sort();
+        }
+        assert_eq!(all.get("creator"), Some(&vec![":MWD-JOHN".to_string(), ":NEWS".to_string()]));
+        assert_eq!(all.get("other"), Some(&vec![":MWD-JACK".to_string()]));
+        assert_eq!(all.get("nowhere"), None);
     }
 
     #[test]

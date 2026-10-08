@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ElementType, RefObject } from 'react';
-import { Pencil, X, Globe, FileText } from 'lucide-react';
+import { Pencil, X, Globe, FileText, BadgeCheck, CaseSensitive } from 'lucide-react';
+import { UnderlineTabs } from './ui/UnderlineTabs';
 import { BsTwitterX, BsInstagram, BsFacebook, BsYoutube, BsTiktok, BsThreads, BsTwitch, BsReddit, BsDiscord } from 'react-icons/bs';
 import { SiWikipedia } from 'react-icons/si';
 import ReactMarkdown from 'react-markdown';
@@ -13,7 +14,7 @@ import { MarkdownLink } from './MarkdownLink';
 import { BacklinksList } from './BacklinksList';
 import { useBioPreview } from './GlossaryPreview';
 import { AlphabetJumpNav } from './AlphabetJumpNav';
-import { getBiographies, updateBiography, type BiographyEntry, fetchChannelVideosV3, getHandleDrives, type HandleDrive, type Video } from '../api';
+import { BIOGRAPHY_CHANGED_EVENT, getBiographyDrives, checkChannelIdentity, getBiography, renameBiographyDisplayName, setBiographyHandleCase, getBiographies, updateBiography, type BiographyEntry, fetchChannelVideosV3, getHandleDrives, type HandleDrive, type Video } from '../api';
 import { openExternalUrlGuarded } from '../lib/external-links';
 import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
@@ -23,8 +24,26 @@ import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { MarkdownField } from './MarkdownField';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
+import { SecondaryButton } from './ui/Button';
+import { AliasBadge } from './ui/AliasBadge';
+import { Modal } from './Modal';
+import { useAliasOnly, useShowAlias } from '../hooks/useBioAlias';
+import { backdropProps } from '../lib/backdrop';
 
 type EditableBiography = BiographyEntry | null;
+
+/** A handle without its "@", lowercased: two handles that only differ in capitals compare equal. */
+const handleKey = (h: string) => h.trim().replace(/^@/, '').toLowerCase();
+
+/** Why the Handle tab's text can't be saved, or null when it can: only its capitals may differ from the stored handle. */
+function handleCaseError(stored: string, typed: string): string | null {
+    if (!typed.trim().replace(/^@/, '')) return "Type the channel's handle.";
+    if (handleKey(typed) !== handleKey(stored)) return `Only the capitals can change: it has to stay ${stored}.`;
+    return null;
+}
+
+/** Channels being checked against YouTube right now (BiographyModal), so the same one isn't asked twice at once. */
+const identityChecking = new Set<string>();
 type SocialTab = 'wikipedia' | 'website' | 'twitter' | 'instagram' | 'facebook' | 'threads' | 'youtube' | 'tiktok' | 'twitch' | 'reddit' | 'discord';
 type SocialKey = 'wikipedia' | 'website' | 'twitter' | 'instagram' | 'facebook' | 'threads' | 'youtube' | 'tiktok' | 'twitch' | 'reddit' | 'discord';
 
@@ -178,17 +197,54 @@ const detectSocialCandidates = (bio: string, current: BiographyEntry): DetectedS
     return candidates;
 };
 
+/** A small on/off switch in the status bar's own size (Settings' Toggle is too tall for it): a label, then the switch. */
+function BarSwitch({ label, on, onChange, title, disabled = false }: { label: string; on: boolean; onChange: (on: boolean) => void; title: string; disabled?: boolean }) {
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            disabled={disabled}
+            onClick={() => onChange(!on)}
+            title={title}
+            className="shrink-0 flex items-center gap-1.5 whitespace-nowrap px-1.5 py-0.5 text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-gray-400"
+        >
+            {label}
+            <span className={`relative w-6 h-3.5 rounded-full transition-colors ${on && !disabled ? 'bg-red-600' : 'bg-[#3a3a3a]'}`}>
+                <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${on ? 'left-3' : 'left-0.5'}`} />
+            </span>
+        </button>
+    );
+}
+
 /** A person's name in the list. While the pointer is on the name itself, their description, if they have one, is previewed.
  *  It's only as wide as the name, so the row's edit icon sits right after the text. The button (not a wrapping element
  *  outside it) is what opens the biography — the preview
  *  card is portaled elsewhere on the page, but React still bubbles a click on it up through this component's own JSX tree;
  *  keeping that tree flat (the card is this button's sibling, not its child) is what stops a click on the card's Copy or
  *  Open button from also re-triggering this one. */
-function PersonName({ person, onOpen }: { person: BiographyEntry; onOpen: () => void }) {
+function PersonName({ person, showAlias, aliasOnly, onOpen }: { person: BiographyEntry; showAlias: boolean; aliasOnly: boolean; onOpen: () => void }) {
     const preview = useBioPreview(person, onOpen);
+    const alias = showAlias ? person.alias.trim() : '';
+    // Alias Only: the alias stands in for the channel's own name (its handle stays, to tell channels apart).
+    if (alias && aliasOnly) {
+        return (
+            <>
+                <button onClick={onOpen} className="min-w-0 text-left cursor-pointer">
+                    <span {...preview.handlers} className="text-base group-hover:text-[var(--k-accent)] transition-colors">
+                        <AliasBadge alias={alias} displayName={person.displayName || person.handle} />
+                    </span>
+                    <span className="ml-1.5 text-xs text-gray-500">({person.handle})</span>
+                </button>
+                {preview.card}
+            </>
+        );
+    }
     return (
         <>
             <button onClick={onOpen} className="min-w-0 text-left cursor-pointer">
+                {/* The alias (Edit Bio), when there is one: marked before the channel's own name. */}
+                {alias && <AliasBadge alias={alias} displayName={person.displayName || person.handle} className="mr-1.5" />}
                 <span {...preview.handlers} className="group-hover:underline group-hover:decoration-dotted group-hover:underline-offset-4 group-hover:text-[var(--k-accent)] transition-all text-base font-medium">
                     {person.displayName || person.handle}
                 </span>
@@ -212,11 +268,24 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
     const [activeSocialTab, setActiveSocialTab] = useState<SocialTab>('website');
     const [pendingSocialPins, setPendingSocialPins] = useState<DetectedSocial[] | null>(null);
     const [confirmClose, setConfirmClose] = useState(false);
+    // Show Alias (the status bar's toggle): aliases show as badges, and the list goes by a channel's alias where it has
+    // one. Off, it's the channels' own names, in their order.
+    const [showAlias, setShowAlias] = useShowAlias();
+    const [aliasOnly, setAliasOnly] = useAliasOnly();
+    const nameOf = (p: BiographyEntry) => (showAlias && p.alias.trim()) || p.displayName.trim() || p.handle;
+
+    // The window's Alias and Handle tabs, and the Handle tab's text (the stored handle until the capitals are changed).
+    const [nameTab, setNameTab] = useState<'alias' | 'handle'>('alias');
+    const [handleDraft, setHandleDraft] = useState('');
+    const [handleSaveError, setHandleSaveError] = useState<string | null>(null);
 
     const startEdit = (person: BiographyEntry) => {
         setEditing(person);
         setEditingOriginal(person);
         setActiveSocialTab('website');
+        setNameTab('alias');
+        setHandleDraft(person.handle);
+        setHandleSaveError(null);
     };
 
     const closeEdit = () => {
@@ -225,8 +294,13 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
         setPendingSocialPins(null);
     };
 
+    const handleError = editing ? handleCaseError(editing.handle, handleDraft) : null;
+    // Typed without its "@" counts as the same handle: the "@" is kept as stored.
+    const handleChanged = editing !== null && !handleError && handleDraft.trim().replace(/^@/, '') !== editing.handle.replace(/^@/, '');
     const editHasChanges = editing !== null && editingOriginal !== null && (
-        (editing.bio || '') !== (editingOriginal.bio || '')
+        handleChanged
+        || (editing.bio || '') !== (editingOriginal.bio || '')
+        || (editing.alias || '').trim() !== (editingOriginal.alias || '').trim()
         || socialTabs.some(key => (editing[key] || '') !== (editingOriginal[key] || ''))
     );
 
@@ -255,29 +329,52 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
 
     useEffect(() => {
         loadEntries();
+        // A channel's handle or name caught up with YouTube (BiographyModal), or an edit elsewhere.
+        const reload = () => { void loadEntries(); };
+        window.addEventListener(BIOGRAPHY_CHANGED_EVENT, reload);
+        return () => window.removeEventListener(BIOGRAPHY_CHANGED_EVENT, reload);
     }, []);
+
+    // The search bar's Drive chip ("drive::MWD-JOHN"): creators with videos filed in that Drive or below it. Each
+    // creator's Drives are looked up when a chip is set.
+    const driveFilter = searchQuery.match(/(?:^|\s)drive:(\S+)/)?.[1]?.toUpperCase() ?? null;
+    const [creatorDrives, setCreatorDrives] = useState<Record<string, string[]> | null>(null);
+    useEffect(() => {
+        if (!driveFilter) return;
+        let live = true;
+        getBiographyDrives().then(d => { if (live) setCreatorDrives(d); }).catch(() => { if (live) setCreatorDrives({}); });
+        return () => { live = false; };
+    }, [driveFilter]);
 
     const filtered = useMemo(() => {
         const isBioSearch = searchQuery.includes('bio_search:');
-        const q = normalizeText(searchQuery.replace(/person_search:/g, '').replace(/bio_search:/g, '').replace(/"/g, '').trim());
-        if (!q) return entries;
+        const q = normalizeText(searchQuery.replace(/(?:^|\s)drive:\S+/g, ' ').replace(/person_search:/g, '').replace(/bio_search:/g, '').replace(/"/g, '').trim());
+        // In the Drive, or a Drive under it (":MWD" takes in ":MWD-JOHN", not ":MWDX").
+        const inDrive = (item: BiographyEntry) => {
+            if (!driveFilter) return true;
+            const drives = creatorDrives?.[item.handle.replace(/^@/, '').toLowerCase()] ?? [];
+            return drives.some(d => { const u = d.toUpperCase(); return u === driveFilter || u.startsWith(`${driveFilter}-`); });
+        };
+        if (!q && !driveFilter) return entries;
         return entries.filter((item) => {
+            if (!inDrive(item)) return false;
+            if (!q) return true;
             if (isBioSearch) return normalizeText(item.bio || '').includes(q);
-            return normalizeText(`${item.displayName} ${item.handle}`).includes(q);
+            return normalizeText(`${item.alias} ${item.displayName} ${item.handle}`).includes(q);
         });
-    }, [entries, searchQuery]);
+    }, [entries, searchQuery, driveFilter, creatorDrives]);
 
     const grouped = useMemo(() => {
         const groups: Record<string, BiographyEntry[]> = {};
-        for (const item of filtered) {
-            const text = item.displayName.trim() || item.handle;
-            const first = text.charAt(0).toUpperCase();
+        const sorted = [...filtered].sort((a, b) => nameOf(a).localeCompare(nameOf(b), undefined, { sensitivity: 'base' }));
+        for (const item of sorted) {
+            const first = nameOf(item).charAt(0).toUpperCase();
             const key = /[A-Z]/.test(first) ? first : '#';
             if (!groups[key]) groups[key] = [];
             groups[key].push(item);
         }
         return groups;
-    }, [filtered]);
+    }, [filtered, showAlias]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const groupKeys = Object.keys(grouped).sort((a, b) => {
         if (a === '#') return -1;
@@ -288,7 +385,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
     const commitSave = async (entry: BiographyEntry) => {
         // Normalize social fields: convert handles to full URLs where needed
         // A [5:50] typed straight after a video link becomes that link's ?t= (lib/internal-links.ts).
-        const normalized = { ...entry, bio: foldVideoLinkTimes(entry.bio) };
+        const normalized = { ...entry, alias: entry.alias.trim(), bio: foldVideoLinkTimes(entry.bio) };
         (socialTabs as SocialTab[]).forEach((key) => {
             const val = entry[key];
             if (val && val.trim()) {
@@ -297,9 +394,20 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
         });
 
         await updateBiography(normalized);
+        // The Handle tab's new capitals, after the rest is saved (that's keyed by the handle as it was).
+        if (handleChanged) {
+            try {
+                normalized.handle = await setBiographyHandleCase(entry.handle, handleDraft.trim());
+            } catch (e) {
+                setHandleSaveError(String(e));
+                setNameTab('handle');
+                await loadEntries();
+                return;
+            }
+        }
         closeEdit();
         // Opened from its biography window: that comes back showing the saved changes.
-        setSelected(prev => (prev && prev.handle === normalized.handle ? normalized : prev));
+        setSelected(prev => (prev && handleKey(prev.handle) === handleKey(normalized.handle) ? normalized : prev));
         await loadEntries();
         onChange?.();
     };
@@ -311,6 +419,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
 
     const submitEdit = async () => {
         if (!editing) return;
+        if (handleError) { setNameTab('handle'); return; }
 
         const candidates = detectSocialCandidates(editing.bio || '', editing);
         if (candidates.length > 0) {
@@ -371,7 +480,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                                     <div className="w-1.5 h-1.5 rounded-full bg-[#444] mr-3 shrink-0 group-hover:bg-[var(--k-accent)] transition-colors"></div>
                                      {/* data-preview-anchor: the name's hover preview opens past the edit icon, not over it. */}
                                      <div data-preview-anchor className="flex items-center min-w-0">
-                                     <PersonName person={person} onOpen={() => setSelected(person)} />
+                                     <PersonName person={person} showAlias={showAlias} aliasOnly={aliasOnly} onOpen={() => setSelected(person)} />
                                      {/* Hidden until the row is hovered (or it has keyboard focus), right after the name. */}
                                      {allowEditBio !== false && (
                                          <button
@@ -395,7 +504,28 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                 )}
             </div>
 
-            <AlphabetJumpNav idPrefix="biography-az" available={groupKeys} scrollContainerRef={scrollContainerRef} />
+            <AlphabetJumpNav
+                idPrefix="biography-az"
+                available={groupKeys}
+                scrollContainerRef={scrollContainerRef}
+                trailing={
+                    <div className="flex items-center gap-1">
+                        <BarSwitch
+                            label="Show Alias"
+                            on={showAlias}
+                            onChange={setShowAlias}
+                            title={showAlias ? 'Aliases show, and the list goes by them' : "Aliases are hidden, and the list goes by the channels' own names"}
+                        />
+                        <BarSwitch
+                            label="Alias Only"
+                            on={aliasOnly}
+                            onChange={setAliasOnly}
+                            disabled={!showAlias}
+                            title={!showAlias ? 'Turn on Show Alias first' : aliasOnly ? "A channel with an alias shows just its alias" : "A channel with an alias shows its own name after it"}
+                        />
+                    </div>
+                }
+            />
 
             {/* Stepped aside while this person's biography is being edited, and back (with the saved changes)
                 once the edit's done. */}
@@ -408,6 +538,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         onVideoSelect?.(video);
                     }}
                     onEdit={() => startEdit(selected)}
+                    onChanged={setSelected}
                     onViewMore={onViewMore}
                     onDriveSelect={onDriveSelect}
                     allowEditBio={allowEditBio}
@@ -415,7 +546,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
             )}
 
             {editing && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={requestCloseEdit}>
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" {...backdropProps(requestCloseEdit)}>
                     <form onSubmit={saveEdit} onClick={(e) => e.stopPropagation()} className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-4xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                 <div className="px-6 py-4 border-b border-[#303030] flex items-center justify-between bg-[#141414]">
                             <div className="text-gray-200">
@@ -428,6 +559,49 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         </div>
 
                         <div className="p-6 max-h-[75vh] overflow-y-auto">
+                            {/* What the channel is called: its alias (optional, the reader's own name for it) and its handle,
+                                whose capitals can be changed (@john to @John) but not its letters. */}
+                            <div className="mb-6">
+                                <UnderlineTabs
+                                    className="flex items-center gap-4 mb-3"
+                                    active={nameTab}
+                                    onChange={setNameTab}
+                                    tabs={[
+                                        { id: 'alias', label: 'Alias', icon: BadgeCheck },
+                                        { id: 'handle', label: 'Handle Casing', icon: CaseSensitive, title: "Change the capitals in the channel's handle" },
+                                    ]}
+                                />
+                                {nameTab === 'alias' ? (
+                                    <>
+                                        <input
+                                            type="text"
+                                            value={editing.alias}
+                                            onChange={(e) => setEditing(prev => prev && { ...prev, alias: e.target.value })}
+                                            onContextMenu={handlePlainContextMenu}
+                                            maxLength={80}
+                                            className="w-full bg-[#121212] border border-[#333] text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-blue-600 transition-all placeholder-gray-600"
+                                            placeholder={`Optional, e.g. the person behind ${editing.displayName || editing.handle}`}
+                                        />
+                                        <p className="text-[11px] text-gray-500 mt-1.5">Optional. Shows as a badge before the channel's name, here and in a summary's Channel Info.</p>
+                                    </>
+                                ) : (
+                                    <>
+                                        <input
+                                            type="text"
+                                            value={handleDraft}
+                                            onChange={(e) => { setHandleDraft(e.target.value); setHandleSaveError(null); }}
+                                            onContextMenu={handlePlainContextMenu}
+                                            spellCheck={false}
+                                            aria-invalid={!!handleError}
+                                            className={`w-full bg-[#121212] border text-white rounded-xl px-4 py-3 text-sm font-mono focus:outline-none transition-all ${handleError ? 'border-red-500/70 focus:border-red-500' : 'border-[#333] focus:border-blue-600'}`}
+                                        />
+                                        <p className={`text-[11px] mt-1.5 ${handleError || handleSaveError ? 'text-red-400' : 'text-gray-500'}`}>
+                                            {handleSaveError ?? handleError ?? "The channel's YouTube handle. Only its capitals can change, like @john to @John; links and videos follow."}
+                                        </p>
+                                    </>
+                                )}
+                            </div>
+
                             {/* Bio - largest section */}
                             <div className="mb-6">
                                 <MarkdownField
@@ -484,14 +658,14 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         </div>
 
                         <div className="px-6 py-4 border-t border-[#303030] flex justify-end gap-3 bg-[#141414]">
-                            <button type="button" onClick={closeEdit} className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors">Cancel</button>
-                            <button type="submit" className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-all text-sm font-bold cursor-pointer">Save {labels.aliasBiographyItem}</button>
+                            <SecondaryButton onClick={closeEdit}>Cancel</SecondaryButton>
+                            <button type="submit" disabled={!!handleError} className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-all text-sm font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">Save {labels.aliasBiographyItem}</button>
                         </div>
                     </form>
 
                     {pendingSocialPins && (
                         // stopPropagation: a click out here backs out of just this prompt, not the edit behind it.
-                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={(e) => { e.stopPropagation(); setPendingSocialPins(null); }}>
+                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" {...backdropProps(() => setPendingSocialPins(null), { stop: true })}>
                             <div onClick={(e) => e.stopPropagation()} className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
                                 <div className="px-6 py-4 border-b border-[#303030] bg-[#141414]">
                                     <h3 className="text-base font-bold text-white">Social{pendingSocialPins.length > 1 ? 's' : ''} detected</h3>
@@ -510,7 +684,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                                     })}
                                 </ul>
                                 <div className="px-6 py-4 border-t border-[#303030] flex justify-end gap-3 bg-[#141414]">
-                                    <button type="button" onClick={() => commitSave(editing)} className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors">Just Save</button>
+                                    <SecondaryButton onClick={() => commitSave(editing)}>Just Save</SecondaryButton>
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -541,7 +715,53 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
     );
 }
 
-export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onViewMore, onDriveSelect, allowEditBio }: { biography: BiographyEntry; onClose: () => void; onVideoSelect?: (video: Video) => void; onEdit?: () => void; onViewMore?: (handle: string) => void; onDriveSelect?: (path: string, label: string) => void; allowEditBio?: boolean }) {
+export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdit, onChanged, onViewMore, onDriveSelect, allowEditBio }: { biography: BiographyEntry; onClose: () => void; onVideoSelect?: (video: Video) => void; onEdit?: () => void; onChanged?: (updated: BiographyEntry) => void; onViewMore?: (handle: string) => void; onDriveSelect?: (path: string, label: string) => void; allowEditBio?: boolean }) {
+    // Kept here as well as in the caller's hands: catching up with YouTube (below) can change its handle and name.
+    const [biography, setBiography] = useState(given);
+    useEffect(() => { setBiography(given); }, [given]);
+    // Each time the window is viewed (not while it's stepped aside for Edit Bio), the channel is looked up on YouTube by
+    // its channel ID (no API key): a new handle is taken over right away (and said here); a new name asks whether to
+    // keep the old one as the alias. In a read-only workspace both are simply taken over, with no alias and no asking.
+    const [renamedFrom, setRenamedFrom] = useState<string | null>(null);
+    const [nameChange, setNameChange] = useState<{ handle: string; from: string; to: string } | null>(null);
+    const { flags: modalFlags } = useFlags();
+    const readOnly = modalFlags.workspaceReadOnly;
+    useEffect(() => {
+        const key = given.handle.toLowerCase();
+        if (identityChecking.has(key)) return;
+        identityChecking.add(key);
+        // Not cancelled on unmount: React's development double-run would otherwise drop the one check that ran, and
+        // a late answer to a closed window does no harm.
+        checkChannelIdentity(given.handle)
+            .then(async result => {
+                if (result.newDisplayName && result.oldDisplayName && readOnly) {
+                    await renameBiographyDisplayName(result.handle, result.newDisplayName, false);
+                }
+                const fresh = result.renamedFrom || (readOnly && result.newDisplayName) ? await getBiography(result.handle) : null;
+                if (fresh) {
+                    setBiography(fresh);
+                    onChanged?.(fresh);
+                }
+                if (result.renamedFrom) setRenamedFrom(result.renamedFrom);
+                if (!readOnly && result.newDisplayName && result.oldDisplayName) {
+                    setNameChange({ handle: result.handle, from: result.oldDisplayName, to: result.newDisplayName });
+                }
+            })
+            .catch(e => console.warn('Channel check skipped:', e)) // offline, or YouTube didn't answer: tried again next view
+            .finally(() => identityChecking.delete(key));
+    }, [given.handle]); // eslint-disable-line react-hooks/exhaustive-deps
+    const answerNameChange = async (keepOldAsAlias: boolean) => {
+        if (!nameChange) return;
+        const { handle, to } = nameChange;
+        setNameChange(null);
+        try {
+            await renameBiographyDisplayName(handle, to, keepOldAsAlias);
+            const fresh = await getBiography(handle);
+            if (fresh) { setBiography(fresh); onChanged?.(fresh); }
+        } catch (e) {
+            console.error('Failed to take the channel\'s new name:', e);
+        }
+    };
     const title = biography.displayName.trim() || biography.handle;
     const [videos, setVideos] = useState<Video[]>([]);
     const [loadingVideos, setLoadingVideos] = useState(true);
@@ -606,17 +826,25 @@ export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onVi
     };
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={onClose}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" {...backdropProps(onClose)}>
             <div onClick={(e) => e.stopPropagation()} className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-7xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 h-[90vh]">
                         <div className="px-6 py-4 border-b border-[#303030] flex items-center justify-between bg-[#141414]">
-                    <div className="flex items-center gap-3 pr-4 overflow-hidden">
+                    {/* min-w-0: the names give way (the title ends in "...") rather than the buttons on the right. */}
+                    <div className="flex items-center gap-3 pr-4 overflow-hidden min-w-0">
                         <FileText className="w-5 h-5 text-gray-400 shrink-0" />
+                        {/* Always shown here (Show Alias only governs the list): this is the channel's own window. */}
+                        {biography.alias.trim() && <AliasBadge alias={biography.alias.trim()} displayName={biography.displayName || biography.handle} className="text-base shrink-0" />}
                         <h2 className="text-xl font-bold text-white truncate">{title}</h2>
-                        <span className="text-xs text-gray-400">{biography.handle}</span>
+                        <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{biography.handle}</span>
+                        {renamedFrom && (
+                            <span className="text-[11px] text-gray-500 shrink-0" title="The channel changed its handle on YouTube; its videos and links here follow it.">
+                                (was {renamedFrom})
+                            </span>
+                        )}
                     </div>
-                     <div className="flex items-center gap-2">
+                     <div className="flex items-center gap-2 shrink-0">
                          {onEdit && allowEditBio !== false && (
-                             <button onClick={onEdit} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 cursor-pointer">
+                             <button onClick={onEdit} className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 cursor-pointer whitespace-nowrap">
                                  Edit {labels.aliasBiographyItem}
                              </button>
                          )}
@@ -747,6 +975,36 @@ export function BiographyModal({ biography, onClose, onVideoSelect, onEdit, onVi
                          )}
                      </div>
                 </div>
+
+                {nameChange && (
+                    <Modal
+                        onClose={() => setNameChange(null)}
+                        layer="top"
+                        title="Channel Renamed"
+                        footer={
+                            <>
+                                <SecondaryButton onClick={() => { void answerNameChange(false); }}>No</SecondaryButton>
+                                <button
+                                    type="button"
+                                    onClick={() => { void answerNameChange(true); }}
+                                    className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-all text-sm font-bold text-white cursor-pointer"
+                                >
+                                    Yes
+                                </button>
+                            </>
+                        }
+                    >
+                        <p className="text-[#aaaaaa] leading-relaxed">
+                            <span className="text-white font-semibold">{nameChange.from}</span> is now called{' '}
+                            <span className="text-white font-semibold">{nameChange.to}</span> on YouTube.
+                        </p>
+                        <p className="text-[#aaaaaa] leading-relaxed mt-3">
+                            Keep "{nameChange.from}" as its alias, so it's still easy to recognize?
+                            {biography.alias.trim() && <> This replaces its alias, "{biography.alias.trim()}".</>}
+                        </p>
+                        <p className="text-[11px] text-gray-500 mt-3">Either way, it takes the new name.</p>
+                    </Modal>
+                )}
 
                 {/* Sticky Footer: Social Icons — kept small and low-emphasis so the bio itself is
                     the thing that draws the eye, not the row of links below it. */}

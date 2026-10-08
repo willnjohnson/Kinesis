@@ -81,10 +81,23 @@ function splitParagraph(paragraph: Paragraph): RootContent[] {
     return out;
 }
 
+/** Marks the creator's link in a summary's "Channel Info: [Name](kinesis://bio/handle)" footer (db/summaries.rs writes
+ *  it) as `data-channel-info`, so MarkdownLink.tsx can put the channel's alias badge before it. Done here, rather than
+ *  as a plugin of its own, because every markdown view already runs this one. */
+function markChannelInfo(paragraph: Paragraph) {
+    paragraph.children.forEach((node, i) => {
+        if (node.type !== 'link' || !node.url.startsWith('kinesis://bio/')) return;
+        const before = paragraph.children[i - 1];
+        if (before?.type !== 'text' || !/(^|\n)\s*Channel Info:\s*$/.test(before.value)) return;
+        node.data = { ...node.data, hProperties: { ...node.data?.hProperties, dataChannelInfo: 'true' } };
+    });
+}
+
 function transform(parent: Root | RootContent) {
     if (!('children' in parent)) return;
     const next: RootContent[] = [];
     for (const child of parent.children as RootContent[]) {
+        if (child.type === 'paragraph') markChannelInfo(child);
         if (child.type === 'paragraph') next.push(...splitParagraph(child));
         else {
             transform(child);

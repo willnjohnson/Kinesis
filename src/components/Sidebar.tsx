@@ -1,9 +1,8 @@
-import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, ClipboardPaste, Check, ExternalLink, Pencil, Search, Terminal, Lightbulb, Eye, EyeOff, Plus, Tags, BookA, ListVideo, Paperclip, Monitor, Cloud, Link2 } from 'lucide-react';
+import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, ClipboardPaste, Check, ExternalLink, Pencil, Search, Terminal, Lightbulb, Eye, EyeOff, Tags, BookA, ListVideo, Paperclip, Monitor, Cloud, Link2, Play } from 'lucide-react';
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { flushSync } from 'react-dom';
 import { LifeLoader } from './LifeLoader';
-import { checkVideoExists, summarizeTranscript, getSummary, saveSummary, getSetting, setSetting, openExternalUrl, getCustomPrompt, setCustomPrompt, getOllamaPrompt, getVenicePrompt, getGlossaryTerms, saveTranscript, getEmbedServerPort, updateVideoWdbs, decodeWdbs, encodeWdbs, getWdbsSuggestions, getVideoWdbs, getVideoWdbsLinks, addVideoWdbsLink, removeVideoWdbsLink, getSimilarVideos, getWdbsAliases, getHandleDrives, getVideoById, getVideoAttachments, trashList, trashRestore, type Video, type GlossaryTerm } from '../api';
-import { DriveComboBox } from './DriveComboBox';
+import { checkVideoExists, summarizeTranscript, getSummary, saveSummary, getSetting, setSetting, openExternalUrl, getCustomPrompt, setCustomPrompt, getOllamaPrompt, getVenicePrompt, getGlossaryTerms, saveTranscript, getEmbedServerPort, decodeWdbs, getSimilarVideos, getVideoById, getVideoAttachments, trashList, trashRestore, type Video, type GlossaryTerm } from '../api';
 import { saveImageAs } from '../lib/save-image-as';
 import { handleMarkdownKeyDown, handleMarkdownContextMenu } from '../lib/markdown-editor';
 import { useFindReplace } from './sidebar/useFindReplace';
@@ -11,12 +10,19 @@ import { FindReplacePanel } from './sidebar/FindReplacePanel';
 import { GlossaryDetectPanel } from './sidebar/GlossaryDetectPanel';
 import { ConfirmDialog } from './ConfirmDialog';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { Modal } from './Modal';
+import { useVideoIdentity } from './sidebar/useVideoIdentity';
+import { useResumePosition } from './sidebar/useResumePosition';
 import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
 import { MENTIONS_ATTR } from './MentionGhost';
 import { TranscriptText } from './sidebar/TranscriptText';
 import { useReadFind, FIND_SCOPE_SELECTOR } from './sidebar/useReadFind';
 import { PhotosynthesisPanel } from './sidebar/PhotosynthesisPanel';
 import { VideoTagsPanel } from './sidebar/VideoTagsPanel';
+import { TrackChips } from './sidebar/TrackChips';
+import { useVideoDrives } from './sidebar/useVideoDrives';
+import { DriveEditor } from './sidebar/DriveEditor';
+import { UnderlineTabs } from './ui/UnderlineTabs';
 import { SequenceDock } from './sidebar/SequenceDock';
 import { SimilarVideosPanel } from './sidebar/SimilarVideosPanel';
 import { AttachmentsPanel } from './sidebar/AttachmentsPanel';
@@ -29,7 +35,7 @@ import { remarkSourceLines, lineAt, indexOfLine, caretY, scrollPreviewToLine, to
 import { markdownUrlTransform, findGlossaryTerms, foldVideoLinkTimes, buildVideoLink } from '../lib/internal-links';
 import { formatClock, parseClock } from '../lib/remark-timestamps';
 import { BacklinksList } from './BacklinksList';
-import { useCreatorMenu } from './CreatorMenu';
+import { SidebarHeader } from './sidebar/SidebarHeader';
 import { MarkdownLink } from './MarkdownLink';
 import { TermDefinitionModal } from './TermDefinitionModal';
 import { useCloseOnNavigate } from '../lib/navigation';
@@ -74,6 +80,11 @@ interface Props {
     title: string;
     videoId?: string;
     handle?: string;
+    /** Whether the video is pinned (the title bar's pin menu, components/PinsMenu.tsx), and the pin button beside close. */
+    pinned?: boolean;
+    onTogglePin?: () => void;
+    /** Opens a Calendar track (a track chip's name, sidebar/TrackChips.tsx). */
+    onOpenTrack?: (trackId: number) => void;
     onSave?: (summary?: string | null) => void;
     onDelete?: () => void;
     onRefetch?: () => void;
@@ -133,6 +144,8 @@ interface Props {
     /** The tag dropdown's "Manage tags in <Glossary>": called once the sidebar has closed (asking first about an unsaved
      *  edit), to show the Glossary's tags. Absent when there's no Glossary or Quick Tags to go to. */
     onManageTags?: () => void;
+    /** The video was renamed on YouTube (found when it was opened): its new title, already saved. */
+    onTitleChanged?: (title: string) => void;
 }
 
 /**
@@ -160,11 +173,13 @@ export interface SidebarHandle {
     seekTo: (seconds: number) => void;
 }
 
-export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, handle, onSave, onDelete, onRefetch, onRestored, onTranscriptChange, pluginSummarizeEnabled, pluginPhotosynthesisEnabled, showSummarizeOllama = true, showSummarizeVenice = true, showSynthesizeVenice = true, showSynthesizePixabay = true, showSynthesizeUpload = true, onSummaryGenerated, cachedSummaries, onCacheSummary, allowDeletion = true, isLibrary = false, videoTags = [], onHandleClick, onAddTag, onRemoveTag, onTagsChanged, onSearchInLibrary, initialTab, showBiography = true, allowEditTranscriptOnNA = true, wdbs, allowEditWDBS = false, onWdbsUpdated, onWdbsChanged, onSelectDrive, driveContext, onVideoSelect, startAt, onManageTags }: Props, ref) {
+export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, handle, pinned = false, onTogglePin, onOpenTrack,onSave, onDelete, onRefetch, onRestored, onTranscriptChange, pluginSummarizeEnabled, pluginPhotosynthesisEnabled, showSummarizeOllama = true, showSummarizeVenice = true, showSynthesizeVenice = true, showSynthesizePixabay = true, showSynthesizeUpload = true, onSummaryGenerated, cachedSummaries, onCacheSummary, allowDeletion = true, isLibrary = false, videoTags = [], onHandleClick, onAddTag, onRemoveTag, onTagsChanged, onSearchInLibrary, initialTab, showBiography = true, allowEditTranscriptOnNA = true, wdbs, allowEditWDBS = false, onWdbsUpdated, onWdbsChanged, onSelectDrive, driveContext, onVideoSelect, startAt, onManageTags, onTitleChanged }: Props, ref) {
     const [copied, setCopied] = useState(false);
     const [summaryCopied, setSummaryCopied] = useState(false);
     const [existsInDb, setExistsInDb] = useState(false);
     const [checkingDb, setCheckingDb] = useState(false);
+    // A saved video's title catching up with YouTube, and whether YouTube still has it (sidebar/useVideoIdentity.ts).
+    const videoIdentity = useVideoIdentity({ videoId, saved: existsInDb, open: isOpen, onTitleChanged });
     // Set when the open video isn't in the library but IS sitting in this session's Trash: its id there, so a
     // "Restore" button can put it straight back instead of "Save" re-fetching it from YouTube as if new.
     const [trashId, setTrashId] = useState<number | null>(null);
@@ -228,7 +243,6 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     // hidden, the video opens on YouTube at that moment instead.
     const playerRef = useRef<HTMLIFrameElement>(null);
     // The @handle under the title: right-click for Visit YouTube Channel / Open Biography, the latter the way a click opens it.
-    const creatorMenu = useCreatorMenu(handle, handle && onHandleClick ? () => onHandleClick(handle.startsWith('@') ? handle : `@${handle}`) : undefined);
     const seekPlayer = (seconds: number) => {
         const player = playerRef.current;
         if (player?.contentWindow && embedPort) {
@@ -276,6 +290,19 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     // player's, so no one element of the panel holds every chip. Only this panel renders them.
     const seekRef = useRef(seekPlayer);
     seekRef.current = seekPlayer;
+    // The video played to its end (the embed page says so): the track chips offer Mark Done. Counted, so each end asks again.
+    const [videoEnded, setVideoEnded] = useState(0);
+    useEffect(() => {
+        const onEnded = (e: MessageEvent) => {
+            if (e.data?.type !== 'kinesis-ended' || !playerRef.current || e.source !== playerRef.current.contentWindow) return;
+            setVideoEnded(n => n + 1);
+        };
+        window.addEventListener('message', onEnded);
+        return () => window.removeEventListener('message', onEnded);
+    }, []);
+    useEffect(() => { setVideoEnded(0); }, [videoId]);
+    // Where the reader stopped last time (offered as Resume), and how far they got this time (sidebar/useResumePosition.ts).
+    const resume = useResumePosition({ videoId, saved: existsInDb, open: isOpen, startAt, ended: videoEnded, playerRef });
     useEffect(() => {
         const onClick = (e: MouseEvent) => {
             const chip = (e.target as Element | null)?.closest?.(`[${SEEK_ATTR}]`);
@@ -288,19 +315,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         document.addEventListener('click', onClick, true);
         return () => document.removeEventListener('click', onClick, true);
     }, []);
-    const [isEditingWdbs, setIsEditingWdbs] = useState(false);
-    const [wdbsInput, setWdbsInput] = useState('');
-    const [wdbsError, setWdbsError] = useState<string | null>(null);
-    const [savingWdbs, setSavingWdbs] = useState(false);
-    const [wdbsSuggestions, setWdbsSuggestions] = useState<string[]>([]);
-    // Drives this video's channel already appears in elsewhere (see DriveComboBox's Suggested
-    // section) — refetched whenever the channel changes, not per-video, since it depends only on
-    // the handle.
-    const [channelSuggestedDrives, setChannelSuggestedDrives] = useState<string[]>([]);
-    const [wdbsLinks, setWdbsLinks] = useState<string[]>([]);
-    // Curated aliases of this video's Drive and "Also in" tags (storage path -> alias), shown as the
-    // tags' tooltips. Only Drives that have one are in here.
-    const [wdbsAliases, setWdbsAliases] = useState<Record<string, string>>({});
+    // The video's home Drive and "Also in" links, and editing them (sidebar/useVideoDrives.ts, sidebar/DriveEditor.tsx).
+    const drives = useVideoDrives({ videoId, wdbs, existsInDb, handle, onWdbsUpdated, onWdbsChanged });
+    const { primaryWdbs, wdbsLinks, wdbsAliases } = drives;
     const [leftTab, setLeftTab] = useState<LeftTab>('terms');
     // The Drive whose sequence the bar under the video follows from one video to the next (set by
     // choosing one in the bar's dropdown or by moving with First / Previous / Next). Cleared when the
@@ -325,16 +342,6 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     // since the whole point is to show a cue without the user opening the tab first; kept in sync
     // afterwards by AttachmentsPanel's onCountChange as files/links are added or removed.
     const [attachmentCount, setAttachmentCount] = useState(0);
-    // The video's actual canonical WDBS, looked up from the database rather than trusted from the
-    // `wdbs` prop — a video opened from Search carries a freshly-fetched YouTube `Video` object
-    // that never has `wdbs` set, even when that video is already saved locally with one (see
-    // api.ts's getVideoWdbs). Falls back to the prop so a Library-opened video (which does carry
-    // its real value already) renders immediately without waiting on the round trip.
-    const [primaryWdbs, setPrimaryWdbs] = useState<string | undefined>(wdbs);
-    const [isAddingLink, setIsAddingLink] = useState(false);
-    const [linkInput, setLinkInput] = useState('');
-    const [linkError, setLinkError] = useState<string | null>(null);
-    const [savingLink, setSavingLink] = useState(false);
 
     const transcriptEditRef = useRef<HTMLTextAreaElement>(null);
     const summaryEditRef = useRef<HTMLTextAreaElement>(null);
@@ -1006,40 +1013,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     const hideTranscriptEditButton = allowEditTranscriptOnNA === false &&
         transcript?.trim() === "N/A" && hasExistingSummary;
 
-    // "Also in" (symlinks) only makes sense once there's a canonical WDBS to be "also" alongside
-    // — see the "Also in" section below, and update_wdbs's own symlink cleanup when this becomes
-    // false (clearing the canonical value removes any symlinks server-side too).
-    const hasPrimaryWdbs = !!decodeWdbs(primaryWdbs);
-
-    // Autocomplete suggestions (existing Warp Drive paths) are shared by the primary editor and
-    // the "link to another Warp Drive" adder below — loaded once, not per-video.
+    // A different video opened: back to the first tab, and its Similar Videos and attachment count fetched afresh. (Its
+    // Drives reset in useVideoDrives.)
     useEffect(() => {
-        getWdbsSuggestions().then(paths => setWdbsSuggestions(paths.map(decodeWdbs).filter(Boolean))).catch(() => {});
-    }, []);
-
-    // Suggested Drives for the combobox above — every Drive this handle's other saved videos
-    // already appear in (see the Suggested/Auto-Complete design this replaced the plain datalist
-    // for). Depends only on the channel, so it's kept separate from the per-video reset effect below.
-    useEffect(() => {
-        if (!handle) { setChannelSuggestedDrives([]); return; }
-        let cancelled = false;
-        getHandleDrives(handle).then(drives => {
-            if (!cancelled) setChannelSuggestedDrives(drives.map(d => d.display));
-        }).catch(() => { if (!cancelled) setChannelSuggestedDrives([]); });
-        return () => { cancelled = true; };
-    }, [handle]);
-
-    // Reset any in-progress WDBS edit whenever a different video is opened, so leftover input/
-    // error state from one video's edit doesn't leak into the next one's panel. Symlinked Warp
-    // Drives are re-fetched per video too, since they aren't part of the Video object itself.
-    useEffect(() => {
-        setIsEditingWdbs(false);
-        setWdbsError(null);
-        setIsAddingLink(false);
-        setLinkInput('');
-        setLinkError(null);
-        setPrimaryWdbs(wdbs);
-        setWdbsInput(decodeWdbs(wdbs));
         setLeftTab('terms');
         setSimilarVideos([]);
         fetchedSimilarForRef.current = null;
@@ -1047,34 +1023,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         if (videoId && existsInDb && flags.showAttachments) {
             getVideoAttachments(videoId).then(data => setAttachmentCount(data.attachments.length)).catch(() => {});
         }
-        if (videoId && existsInDb) {
-            getVideoWdbsLinks(videoId).then(setWdbsLinks).catch(() => setWdbsLinks([]));
-            // The `wdbs` prop is only ever populated for a video opened from Library/Portal, whose
-            // Video object comes straight from the database. One opened from Search comes fresh
-            // from the YouTube API and never carries a `wdbs` value, even when that same video is
-            // already saved locally with one — so once we know it's in the db, look up the real
-            // value directly rather than keep showing "N/A" (see api.ts's getVideoWdbs).
-            getVideoWdbs(videoId).then(v => {
-                setPrimaryWdbs(v ?? undefined);
-                setWdbsInput(decodeWdbs(v));
-            }).catch(() => {});
-        } else {
-            setWdbsLinks([]);
-        }
     }, [videoId, wdbs, existsInDb, flags.showAttachments]);
-
-    useEffect(() => {
-        const paths = [primaryWdbs, ...wdbsLinks].filter((p): p is string => !!p && !!decodeWdbs(p));
-        if (!existsInDb || paths.length === 0) {
-            setWdbsAliases({});
-            return;
-        }
-        let cancelled = false;
-        getWdbsAliases(paths)
-            .then(a => { if (!cancelled) setWdbsAliases(a); })
-            .catch(() => { if (!cancelled) setWdbsAliases({}); });
-        return () => { cancelled = true; };
-    }, [existsInDb, primaryWdbs, wdbsLinks]);
 
     // Lazily loads similar videos only once the user actually switches to that tab (not
     // prefetched for every opened video) — reset (both the list and this ref) whenever videoId
@@ -1091,201 +1040,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         getSimilarVideos(videoId).then(setSimilarVideos).catch(() => setSimilarVideos([])).finally(() => setLoadingSimilar(false));
     }, [leftTab, videoId]);
 
-    const handleSaveWdbs = useCallback(async () => {
-        if (!videoId) return;
-        setSavingWdbs(true);
-        setWdbsError(null);
-        try {
-            await updateVideoWdbs(videoId, wdbsInput.trim());
-            setIsEditingWdbs(false);
-            const encoded = encodeWdbs(wdbsInput);
-            setPrimaryWdbs(encoded);
-            onWdbsUpdated?.(encoded);
-            onWdbsChanged?.();
-        } catch (e: any) {
-            // update_wdbs already turns a SQLite trigger rejection into a plain-language message
-            // (see commands::wdbs::update_wdbs) — surface it as-is.
-            setWdbsError(typeof e === "string" ? e : e?.message ?? `Failed to update ${labels.aliasDriveLink}.`);
-        } finally {
-            setSavingWdbs(false);
-        }
-    }, [videoId, wdbsInput, onWdbsUpdated, onWdbsChanged]);
-
-    const handleAddLink = useCallback(async () => {
-        if (!videoId || !linkInput.trim()) return;
-        setSavingLink(true);
-        setLinkError(null);
-        try {
-            const encoded = await addVideoWdbsLink(videoId, linkInput.trim());
-            setWdbsLinks(prev => prev.includes(encoded) ? prev : [...prev, encoded]);
-            setLinkInput('');
-            setIsAddingLink(false);
-            onWdbsChanged?.();
-        } catch (e: any) {
-            setLinkError(typeof e === "string" ? e : e?.message ?? `Failed to ${labels.aliasDriveSymlink.toLowerCase()} ${labels.aliasDriveLink}.`);
-        } finally {
-            setSavingLink(false);
-        }
-    }, [videoId, linkInput, onWdbsChanged]);
-
-    const handleRemoveLink = useCallback(async (encoded: string) => {
-        if (!videoId) return;
-        // Optimistic: symlinks are low-stakes bookkeeping, and waiting on the round trip before
-        // updating the chip list would make removal feel laggy for no real benefit.
-        setWdbsLinks(prev => prev.filter(l => l !== encoded));
-        try {
-            await removeVideoWdbsLink(videoId, encoded);
-            onWdbsChanged?.();
-        } catch {
-            setWdbsLinks(prev => prev.includes(encoded) ? prev : [...prev, encoded]);
-        }
-    }, [videoId, onWdbsChanged]);
-
-    // What the pencil in the sequence bar opens: the video's home Drive and its "Also in" links (the
-    // "Also in" links let it additionally show up under other Drives (see components/WdbsTreePanel.tsx)
-    // without touching its home). Viewing and choosing between them is the bar's Drive dropdown.
-    //
-    // Styled to match the Glossary's Add Term modal (labeled fields, rounded-xl bg-[#121212] inputs,
-    // px-4 py-3 text-sm) rather than the compact popover this used to be — it lives in a full modal
-    // now (SequenceDock.tsx), so it should read like one, not like a cramped anchored dropdown.
-    const driveFieldClass = "flex-1 min-w-0 bg-[#121212] border border-[#333] text-white rounded-xl px-4 py-3 text-sm font-mono focus:outline-none focus:border-red-600 transition-all placeholder-gray-600 disabled:opacity-50";
-    const driveIconButtonClass = "p-2.5 rounded-lg hover:bg-[#272727] transition-colors cursor-pointer disabled:opacity-50 shrink-0";
-    const driveActionButtonClass = "flex items-center gap-1.5 shrink-0 text-xs font-bold text-gray-300 hover:text-white bg-[#272727] hover:bg-[#3f3f3f] px-3 py-2.5 rounded-lg transition-colors cursor-pointer";
-    const driveEditor = (
-        <div className="space-y-6">
-            <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Primary {labels.aliasDriveLink}</label>
-                {isEditingWdbs ? (
-                    <div className="flex items-center gap-2">
-                        <DriveComboBox
-                            autoFocus
-                            value={wdbsInput}
-                            onValueChange={setWdbsInput}
-                            suggestions={wdbsSuggestions}
-                            suggestedDrives={channelSuggestedDrives}
-                            onEnter={handleSaveWdbs}
-                            onEscape={() => { setIsEditingWdbs(false); setWdbsInput(decodeWdbs(primaryWdbs)); setWdbsError(null); }}
-                            placeholder=":CS-ML-REINF"
-                            disabled={savingWdbs}
-                            className={driveFieldClass}
-                        />
-                        <button onClick={handleSaveWdbs} disabled={savingWdbs} title="Save" className={`${driveIconButtonClass} text-green-500`}>
-                            <Check className="w-4 h-4" />
-                        </button>
-                        <button
-                            onClick={() => { setIsEditingWdbs(false); setWdbsInput(decodeWdbs(primaryWdbs)); setWdbsError(null); }}
-                            disabled={savingWdbs}
-                            title="Cancel"
-                            className={`${driveIconButtonClass} text-gray-400 hover:text-white`}
-                        >
-                            <X className="w-4 h-4" />
-                        </button>
-                    </div>
-                ) : (
-                    <div className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0 bg-[#121212] border border-[#333] rounded-xl px-4 py-3">
-                            <span
-                                className="block text-white font-mono text-sm truncate"
-                                title={hasPrimaryWdbs ? (wdbsAliases[primaryWdbs!] ?? decodeWdbs(primaryWdbs)) : undefined}
-                            >
-                                {decodeWdbs(primaryWdbs) || "N/A"}
-                            </span>
-                        </div>
-                        {allowEditWDBS && (
-                            <button onClick={() => setIsEditingWdbs(true)} className={driveActionButtonClass}>
-                                <Pencil className="w-3.5 h-3.5" /> Edit
-                            </button>
-                        )}
-                    </div>
-                )}
-                {wdbsError && (
-                    <div className="mt-2 text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
-                        {wdbsError}
-                    </div>
-                )}
-            </div>
-
-            <div>
-                <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Also In</label>
-                {/* No links possible until a Primary Drive is set — explained rather than just left blank. */}
-                {!hasPrimaryWdbs ? (
-                    <p className="text-xs text-[#666666] italic">Set a Primary {labels.aliasDriveLink} first to link this video into others too.</p>
-                ) : (
-                    <div className="space-y-3">
-                        {/* Compact chips — this is a list of what's already linked, not something that
-                            needs the input fields' full size. */}
-                        {(wdbsLinks.length > 0 || (allowEditWDBS && !isAddingLink)) && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                                {wdbsLinks.map(link => (
-                                    <span
-                                        key={link}
-                                        className="flex items-center gap-1.5 bg-[#1a1a1a] border border-[#333] rounded-md pl-2.5 pr-1.5 py-1 text-xs text-white font-mono"
-                                        title={wdbsAliases[link] ?? decodeWdbs(link)}
-                                    >
-                                        {decodeWdbs(link)}
-                                        {allowEditWDBS && (
-                                            <button
-                                                onClick={() => handleRemoveLink(link)}
-                                                title={`Remove ${labels.aliasDriveSymlink.toLowerCase()}`}
-                                                className="text-gray-500 hover:text-red-400 transition-colors cursor-pointer"
-                                            >
-                                                <X className="w-3 h-3" />
-                                            </button>
-                                        )}
-                                    </span>
-                                ))}
-                                {allowEditWDBS && !isAddingLink && (
-                                    // Sized like the chips beside it (same padding/text size), not the bigger
-                                    // field-row buttons — it's another item in this same list of tags.
-                                    <button
-                                        onClick={() => setIsAddingLink(true)}
-                                        className="flex items-center gap-1 bg-[#1a1a1a] border border-[#333] hover:border-[#444] rounded-md pl-2 pr-2.5 py-1 text-xs text-gray-400 hover:text-white font-mono transition-colors cursor-pointer"
-                                    >
-                                        <Plus className="w-3 h-3" /> {labels.aliasDriveSymlink}
-                                    </button>
-                                )}
-                            </div>
-                        )}
-
-                        {/* Its own full-width row, not squeezed in next to the chips: a Drive path can be
-                            long, and typing it should stay readable rather than scrolling inside a narrow box. */}
-                        {allowEditWDBS && isAddingLink && (
-                            <div className="flex items-center gap-2">
-                                <DriveComboBox
-                                    autoFocus
-                                    value={linkInput}
-                                    onValueChange={setLinkInput}
-                                    suggestions={wdbsSuggestions}
-                                    suggestedDrives={channelSuggestedDrives}
-                                    onEnter={handleAddLink}
-                                    onEscape={() => { setIsAddingLink(false); setLinkInput(''); setLinkError(null); }}
-                                    placeholder=":CS-ML-REINF"
-                                    disabled={savingLink}
-                                    className={driveFieldClass}
-                                />
-                                <button onClick={handleAddLink} disabled={savingLink || !linkInput.trim()} title={`Add ${labels.aliasDriveSymlink.toLowerCase()}`} className={`${driveIconButtonClass} text-green-500`}>
-                                    <Check className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => { setIsAddingLink(false); setLinkInput(''); setLinkError(null); }}
-                                    disabled={savingLink}
-                                    title="Cancel"
-                                    className={`${driveIconButtonClass} text-gray-400 hover:text-white`}
-                                >
-                                    <X className="w-4 h-4" />
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                )}
-                {linkError && (
-                    <div className="mt-2 text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">
-                        {linkError}
-                    </div>
-                )}
-            </div>
-        </div>
-    );
+    // The Drive editor the sequence bar's pencil opens (sidebar/DriveEditor.tsx).
+    const driveEditor = <DriveEditor drives={drives} allowEdit={!!allowEditWDBS} />;
 
     // Ctrl+F. The browser's own find is always blocked (main.tsx), so this is the only search: with the
     // panel open on the transcript or AI summary being read, it opens the search-only box; while
@@ -1409,36 +1165,28 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                 className={`fixed inset-y-0 right-0 bg-[#0f0f0f] border-l border-[#303030] transform transition-transform duration-300 ease-in-out z-50 ${isOpen ? 'translate-x-0' : 'translate-x-full'}`}
             >
                 <div className="h-full flex flex-col">
-                    <div className="px-4 py-2.5 border-b border-[#303030] flex justify-between items-start bg-white/5">
-                        <div className="flex gap-3 items-start">
-                            {videoId && (
-                                <img
-                                    src={`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`}
-                                    alt={title || "Untitled"}
-                                    className="w-[72px] h-10 shrink-0 object-cover rounded-md"
-                                />
-                            )}
-                            <div className="flex flex-col gap-0.5 overflow-hidden">
-                                <h2 className="text-sm font-semibold text-white pr-8 line-clamp-2 leading-snug">
-                                    {title || "Untitled"}
-                                </h2>
-                                {handle && (
-                                    <button
-                                        onClick={showBiography ? () => onHandleClick?.(handle.startsWith('@') ? handle : `@${handle}`) : undefined}
-                                        onContextMenu={creatorMenu.onContextMenu}
-                                        className={`text-xs text-[#aaaaaa] ${showBiography ? 'hover:text-red-400 cursor-pointer' : ''} text-left`}
-                                        title={showBiography ? `View ${labels.aliasBiographyItem}` : undefined}
-                                    >
-                                        {handle.startsWith('@') ? handle : `@${handle}`}
-                                    </button>
-                                )}
-                                {creatorMenu.menu}
-                            </div>
+                    <SidebarHeader
+                        videoId={videoId}
+                        title={title}
+                        handle={handle}
+                        showBiography={showBiography}
+                        onHandleClick={onHandleClick}
+                        pinned={pinned}
+                        onTogglePin={onTogglePin}
+                        onClose={() => requestLeave(onClose)}
+                    />
+
+                    {/* YouTube no longer has this video (found just now): it stays here for the record. */}
+                    {videoIdentity.orphaned && (
+                        <div className="shrink-0 px-4 py-1.5 border-b border-[#303030] text-[11px] text-amber-400/90">
+                            Orphaned: {videoIdentity.orphaned} on YouTube. It stays in the {labels.aliasLibrary} for the record, listed under Orphaned.
                         </div>
-                        <button onClick={() => requestLeave(onClose)} className="text-[#aaaaaa] hover:text-white transition-colors cursor-pointer p-1 flex-shrink-0">
-                            <X className="w-5 h-5" />
-                        </button>
-                    </div>
+                    )}
+
+                    {/* The Calendar tracks this video is on, with Mark done (only when it's on one). */}
+                    {videoId && onOpenTrack && flags.viewVisible.calendar && (
+                        <TrackChips videoId={videoId} ended={videoEnded} watched={resume.watched} calendarName={labels.aliasCalendar} onOpenTrack={id => requestLeave(() => onOpenTrack(id))} />
+                    )}
 
                     <div ref={contentRowRef} className="flex-1 flex overflow-hidden relative">
                         {/* Find & Replace and Detect Glossary float over the video side (top-right, against the divider), not the
@@ -1517,6 +1265,22 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                      referrerPolicy="strict-origin-when-cross-origin"
                                                      allowFullScreen
                                                  />
+                                                {/* Where it was left last time, as an offer (not a jump): top left, out of the way of the
+                                                    hover buttons below. It goes once the video plays from anywhere else. */}
+                                                {resume.resumeAt !== null && (
+                                                    <div className="absolute top-2 left-2 flex items-center rounded-md bg-black/85 border border-white/15 text-white text-[11px] font-bold shadow-lg">
+                                                        <button
+                                                            onClick={() => { const at = resume.resumeAt!; resume.dismissResume(); seekPlayer(at); }}
+                                                            className="flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 hover:bg-white/10 rounded-l-md cursor-pointer"
+                                                            title="Play from where you stopped last time"
+                                                        >
+                                                            <Play className="w-3 h-3 fill-current" /> Resume from {formatClock(Math.floor(resume.resumeAt))}
+                                                        </button>
+                                                        <button onClick={resume.dismissResume} className="px-1.5 py-1.5 border-l border-white/15 text-white/60 hover:text-white hover:bg-white/10 rounded-r-md cursor-pointer" title="Start from the beginning">
+                                                            <X className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
+                                                )}
                                                 {/* Bottom left, across from Open in YouTube. Stays shown while it reports the copy. */}
                                                 <div className={`absolute bottom-2 left-2 transition-opacity ${timedLinkCopied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                                     <button
@@ -1558,66 +1322,25 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                         ellipsis on its own (min-w-0 + truncate), so the row itself never needs to
                                                         clip anything, and this card is free to grow to fit whatever tab is active
                                                         below (Terms/Tags/Similar/Attachments) and push the pane's own scroll. */}
-                                                    <div className="flex items-center gap-4 mb-3">
-                                                        {showTermsTab && (
-                                                        <button
-                                                            onClick={() => setLeftTab('terms')}
-                                                            title="Terms"
-                                                            className={`flex items-center gap-1.5 min-w-0 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeLeftTab === 'terms' ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                                        >
-                                                            <BookA className="w-3.5 h-3.5 shrink-0" />
-                                                            <span className="truncate">Terms</span>
-                                                            {activeLeftTab === 'terms' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                                        </button>
-                                                        )}
-                                                        {showTagsTab && (
-                                                        <button
-                                                            onClick={() => setLeftTab('tags')}
-                                                            title="Tags"
-                                                            className={`flex items-center gap-1.5 min-w-0 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeLeftTab === 'tags' ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                                        >
-                                                            <Tags className="w-3.5 h-3.5 shrink-0" />
-                                                            <span className="truncate">Tags</span>
-                                                            {activeLeftTab === 'tags' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                                        </button>
-                                                        )}
-                                                        {flags.showSimilarVideos && (
-                                                        <button
-                                                            onClick={() => setLeftTab('similar')}
-                                                            title="Similar Videos"
-                                                            className={`flex items-center gap-1.5 min-w-0 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeLeftTab === 'similar' ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                                        >
-                                                            <ListVideo className="w-3.5 h-3.5 shrink-0" />
-                                                            <span className="truncate">Similar</span>
-                                                            {activeLeftTab === 'similar' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                                        </button>
-                                                        )}
-                                                        {flags.showAttachments && (
-                                                        <button
-                                                            onClick={() => setLeftTab('attachments')}
-                                                            title="Attachments"
-                                                            className={`flex items-center gap-1.5 min-w-0 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeLeftTab === 'attachments' ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                                        >
-                                                            <Paperclip className="w-3.5 h-3.5 shrink-0" />
-                                                            <span className="truncate">Attached</span>
-                                                            {attachmentCount > 0 && (
-                                                                <span className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#3f3f3f] text-white text-[9px] font-bold leading-none normal-case tracking-normal">
-                                                                    {attachmentCount}
-                                                                </span>
-                                                            )}
-                                                            {activeLeftTab === 'attachments' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                                        </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => setLeftTab('linked')}
-                                                            title="Backlinks"
-                                                            className={`flex items-center gap-1.5 min-w-0 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${activeLeftTab === 'linked' ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                                                        >
-                                                            <Link2 className="w-3.5 h-3.5 shrink-0" />
-                                                            <span className="truncate">Backlinks</span>
-                                                            {activeLeftTab === 'linked' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                                                        </button>
-                                                    </div>
+                                                    <UnderlineTabs<LeftTab>
+                                                        className="flex items-center gap-4 mb-3"
+                                                        active={activeLeftTab}
+                                                        onChange={setLeftTab}
+                                                        tabs={[
+                                                            ...(showTermsTab ? [{ id: 'terms' as const, label: 'Terms', icon: BookA }] : []),
+                                                            ...(showTagsTab ? [{ id: 'tags' as const, label: 'Tags', icon: Tags }] : []),
+                                                            ...(flags.showSimilarVideos ? [{ id: 'similar' as const, label: 'Similar', title: 'Similar Videos', icon: ListVideo }] : []),
+                                                            ...(flags.showAttachments ? [{
+                                                                id: 'attachments' as const, label: 'Attached', title: 'Attachments', icon: Paperclip,
+                                                                badge: attachmentCount > 0 ? (
+                                                                    <span className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#3f3f3f] text-white text-[9px] font-bold leading-none normal-case tracking-normal">
+                                                                        {attachmentCount}
+                                                                    </span>
+                                                                ) : undefined,
+                                                            }] : []),
+                                                            { id: 'linked' as const, label: 'Backlinks', icon: Link2 },
+                                                        ]}
+                                                    />
                                                     {activeLeftTab === 'terms' || activeLeftTab === 'tags' ? (
                                                         <VideoTagsPanel
                                                             kind={activeLeftTab}
@@ -2341,6 +2064,31 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                     onDiscard={discardAndLeave}
                     onSave={() => void saveAndLeave()}
                 />
+            )}
+
+            {/* The video was renamed on YouTube (found as it opened): just said, already taken over, nothing to choose. */}
+            {videoIdentity.renamed && isOpen && (
+                <Modal
+                    onClose={videoIdentity.dismissRenamed}
+                    layer="top"
+                    title="Video Title Renamed"
+                    footer={
+                        <button
+                            type="button"
+                            autoFocus
+                            onClick={videoIdentity.dismissRenamed}
+                            className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-500 transition-all text-sm font-bold text-white cursor-pointer"
+                        >
+                            OK
+                        </button>
+                    }
+                >
+                    <p className="text-[#aaaaaa] leading-relaxed">
+                        <span className="text-white font-semibold">{videoIdentity.renamed.from}</span> is now titled{' '}
+                        <span className="text-white font-semibold">{videoIdentity.renamed.to}</span> on YouTube.
+                    </p>
+                    <p className="text-[11px] text-gray-500 mt-3">The {labels.aliasLibrary} uses the new title now.</p>
+                </Modal>
             )}
 
             {/* Term Definition Modal */}

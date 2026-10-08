@@ -5,6 +5,7 @@ import { useTrash } from '../hooks/useTrash';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { Modal } from './Modal';
 import { ConfirmDialog } from './ConfirmDialog';
+import { SecondaryButton } from './ui/Button';
 
 /** "just now", "3 min ago", "2 hr ago". */
 function ago(ms: number, now: number): string {
@@ -77,14 +78,12 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
             bodyClassName="p-0"
             footer={
                 <>
-                    <button
-                        type="button"
+                    <SecondaryButton
                         onClick={() => setConfirmEmpty(true)}
                         disabled={entries.length === 0}
-                        className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] disabled:opacity-40 disabled:cursor-default cursor-pointer text-white text-sm font-semibold transition-colors"
                     >
                         Empty Trash
-                    </button>
+                    </SecondaryButton>
                     <button
                         type="button"
                         onClick={onClose}

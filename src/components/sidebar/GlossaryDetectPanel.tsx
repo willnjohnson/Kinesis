@@ -7,6 +7,7 @@ import {
 } from '../../lib/glossary-detect';
 import { buildLink } from '../../lib/internal-links';
 import { resolveEntry } from '../../lib/glossary';
+import { Select } from '../ui/Select';
 
 interface Props {
     /** The text being edited (transcript or summary). */
@@ -181,16 +182,18 @@ export function GlossaryDetectPanel({ text, glossaryTerms, driveRoots, onApply, 
             {mode === 'link' && (
                 <div className="flex items-center gap-2 px-3 py-2 border-b border-[#303030]">
                     <label htmlFor="glossary-scope" className="text-[10px] font-bold uppercase tracking-wider text-[#888888] shrink-0">Glossary</label>
-                    <select
+                    <Select
+                        look="compact"
                         id="glossary-scope"
                         value={scope.id}
-                        onChange={e => { setScopeId(e.target.value); setTicked(new Set()); }}
-                        className="flex-1 min-w-0 h-7 px-2 bg-[#121212] border border-[#303030] hover:border-[#505050] rounded-md text-[11px] text-white outline-none cursor-pointer"
+                        onValueChange={v => { setScopeId(v); setTicked(new Set()); }}
+                        wrapperClassName="flex-1 min-w-0"
+                        className="w-full"
                     >
                         {scopes.map(s => (
                             <option key={s.id || 'general'} value={s.id}>{s.label} ({s.terms.size})</option>
                         ))}
-                    </select>
+                    </Select>
                 </div>
             )}
 

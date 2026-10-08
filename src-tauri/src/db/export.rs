@@ -19,6 +19,7 @@ pub struct BiographyExportRow {
     pub twitch: String,
     pub reddit: String,
     pub discord: String,
+    pub alias: String,
     // -1 sentinel = unknown/not yet backfilled (see schema.rs), same convention as the column.
     pub subscriber_count: i64,
 }
@@ -27,7 +28,7 @@ pub fn get_all_biographies_for_export(db_path: &str) -> Result<Vec<BiographyExpo
     let conn = Connection::open(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT handle, display_name, bio, wikipedia, website, twitter, instagram, facebook, \
-                threads, youtube, tiktok, twitch, reddit, discord, subscriber_count
+                threads, youtube, tiktok, twitch, reddit, discord, subscriber_count, alias
          FROM Biographies
          ORDER BY CASE WHEN TRIM(display_name) = '' THEN handle ELSE display_name END COLLATE NOCASE",
     )?;
@@ -55,6 +56,7 @@ pub fn get_all_biographies_for_export(db_path: &str) -> Result<Vec<BiographyExpo
             // "unknown" sentinel the column itself uses, rather than failing the whole export
             // over one legacy row.
             subscriber_count: row.get::<_, Option<i64>>(14)?.unwrap_or(-1),
+            alias: row.get(15)?,
         })
     })?;
     let mut out = Vec::new();
@@ -99,7 +101,8 @@ mod tests {
                 reddit TEXT NOT NULL DEFAULT '',
                 discord TEXT NOT NULL DEFAULT '',
                 channel_id TEXT NOT NULL DEFAULT '',
-                subscriber_count INTEGER
+                subscriber_count INTEGER,
+                alias TEXT NOT NULL DEFAULT ''
             )",
             [],
         )

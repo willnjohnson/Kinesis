@@ -1,6 +1,7 @@
 import type { ElementType, FormEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { backdropProps } from '../lib/backdrop';
 
 /**
  * The app's dialog: a dimmed full-window backdrop with a centered panel, a header (icon, title, close
@@ -64,7 +65,8 @@ export function Modal({
                             <h2 className="text-lg font-bold truncate">{title}</h2>
                             {subtitle && <p className="text-xs text-gray-400 truncate">{subtitle}</p>}
                         </div>
-                        {headerExtra}
+                        {/* Kept whole (a button's text never wraps); the title is what gives way. */}
+                        {headerExtra && <div className="shrink-0 whitespace-nowrap flex items-center gap-2">{headerExtra}</div>}
                     </div>
                     <button type="button" onClick={onClose} className="text-gray-500 hover:text-white transition-colors cursor-pointer shrink-0" aria-label="Close">
                         <X className="w-5 h-5" />
@@ -79,8 +81,9 @@ export function Modal({
         <div
             {...(closeOnNavigate ? { 'data-nav-closes': '' } : {})}
             className={`fixed inset-0 ${layer === 'top' ? 'z-[200]' : 'z-[100]'} flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200`}
-            // Stops here, so clicking outside closes only this dialog, not one it was opened from.
-            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            // Stops here, so clicking outside closes only this dialog, not one it was opened from. Only a click that starts
+            // out here too: a text selection dragged out past the edge doesn't close it (lib/backdrop.ts).
+            {...backdropProps(onClose, { stop: true })}
         >
             {onSubmit ? (
                 <form onSubmit={onSubmit} onClick={(e) => e.stopPropagation()} className={panelClass}>{inner}</form>

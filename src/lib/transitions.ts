@@ -39,6 +39,10 @@ function snapshotTitleBar(): string | null {
         for (let i = 0; i < from.children.length; i++) inline(from.children[i], to.children[i]);
     };
     inline(source, copy);
+    // Without the section tabs: they're the workspace being left's (the next may show others), and their shapes are
+    // drawn on ::before, which a snapshot can't carry, so only loose labels would be left. Their strip stays, empty,
+    // keeping the buttons on the right where they were.
+    copy.querySelector('nav[aria-label="Sections"]')?.replaceChildren();
     return copy.outerHTML;
 }
 export const LEAVE_MS = 220;

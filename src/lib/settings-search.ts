@@ -40,7 +40,7 @@ export const SETTINGS_ENTRIES: SettingsEntry[] = [
     // Workspace
     { label: 'Workspace', tab: 'workspace', keywords: 'workspace name' },
     { label: 'Rename workspace', tab: 'workspace', keywords: 'rename workspace name' },
-    { label: 'Section names', tab: 'workspace', keywords: 'aliases alias rename search library glossary biography drive names labels' },
+    { label: 'Section names', tab: 'workspace', keywords: 'aliases alias rename search library glossary biography calendar drive names labels' },
     { label: 'Permissions', tab: 'workspace', keywords: 'permissions read-only editing locked flags' },
     { label: 'Confirm before deleting', tab: 'workspace', keywords: 'confirm confirmation delete deleting warning safety permissions trash' },
 

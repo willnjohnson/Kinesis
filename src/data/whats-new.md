@@ -1,3 +1,42 @@
+# Changelog (v0.5.3)
+
+## Added
+
+### Calendar
+
+* **Tracks**: Plan videos and tasks as tracks, like a fitness routine or a school course. A track can go one item at a time, follow a weekly schedule, or repeat as a rotation. Check items off as you go, even in a read-only workspace.
+* **Week View**: See each track's items on their days, with a month overview and an "Up next" list in the Tracks panel.
+* **Folders**: Group several videos and tasks into a folder with **Add folder**, then drag items in or out. On a dated track, everything in a folder lands on the same day. A folder is done once everything in it is, and checking it off checks off all of it.
+* **In Progress and Priority**: Mark an item you've started as In Progress. Priority shows as a diamond: gray outline for low, half-filled yellow for medium, solid red for high.
+* **Export to Calendar**: Right-click a track to save it as an `.ics` file for Google Calendar, Apple Calendar or Outlook.
+
+### Pins
+
+* **Pin a Video**: Click the pin beside the sidebar's close button to keep a video at hand while you work on it.
+* **Pin Menu**: The pin in the title bar lists your pinned videos, newest first, and opens any of them from any section. It also has submenus for the Essential tags (Watch Later, Favorite, Revisit, Key Source, Follow Up). **Clear pins** empties the list when you're done.
+
+### Flashcards
+
+* **Study Your Terms**: Click **Flashcards** in the Glossary's bottom bar to study the terms shown (all of them, or one Drive's). Click a card or press Space to flip it, and use the arrow keys to move between cards. Show the term or the definition first, and shuffle the deck. Sort each card into **Know it** or **Still learning**, then go over the ones you're still learning until you know them all.
+
+### About Kinesis
+
+* **Walkthrough**: A short tour of what Kinesis is and how each part works. Open it from the Workspaces screen or with `Ctrl+K`.
+
+## Improved
+
+### Biography
+
+* **Alias**: Give a channel a name of your own in **Edit Bio**, like the person behind it. The alias shows as a badge before the channel's name in the Biography list, its window, and a summary's Channel Info line. Search with `@@` to find a channel by its alias or its name.
+  * **Show Alias** in the bottom bar turns the badges on or off. With it on, the list is sorted by alias where there is one.
+* **Renamed Channels**: Opening a biography checks the channel on YouTube. A new handle is updated everywhere it's used. A new display name asks whether to keep the old one as the alias, so the channel is still easy to recognize.
+
+### Library
+
+* **Orphaned Videos**: Videos YouTube no longer has are found as their thumbnails load in the Library, or when you open them. They stay in the Library for the record, and **Orphaned** in the bottom bar (next to the Trash) lists them, with a way to delete them. A video that comes back on YouTube is taken off the list.
+* **Resume Where You Left Off**: Kinesis remembers where you stopped in each saved video. Open it again and click **Resume from 23:14** on the player to pick up there. Watching past the first half minute also marks the video **In Progress** on its Calendar tracks.
+* **Continue Watching and Watched**: Two new lists in the pin menu. **Continue Watching** shows the videos you've started, with how far in you are; **Mark as Completed** moves a video to **Watched** and checks it off on its Calendar tracks. A video you watch to the end goes to Watched on its own.
+
 # Changelog (v0.5.2)
 
 ## Improved
@@ -72,32 +111,3 @@
   * Add sub-drives.
   * Rename the current drive node.
   * Move/merge into another node.
-
-# Changelog (v0.4.9)
-
-## Added
-
-### Glossary & Terms
-
-* **Auto-Detected Terms**: Terms are now detected automatically from glossary links in the Transcript and AI Summary, not added by hand.
-* **Jump to a Term**: Clicking a term jumps to and highlights it in the text.
-* **Split Library Search**: Search a term's mentions everywhere, or only where it's glossary-linked, each with a live result count.
-* **New Search Facet, Untagged (`!#`)**: Find videos with no tags. `!#keyword` narrows further.
-
-### Drives
-
-* **Color Decoration**: Right-click a Drive in the tree and choose "Edit Color Decoration" to mark it with a colored chip, in a choice of 7 colors.
-
-### Reordering
-
-* **Drag-and-Drop**: Reorder Drive Sequences and Attachments by dragging a row to a new spot.
-
-## Improved
-
-### Sidebar
-
-* **Unsaved Changes Warning**: Leaving the sidebar with an unsaved edit now asks first, instead of silently losing it.
-
-### Venice AI
-
-* **Post-Processing Options** (Settings » API Key » Venice): toggle stripping quote marks from quoteblocks and leading emojis from headers, paragraphs, list items and quoteblocks.

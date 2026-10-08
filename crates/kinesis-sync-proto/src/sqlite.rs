@@ -125,6 +125,7 @@ fn build_biography(row: &Row, _: &ReadOptions) -> Built {
             channel_id: os(row, 14),
             // -1 is the "unknown" sentinel; it round-trips as-is.
             subscriber_count: oi(row, 15),
+            alias: os(row, 16),
         },
     )
 }
@@ -182,10 +183,10 @@ fn spec(kind: Kind) -> Spec {
         Kind::Biography => Spec {
             table: "Biographies",
             all: "SELECT handle, display_name, bio, wikipedia, website, twitter, instagram, facebook,
-                         threads, youtube, tiktok, twitch, reddit, discord, channel_id, subscriber_count
+                         threads, youtube, tiktok, twitch, reddit, discord, channel_id, subscriber_count, alias
                   FROM Biographies ORDER BY handle",
             one: "SELECT handle, display_name, bio, wikipedia, website, twitter, instagram, facebook,
-                         threads, youtube, tiktok, twitch, reddit, discord, channel_id, subscriber_count
+                         threads, youtube, tiktok, twitch, reddit, discord, channel_id, subscriber_count, alias
                   FROM Biographies WHERE handle = ?1",
             build: build_biography,
         },

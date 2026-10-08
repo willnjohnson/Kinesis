@@ -82,9 +82,27 @@ fn handle_youtube_embed(request: Request) -> Result<(), Box<dyn std::error::Erro
   // Between the app (Sidebar.tsx) and YouTube's player, through its iframe API (enablejsapi above):
   //  - kinesis-seek: jump to a moment (the app's [1:23] timestamps and timed links).
   //  - kinesis-time: where the video is now (the app's "Copy link at time"), answered to whoever asked.
+  //  - kinesis-ended: sent up unasked when the video plays to its end (the sidebar's track chips offer Mark Done).
+  //  - kinesis-progress: sent up unasked every few seconds while playing, and on a pause: where it is and how long it
+  //    is (the sidebar remembers it, to offer Resume next time).
   // Only well-formed requests from the window holding this page are acted on.
   var player = document.getElementById('player');
   var current = null;
+  var duration = null;
+  var ended = false;
+  var playing = false;
+  var report = function () {{
+    if (current !== null) window.parent.postMessage({{ type: 'kinesis-progress', seconds: current, duration: duration }}, '*');
+  }};
+  // State 0 is "ended" (anything else, a replay, readies it to be said again), 1 playing, 2 paused.
+  var onState = function (state) {{
+    if (typeof state !== 'number') return;
+    if (state === 0 && !ended) window.parent.postMessage({{ type: 'kinesis-ended' }}, '*');
+    ended = state === 0;
+    if (state === 2 && playing) report();
+    playing = state === 1;
+  }};
+  setInterval(function () {{ if (playing) report(); }}, 5000);
   var send = function (func, args) {{
     player.contentWindow.postMessage(JSON.stringify({{ event: 'command', func: func, args: args }}), 'https://www.youtube.com');
   }};
@@ -96,8 +114,12 @@ fn handle_youtube_embed(request: Request) -> Result<(), Box<dyn std::error::Erro
     if (e.source === player.contentWindow) {{
       if (e.origin !== 'https://www.youtube.com' || typeof e.data !== 'string') return;
       try {{
-        var info = JSON.parse(e.data).info;
+        var msg = JSON.parse(e.data);
+        var info = msg.info;
+        if (msg.event === 'onStateChange') onState(info);
         if (info && typeof info.currentTime === 'number') current = info.currentTime;
+        if (info && typeof info.duration === 'number' && info.duration > 0) duration = info.duration;
+        if (info && typeof info.playerState === 'number') onState(info.playerState);
       }} catch (_) {{}}
       return;
     }}

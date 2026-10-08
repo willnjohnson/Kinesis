@@ -207,6 +207,9 @@ pub struct GlossaryData {
 pub struct BiographyData {
     #[serde(default)]
     pub display_name: Option<String>,
+    /// The channel's alias (the reader's own name for it), when it has one.
+    #[serde(default)]
+    pub alias: Option<String>,
     #[serde(default)]
     pub bio: Option<String>,
     #[serde(default)]

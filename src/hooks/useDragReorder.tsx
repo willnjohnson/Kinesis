@@ -19,11 +19,19 @@ import { useState, type DragEvent } from 'react';
  * drag events first, which is what shows as a permanent "not allowed" cursor no `preventDefault()`
  * here can fix.
  */
+/** Where a drop landed: the dragged row, the row it was dropped on, and which half of that row. A list with structure
+ *  (the Calendar's folders) uses it to decide more than the order: what the dragged row now belongs to. */
+export interface DropPlace {
+    from: string | number;
+    to: string | number;
+    side: 'before' | 'after';
+}
+
 export function useDragReorder<T>(items: T[], keyOf: (item: T) => string | number) {
     const [draggingKey, setDraggingKey] = useState<string | number | null>(null);
     const [over, setOver] = useState<{ key: string | number; side: 'before' | 'after' } | null>(null);
 
-    const rowProps = (item: T, onReordered: (newOrder: T[]) => void) => {
+    const rowProps = (item: T, onReordered: (newOrder: T[], drop: DropPlace) => void) => {
         const key = keyOf(item);
         return {
             draggable: true,
@@ -67,7 +75,7 @@ export function useDragReorder<T>(items: T[], keyOf: (item: T) => string | numbe
                 // re-inserting, so "after the last item" (toIndex === items.length) still lands last.
                 if (fromIndex < toIndex) toIndex -= 1;
                 next.splice(toIndex, 0, moved);
-                onReordered(next);
+                onReordered(next, { from, to: key, side });
             },
             onDragEnd: () => { setDraggingKey(null); setOver(null); },
         };

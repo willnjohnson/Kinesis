@@ -336,6 +336,16 @@ pub async fn get_handle_drives(app: tauri::AppHandle, handle: String) -> Result<
     db::get_handle_drives(&db_path, &handle).map_err(|e| e.to_string())
 }
 
+/// Every channel's Drives at once, by handle (the Biography search bar's Drive facet).
+#[command]
+pub async fn get_biography_drives(app: tauri::AppHandle) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let db_path = get_db_path(&app);
+    tokio::task::spawn_blocking(move || db::get_biography_drives(&db_path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 /// What the search box completes handles and video IDs from (see db::get_search_suggestions).
 #[command]
 pub async fn get_search_suggestions(app: tauri::AppHandle) -> Result<db::SearchSuggestions, String> {

@@ -10,6 +10,7 @@ import {
     getSyncStatus, syncTest, syncConnect, syncRun, syncCancel, syncSetOptions, syncDisconnect,
     type SyncStatus, type SyncReport, type SyncProgress, type SyncManifest,
 } from "../../api";
+import { Select } from '../ui/Select';
 
 interface Props {
     /** Called after anything that may have changed local data or enforced settings. */
@@ -312,16 +313,18 @@ export function SyncTab({ onSyncComplete }: Props) {
                             />
                         </div>
                         {status.auto_sync && (
-                            <select
-                                value={status.interval_minutes}
-                                onChange={(e) => handleOptions(true, Number(e.target.value))}
-                                className="w-full bg-black/40 border border-[#303030] rounded-lg px-3 py-2 text-sm text-white focus:outline-none"
+                            <Select
+                                look="setting"
+                                value={String(status.interval_minutes)}
+                                onValueChange={v => handleOptions(true, Number(v))}
+                                wrapperClassName="w-full"
+                                className="w-full"
                             >
                                 {INTERVAL_CHOICES.map(c => <option key={c.minutes} value={c.minutes}>{c.label}</option>)}
                                 {!INTERVAL_CHOICES.some(c => c.minutes === status.interval_minutes) && (
                                     <option value={status.interval_minutes}>Every {status.interval_minutes} minutes</option>
                                 )}
-                            </select>
+                            </Select>
                         )}
                     </div>
 

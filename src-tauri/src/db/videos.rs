@@ -223,6 +223,55 @@ pub fn delete_video_recorded(db_path: &str, video_id: &str) -> Result<Vec<super:
     }
 }
 
+/// `delete_video_recorded` for many videos at once (the Orphaned window's Delete All): the rows go in one transaction
+/// and the links to them in one pass over the texts. Returns each video's own text changes, in `video_ids`' order.
+pub fn delete_videos_recorded(db_path: &str, video_ids: &[String]) -> Result<Vec<Vec<super::links::TextChange>>> {
+    use super::links::{apply_link_edit_groups_recorded, LinkEdit, LinkKind};
+    let mut conn = Connection::open(db_path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(10))?;
+    let tx = conn.transaction()?;
+    let mut handles: Vec<Option<String>> = Vec::with_capacity(video_ids.len());
+    for id in video_ids {
+        let handle: Option<String> = tx
+            .query_row("SELECT handle FROM Videos WHERE video_id = ?", params![id], |r| r.get(0))
+            .optional()?
+            .flatten();
+        tx.execute("DELETE FROM Videos WHERE video_id = ?", params![id])?;
+        handles.push(handle);
+    }
+    tx.commit()?;
+
+    // As one at a time: a creator whose biography went with their last video loses its links too (once).
+    let mut unlinked_bios = std::collections::HashSet::new();
+    let groups: Vec<Vec<LinkEdit>> = video_ids
+        .iter()
+        .zip(&handles)
+        .map(|(id, handle)| {
+            let mut edits = vec![LinkEdit::Unlink(LinkKind::Video, id.clone())];
+            if let Some(handle) = handle.as_ref().filter(|h| !h.trim().is_empty()) {
+                let bio_remains = conn
+                    .query_row("SELECT 1 FROM Biographies WHERE lower(handle) = lower(?)", params![handle], |_| Ok(()))
+                    .optional()
+                    .unwrap_or(None)
+                    .is_some();
+                if !bio_remains && unlinked_bios.insert(handle.to_lowercase()) {
+                    edits.push(LinkEdit::Unlink(LinkKind::Bio, handle.clone()));
+                }
+            }
+            edits
+        })
+        .collect();
+    drop(conn);
+    // The deletes themselves have succeeded; a failure tidying links must not undo or hide that.
+    match apply_link_edit_groups_recorded(db_path, &groups) {
+        Ok(changes) => Ok(changes),
+        Err(e) => {
+            log::warn!("Couldn't remove links to deleted videos: {e}");
+            Ok(video_ids.iter().map(|_| Vec::new()).collect())
+        }
+    }
+}
+
 /// One saved video by id, or None when it isn't in the library.
 pub fn get_video_by_id(db_path: &str, video_id: &str, include_content: bool) -> Result<Option<Video>> {
     let conn = Connection::open(db_path)?;
@@ -418,7 +467,7 @@ pub fn get_search_suggestions(db_path: &str) -> Result<SearchSuggestions> {
         .query_map([], |row| Ok(SuggestedHandle { handle: row.get(0)?, name: row.get(1)? }))?
         .filter_map(|r| r.ok())
         .collect();
-    let channels = conn
+    let mut channels: Vec<SuggestedChannel> = conn
         .prepare(
             "SELECT author, COALESCE(MAX(LTRIM(handle, '@')), '') FROM Videos
               WHERE author IS NOT NULL AND author != ''
@@ -428,6 +477,22 @@ pub fn get_search_suggestions(db_path: &str) -> Result<SearchSuggestions> {
         .query_map([], |row| Ok(SuggestedChannel { name: row.get(0)?, handle: row.get(1)? }))?
         .filter_map(|r| r.ok())
         .collect();
+    // Channels' aliases (Edit Bio) complete too, since `@@` finds a channel by either; after the real names, and only
+    // for channels with saved videos. One that's the same as a name already listed isn't listed twice.
+    let aliases: Vec<SuggestedChannel> = conn
+        .prepare(
+            "SELECT b.alias, LTRIM(b.handle, '@') FROM Biographies b
+              WHERE TRIM(b.alias) != '' AND EXISTS (SELECT 1 FROM Videos v WHERE LOWER(v.handle) = LOWER(b.handle))
+              ORDER BY LOWER(b.alias)",
+        )?
+        .query_map([], |row| Ok(SuggestedChannel { name: row.get(0)?, handle: row.get(1)? }))?
+        .filter_map(|r| r.ok())
+        .collect();
+    for alias in aliases {
+        if !channels.iter().any(|c| c.name.eq_ignore_ascii_case(&alias.name)) {
+            channels.push(alias);
+        }
+    }
     let videos = conn
         .prepare("SELECT video_id, COALESCE(title, '') FROM Videos ORDER BY video_id")?
         .query_map([], |row| Ok(SuggestedVideo { id: row.get(0)?, title: row.get(1)? }))?

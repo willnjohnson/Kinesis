@@ -27,6 +27,8 @@ interface Props {
     /** The title bar layout's sections (Search, Library, Glossary, Biography), as binder tabs after the workspace. With
      *  them, the bar runs left to right (arrows, logo and name, workspace, tabs) instead of centering the title. */
     tabs?: TitleBarTab[];
+    /** Beside What's New: the pin menu (PinsMenu), given whether the bar is locked by an open dialog. */
+    pins?: (locked: boolean) => ReactNode;
 }
 
 export interface TitleBarTab {
@@ -45,7 +47,7 @@ const MOVE_GRAB_MS = 400;
 /** Page mouse events this soon after that loss of focus are the grab starting, not the move ending. */
 const SETTLE_MS = 250;
 
-const barButton = 'flex items-center justify-center w-[22px] h-[22px] rounded text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-gray-400';
+export const barButton = 'flex items-center justify-center w-[22px] h-[22px] rounded text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-gray-400';
 /** A thin line between groups of buttons. */
 export function TitleBarDivider() {
     return <div aria-hidden className="pointer-events-none w-px h-4 bg-[#303030] mx-1.5 shrink-0" />;
@@ -59,8 +61,11 @@ const controlButton = `${controlBase} hover:text-white hover:bg-[#272727]`;
 // theme's regular text color, which flips dark on a light theme and would read muted/wrong against the accent fill.
 const closeButton = `${controlBase} hover:text-[var(--k-text-on-accent)] hover:bg-[var(--k-accent)]`;
 
-/** One binder tab. Bottom-aligned with a rounded top; the open one is the page's own color, covers the bar's bottom line
- *  (it's drawn above it, see TitleBar) and carries an accent strip along its bottom. */
+/** One binder tab. Bottom-aligned, its sides slanting in toward a rounded top, like a folder's tab; the open one is the
+ *  page's own color, covers the bar's bottom line (it's drawn above it, see TitleBar) and carries an accent strip along its
+ *  bottom. The shape (fill, border, strip) is a layer behind the label, tilted back in perspective, which narrows its top
+ *  and keeps the border whole; the label itself stays upright. Its colors are the theme's variables, not the hex classes
+ *  index.css maps to them (those only match the plain class names, not these on a ::before). */
 function BinderTab({ tab, compact, locked = false }: { tab: TitleBarTab; compact: boolean; locked?: boolean }) {
     return (
         <button
@@ -69,9 +74,9 @@ function BinderTab({ tab, compact, locked = false }: { tab: TitleBarTab; compact
             title={locked ? `${tab.label} (close the open window first)` : tab.label}
             aria-label={tab.label}
             aria-current={tab.active ? 'page' : undefined}
-            className={`relative flex items-center justify-center gap-1 shrink-0 rounded-t-md border border-b-0 text-[11px] leading-none whitespace-nowrap transition-colors cursor-pointer disabled:cursor-default ${compact ? 'w-8' : 'px-2.5'} ${tab.active
-                ? 'z-10 h-[calc(100%-4px)] bg-[#0f0f0f] border-[#404040] text-white font-semibold shadow-[inset_0_-2px_0_var(--k-accent)]'
-                : 'h-[calc(100%-5px)] mb-px bg-[#1a1a1a] border-[#303030] text-gray-400 hover:text-white hover:bg-[#272727] disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:bg-[#1a1a1a]'}`}
+            className={`relative isolate flex items-center justify-center gap-1 shrink-0 text-[11px] leading-none whitespace-nowrap transition-colors cursor-pointer disabled:cursor-default ${compact ? 'w-8' : 'px-3'} before:absolute before:inset-0 before:-z-10 before:rounded-t-md before:border before:border-b-0 before:origin-bottom before:[transform:perspective(14px)_rotateX(5deg)] before:transition-colors ${tab.active
+                ? 'z-10 h-[calc(100%-4px)] before:bg-[var(--k-bg)] before:border-[var(--k-border-404040)] text-white font-semibold before:shadow-[inset_0_-2px_0_var(--k-accent)]'
+                : 'h-[calc(100%-5px)] mb-px before:bg-[var(--k-bg-1a1a1a)] before:border-[var(--k-border-303030)] text-gray-400 hover:text-white hover:before:bg-[var(--k-hover-bg-272727)] disabled:opacity-40 disabled:hover:text-gray-400 disabled:hover:before:bg-[var(--k-bg-1a1a1a)]'}`}
         >
             {tab.icon}
             {!compact && <span>{tab.label}</span>}
@@ -88,7 +93,7 @@ function BinderTab({ tab, compact, locked = false }: { tab: TitleBarTab; compact
  * Dragging and double-clicking to maximize come from `data-tauri-drag-region`: it works on the element that carries
  * it, so everything that isn't a button either has it or ignores the pointer.
  */
-export function TitleBar({ history, workspaceButton, leftTools, workspaceName, toolbar, tabs }: Props) {
+export function TitleBar({ history, workspaceButton, leftTools, workspaceName, toolbar, tabs, pins }: Props) {
     const [maximized, setMaximized] = useState(false);
     const [showWhatsNew, setShowWhatsNew] = useState(false);
     // The bar sits above the dialogs so the window can still be moved, minimized and closed, not so the page under an
@@ -300,10 +305,11 @@ export function TitleBar({ history, workspaceButton, leftTools, workspaceName, t
                     <div ref={leftRef} className="flex items-center w-max">{backForward}</div>
                 </div>
                 <div data-tauri-drag-region className={`flex items-center ml-3 shrink-0 ${dim}`}>{brand(squeeze < 3)}</div>
-                {workspaceButton && <span data-workspace-switch className={`flex items-center ml-3 shrink-0 ${dim}`}>{workspaceButton(!!workspaceName && squeeze < 2)}</span>}
+                {/* Sat on the bottom like a closed tab (a pixel above the line), so its top lines up with theirs. */}
+                {workspaceButton && <span data-workspace-switch className={`flex items-end pb-px ml-3 shrink-0 ${dim}`}>{workspaceButton(!!workspaceName && squeeze < 2)}</span>}
                 {/* The tabs, then the rest of the row, which still drags the window. Above the bottom line (z-10), so
                     the open tab covers it; the others stop a pixel short and leave it showing under them. */}
-                <nav data-tauri-drag-region aria-label="Sections" className={`relative z-10 flex items-end gap-0.5 ml-3 flex-1 min-w-0 overflow-hidden ${dim}`}>
+                <nav data-tauri-drag-region aria-label="Sections" className={`relative z-10 flex items-end gap-0.5 ${workspaceButton ? 'ml-1.5' : 'ml-3'} flex-1 min-w-0 overflow-hidden ${dim}`}>
                     {tabs.map(tab => <BinderTab key={tab.key} tab={tab} compact={squeeze >= 1} locked={locked} />)}
                 </nav>
             </>
@@ -348,6 +354,7 @@ export function TitleBar({ history, workspaceButton, leftTools, workspaceName, t
                 {/* Updates and announcements, together. */}
                 <div className={`flex items-center gap-0.5 pr-1 ${dim}`}>
                     <UpdateButton />
+                    {pins?.(locked)}
                     <button
                         // Waits while another window is open, like the rest; with its own notes open, it still closes them.
                         onClick={showWhatsNew ? () => setShowWhatsNew(false) : () => { setShowWhatsNew(true); markWhatsNewRead(); setUnread(false); }}

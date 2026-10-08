@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
+import { Select } from '../ui/Select';
 
 // A collapsed-by-default group in the export screens: the title, a one-line summary of what's chosen
 // inside (so nothing is hidden), and the controls when opened. Keeps the screens short.
@@ -33,14 +34,16 @@ export function ChoiceField<T extends string>({ label, value, options, onChange,
     return (
         <label className="block space-y-1">
             <span className="block text-[11px] text-[#aaaaaa]">{label}</span>
-            <select
+            <Select
+                look="compact"
                 value={value}
                 disabled={disabled}
-                onChange={(e) => onChange(e.target.value as T)}
-                className="w-full bg-[#222222] border border-[#383838] rounded-md px-2 py-1.5 text-xs text-white cursor-pointer disabled:opacity-50 disabled:cursor-default"
+                onValueChange={v => onChange(v as T)}
+                wrapperClassName="w-full"
+                className="w-full"
             >
                 {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            </Select>
         </label>
     );
 }

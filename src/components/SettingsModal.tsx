@@ -17,6 +17,7 @@ import { ExportTab } from "./settings/ExportTab";
 import { SyncTab } from "./settings/SyncTab";
 import { useFlags } from "../hooks/useFlags";
 import type { SettingsTabId } from "../lib/settings-search";
+import { backdropProps } from '../lib/backdrop';
 
 interface Props {
     isOpen: boolean;
@@ -195,7 +196,7 @@ export function SettingsModal({
         <div
             data-no-escape
             className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center animate-in fade-in duration-200"
-            onClick={onClose}
+            {...backdropProps(onClose)}
         >
             <div
                 className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-2xl min-h-[450px] max-h-[85vh] flex flex-col overflow-hidden"

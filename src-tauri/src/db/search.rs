@@ -152,7 +152,8 @@ pub(crate) fn library_order_by(alias: &str, sort_field: Option<&str>, sort_order
 /// those two only ever ran `free_text` through build_fts_query, with no facet parsing at all.
 pub(crate) struct SearchFacets {
     pub handle: String,
-    /// The channel's display name (`channel_name:`, typed as `@@` in the Library), matched against the videos' author.
+    /// The channel's display name (`channel_name:`, typed as `@@` in the Library), matched against the videos' author,
+    /// and against the alias the reader gave the channel in its biography (Edit Bio).
     pub channel: String,
     pub video: String,
     pub tag: String,
@@ -284,7 +285,8 @@ pub fn search_library_videos(
         // an empty/wildcard query, which FTS5 rejects as a syntax error and would otherwise fail
         // the whole search.
         let where_sql = format!(
-            "(:handle = '' OR v.handle LIKE :handle_like) AND (:channel = '' OR v.author LIKE :channel_like)
+            "(:handle = '' OR v.handle LIKE :handle_like) AND (:channel = '' OR v.author LIKE :channel_like
+               OR EXISTS (SELECT 1 FROM Biographies b WHERE LOWER(b.handle) = LOWER(v.handle) AND b.alias != '' AND b.alias LIKE :channel_like))
                AND (:video = '' OR v.video_id LIKE :video_like)
                AND {tag_clause}
                AND {term_clause}
@@ -325,7 +327,8 @@ pub fn search_library_videos(
     } else {
         let where_sql = format!(
             "ftsVideos MATCH :fts
-               AND (:handle = '' OR v.handle LIKE :handle_like) AND (:channel = '' OR v.author LIKE :channel_like)
+               AND (:handle = '' OR v.handle LIKE :handle_like) AND (:channel = '' OR v.author LIKE :channel_like
+               OR EXISTS (SELECT 1 FROM Biographies b WHERE LOWER(b.handle) = LOWER(v.handle) AND b.alias != '' AND b.alias LIKE :channel_like))
                AND (:video = '' OR v.video_id LIKE :video_like)
                AND {tag_clause}
                AND {term_clause}
@@ -925,5 +928,14 @@ mod channel_name_facet_tests {
         // With the quoted form a space in the name works (the search bar quotes such values).
         let (_, total) = search_library_videos(&db, "channel_name:\"Beast Philanthropy\"", None, None, None, 50, 0).unwrap();
         assert_eq!(total, 1);
+        // The alias given in Edit Bio finds the channel too, alongside its display name.
+        rusqlite::Connection::open(&db).unwrap()
+            .execute("INSERT OR REPLACE INTO Biographies (handle, display_name, alias) VALUES ('@mrbeast6000', 'MrBeast', 'Jimmy Donaldson')", []).unwrap();
+        let (videos, total) = search_library_videos(&db, "channel_name:\"Jimmy Donaldson\"", None, None, None, 50, 0).unwrap();
+        assert_eq!((total, videos[0].id.as_str()), (1, "a"));
+        let (_, total) = search_library_videos(&db, "channel_name:MrBeast", None, None, None, 50, 0).unwrap();
+        assert_eq!(total, 1);
+        let channels = crate::db::get_search_suggestions(&db).unwrap().channels;
+        assert!(channels.iter().any(|c| c.name == "Jimmy Donaldson" && c.handle == "mrbeast6000"), "{channels:?}");
     }
 }

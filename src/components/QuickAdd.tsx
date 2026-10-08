@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { CalendarDays, Check, Plus, X } from 'lucide-react';
+import { TrayToday } from './TrayToday';
 import {
-    bulkSaveVideos, bulkUpdateVideoWdbs, checkVideoExists, decodeWdbs, getDisplaySettings, getSavedVideos, getVideoWdbs,
+    bulkSaveVideos, bulkUpdateVideoWdbs, checkVideoExists, decodeWdbs, getDisplaySettings, getSavedVideos, getSetting, getVideoWdbs,
     getWdbsRoots, getWorkspaceStatus, hideQuickAdd, readClipboardText, showMainWindow,
     type Video, type WdbsRoot,
 } from '../api';
@@ -10,6 +11,7 @@ import { BrandLogo } from './BrandLogo';
 import { extractYouTubeVideoId, isYouTubeListLink } from '../lib/youtube-url';
 import { applyTheme, loadCustomThemes, resolveTheme } from '../lib/themes';
 import { LifeLoader } from './LifeLoader';
+import { Select } from './ui/Select';
 
 const LAST_DRIVE_KEY = 'kinesisQuickAddDrive';
 
@@ -26,6 +28,13 @@ const readLastDrive = () => {
  * the video's details and transcript are fetched and stored (no AI summary).
  */
 export function QuickAdd() {
+    // Two tabs: Today (the Calendar's items for today, to check off) and Save (a link to the Library). It opens on
+    // Today, unless a new YouTube link is on the clipboard, which means Save is what it was opened for.
+    const [tab, setTab] = useState<'today' | 'save'>('today');
+    // Whether the workspace shows the Calendar at all; without it there's no Today tab.
+    const [hasCalendar, setHasCalendar] = useState(true);
+    // Changes each time the popup is shown, so Today reloads.
+    const [shown, setShown] = useState(0);
     const [url, setUrl] = useState('');
     const [status, setStatus] = useState<Status>({ kind: 'idle' });
     // undefined: not known yet; null: no workspace is open.
@@ -52,6 +61,8 @@ export function QuickAdd() {
         const state = await getWorkspaceStatus().catch(() => null);
         setWorkspace(state?.current?.name ?? null);
         if (!state?.current) return;
+        setShown(n => n + 1);
+        getSetting('showCalendar').then(v => setHasCalendar(!/^(false|0|no|off)$/i.test((v ?? '').trim()))).catch(() => setHasCalendar(true));
         getWdbsRoots().then(setRoots).catch(() => setRoots([]));
         getSavedVideos(false, { sortField: 'added', sortOrder: 'desc', limit: 5 }).then(r => setRecent(r.videos)).catch(() => setRecent([]));
         const clip = (await readClipboardText().catch(() => null))?.trim() ?? '';
@@ -61,13 +72,14 @@ export function QuickAdd() {
             lastClipboard.current = clip;
             setUrl(clip);
             setStatus({ kind: 'idle' });
+            setTab('save');
         }
     }, [syncTheme]);
 
     useEffect(() => {
         void refresh();
         // The popup is shown and hidden rather than recreated, so refresh whenever it is shown again.
-        const onFocus = () => { void refresh(); inputRef.current?.focus(); };
+        const onFocus = () => { void refresh().then(() => inputRef.current?.focus()); };
         window.addEventListener('focus', onFocus);
         return () => window.removeEventListener('focus', onFocus);
     }, [refresh]);
@@ -137,12 +149,28 @@ export function QuickAdd() {
 
     return (
         <div className="h-screen flex flex-col bg-[var(--k-bg,#0f0f0f)] text-white border border-[#303030] select-none">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#303030]">
-                <div className="min-w-0">
-                    <div className="text-sm font-bold">Save to {workspace ?? 'Library'}</div>
-                    <div className="text-[11px] text-[#888888]">Paste a YouTube video link</div>
+            <div className="flex items-center justify-between px-4 pt-3 border-b border-[#303030]">
+                {/* The same underline tabs as the sidebar's and Settings' switchers. */}
+                <div className="flex items-center gap-4 min-w-0">
+                    {([
+                        ...(hasCalendar && workspace ? [{ id: 'today' as const, label: 'Today', Icon: CalendarDays }] : []),
+                        { id: 'save' as const, label: 'Save', Icon: Plus },
+                    ]).map(({ id, label, Icon }) => {
+                        const active = tab === id || (id === 'save' && (!hasCalendar || !workspace));
+                        return (
+                            <button
+                                key={id}
+                                onClick={() => setTab(id)}
+                                className={`relative flex items-center gap-1.5 pb-2 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer ${active ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
+                            >
+                                <Icon className="w-3.5 h-3.5" />
+                                {label}
+                                {active && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
+                            </button>
+                        );
+                    })}
                 </div>
-                <button onClick={() => void hideQuickAdd()} title="Close" className="text-[#888888] hover:text-white cursor-pointer p-1 shrink-0">
+                <button onClick={() => void hideQuickAdd()} title="Close" className="text-[#888888] hover:text-white cursor-pointer p-1 mb-1.5 shrink-0">
                     <X className="w-4 h-4" />
                 </button>
             </div>
@@ -152,8 +180,13 @@ export function QuickAdd() {
                     <p className="text-sm text-[#aaaaaa]">No workspace is open. Open one in {BRAND.name} first, then save from here.</p>
                     {openMain}
                 </div>
+            ) : tab === 'today' && hasCalendar ? (
+                <div className="flex-1 min-h-0 flex flex-col p-4">
+                    <TrayToday reloadKey={shown} />
+                </div>
             ) : (
                 <div className="flex-1 min-h-0 flex flex-col gap-3 p-4">
+                    <div className="text-[11px] text-[#888888] -mb-1">Paste a YouTube video link to save it to {workspace ?? 'the Library'}</div>
                     <input
                         ref={inputRef}
                         autoFocus
@@ -168,16 +201,19 @@ export function QuickAdd() {
 
                     <div className="flex items-center gap-2">
                         <label htmlFor="quick-drive" className="text-[10px] font-bold uppercase tracking-wider text-[#888888] shrink-0">Drive</label>
-                        <select
+                        {/* h-8 and text-xs: the height and size of the Save button beside it. */}
+                        <Select
+                            look="compact"
                             id="quick-drive"
                             value={drive}
-                            onChange={e => setDrive(e.target.value)}
+                            onValueChange={setDrive}
                             disabled={busy}
-                            className="flex-1 min-w-0 h-8 px-2 bg-[#121212] border border-[#303030] hover:border-[#505050] rounded-lg text-xs text-white outline-none cursor-pointer"
+                            wrapperClassName="flex-1 min-w-0"
+                            className="w-full h-8 rounded-lg text-xs"
                         >
                             <option value="">Unsorted</option>
                             {roots.map(r => <option key={r.path} value={r.path}>{r.alias ? `${r.segment} (${r.alias})` : r.segment}</option>)}
-                        </select>
+                        </Select>
                         <button
                             onClick={() => void save()}
                             disabled={!videoId || busy}

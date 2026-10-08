@@ -19,6 +19,7 @@ export const FLAG_DEFAULTS = {
     showLibrary: true,
     showGlossary: true,
     showBiography: true,
+    showCalendar: true,
     showDrive: true,
     defaultView: 'search',
     // Library and search results
@@ -115,7 +116,7 @@ export const FLAG_DEFAULTS = {
 } as const;
 
 export type FlagKey = keyof typeof FLAG_DEFAULTS;
-export type ViewName = 'search' | 'library' | 'glossary' | 'biography';
+export type ViewName = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
 export type SettingsTabId = 'api' | 'db' | 'workspace' | 'display' | 'theme' | 'history' | 'plugins' | 'sync' | 'export';
 
 export type Flags = { [K in Exclude<FlagKey, 'defaultView'>]: boolean } & { defaultView: ViewName };
@@ -123,7 +124,7 @@ export type Flags = { [K in Exclude<FlagKey, 'defaultView'>]: boolean } & { defa
 /** Every flag key, for reading them all from the settings table in one call. */
 export const FLAG_KEYS = Object.keys(FLAG_DEFAULTS) as FlagKey[];
 
-const VIEW_ORDER: ViewName[] = ['search', 'library', 'glossary', 'biography'];
+const VIEW_ORDER: ViewName[] = ['search', 'library', 'glossary', 'biography', 'calendar'];
 
 // Every flag `workspaceReadOnly` forces off — everything that changes the workspace's saved
 // content. Also exactly what settings/PermissionsPanel.tsx lists as individually toggleable
@@ -192,6 +193,7 @@ export function applyRules(f: Flags): ResolvedFlags {
         library: f.showLibrary,
         glossary: f.showGlossary,
         biography: f.showBiography,
+        calendar: f.showCalendar,
     };
     const exportObsidianVisible = f.showExportObsidian;
     const exportSyncDataVisible = f.showExportSyncData && f.showTabSync;

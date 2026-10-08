@@ -9,6 +9,8 @@ import { ConfirmDialog } from '../ConfirmDialog';
 import { UnsavedChangesModal } from '../UnsavedChangesModal';
 import { useFlags } from '../../hooks/useFlags';
 import { useDragReorder, DropIndicator } from '../../hooks/useDragReorder';
+import { SecondaryButton } from '../ui/Button';
+import { backdropProps } from '../../lib/backdrop';
 
 // Keep in step with MAX_ATTACHMENTS and MAX_LINKS in src-tauri/src/db/attachments.rs (the backend enforces them).
 const MAX_ATTACHMENTS = 5;
@@ -445,7 +447,7 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
                 // the panel's contents.
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200"
-                    onClick={requestCloseLinkForm}
+                    {...backdropProps(requestCloseLinkForm)}
                     // preventDefault: App's own Esc handling (which "clicks" the top backdrop) then leaves it alone.
                     onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); requestCloseLinkForm(); } }}
                 >
@@ -491,14 +493,12 @@ export function AttachmentsPanel({ videoId, canEdit, onCountChange }: Props) {
                             )}
                         </div>
                         <div className="px-6 py-4 border-t border-[#303030] flex justify-end gap-3 bg-[#141414]">
-                            <button
-                                type="button"
+                            <SecondaryButton
                                 onClick={closeLinkForm}
                                 disabled={addingLink}
-                                className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors disabled:opacity-50"
                             >
                                 Cancel
-                            </button>
+                            </SecondaryButton>
                             <button
                                 type="submit"
                                 disabled={addingLink || !linkUrl.trim()}

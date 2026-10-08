@@ -4,6 +4,7 @@ import { saveGlossaryTerm } from '../api';
 import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { Modal } from './Modal';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
+import { SecondaryButton } from './ui/Button';
 
 interface Props {
     onClose: () => void;
@@ -50,13 +51,11 @@ export function AddQuickTagModal({ onClose, onCreated }: Props) {
             bodyClassName="p-6 space-y-6"
             footer={
                 <>
-                    <button
-                        type="button"
+                    <SecondaryButton
                         onClick={onClose}
-                        className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
                     >
                         Cancel
-                    </button>
+                    </SecondaryButton>
                     <button
                         type="submit"
                         className="px-6 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white transition-all text-sm font-bold cursor-pointer"

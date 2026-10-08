@@ -32,6 +32,7 @@ pub const LABELS: &[(&str, &str, usize)] = &[
     ("aliasDriveLink", "Link", MAX_ALIAS_LEN),
     ("aliasDriveSymlink", "Symlink", MAX_ALIAS_LEN),
     ("aliasSequence", "Sequence", MAX_ALIAS_LEN),
+    ("aliasCalendar", "Calendar", MAX_ALIAS_LEN),
 ];
 
 fn label_def(key: &str) -> Option<&'static (&'static str, &'static str, usize)> {

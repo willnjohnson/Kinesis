@@ -27,7 +27,7 @@ const permissionsFor = (sequenceLabel: string): Partial<Record<FlagKey, { label:
     allowDeletionLibrary: { label: "Deleting Videos", hint: "Remove a video from the Library." },
     allowSummarizeAll: { label: "Bulk Summarize", hint: "Generate an AI summary for every video in the Library at once." },
     editAttachments: { label: "Attachments & Links", hint: "Add or remove a video's attachments and web links." },
-    allowEditTermsAndTags: { label: "Terms & Tags", hint: "Add or remove a video's Terms and Tags." },
+    allowEditTermsAndTags: { label: "Terms & Tags", hint: "Add or remove a video's Terms and Tags. The Essential tags (Watch Later, Favorite...) stay open either way: they're each reader's own." },
     allowEditSummary: { label: "AI Summaries", hint: "Edit a video's AI-generated summary." },
     allowEditTranscript: { label: "Transcripts", hint: "Edit a video's transcript." },
     allowEditTranscriptOnNA: { label: "Cleared Transcripts", hint: "Edit a transcript that was cleared to N/A after summarizing." },

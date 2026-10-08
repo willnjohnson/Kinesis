@@ -1,13 +1,15 @@
 import type { Facet } from '../components/SearchBar';
 
 /** Which search bar a query belongs to: each mode knows its own facets. */
-export type SearchViewMode = 'search' | 'library' | 'glossary' | 'biography';
+export type SearchViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
 
 function facetNames(viewMode: SearchViewMode): string[] {
+    // The Calendar's (lib/calendar-filter.ts).
+    if (viewMode === 'calendar') return ['track', 'importance', 'status', 'kind'];
     return viewMode === 'glossary'
         ? ['term_search', 'definition_search']
         : viewMode === 'biography'
-            ? ['person_search', 'bio_search']
+            ? ['person_search', 'bio_search', 'drive']
             : ['tag_search', 'term_search', 'no_tags', 'video', 'handle', 'channel_name'];
 }
 
@@ -23,7 +25,8 @@ export function getLibraryFacets(q: string, viewMode: SearchViewMode): Facet[] {
     const facets: Facet[] = [];
     let m;
     while ((m = FACET_RE.exec(q)) !== null) {
-        facets.push({ type: m[1] as Facet['type'], value: "" });
+        // A Drive chip (the Biography's) carries its own path; the others take what's typed as their value.
+        facets.push({ type: m[1] as Facet['type'], value: m[1] === 'drive' ? (m[2] ?? m[3] ?? '') : "" });
     }
     return facets;
 }
@@ -32,6 +35,9 @@ export function getLibraryFacets(q: string, viewMode: SearchViewMode): Facet[] {
 export function getLibraryQuery(q: string, viewMode: SearchViewMode): string {
     if (!q) return '';
     const whitelist = facetNames(viewMode);
+    // The Biography's Drive chip: what follows its path is the typed text.
+    const drive = viewMode === 'biography' ? q.match(/^drive:\S*\s?(.*)$/) : null;
+    if (drive) return drive[1];
 
     // Check if q starts with a facet prefix and has exactly one colon
     const colonIndex = q.indexOf(':');

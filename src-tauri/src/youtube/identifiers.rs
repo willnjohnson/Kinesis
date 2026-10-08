@@ -94,6 +94,93 @@ pub(crate) fn extract_handle_from_text(text: &str) -> Option<String> {
     None
 }
 
+/// What a channel calls itself now: its @handle and name, by its channel ID (which never changes, unlike both of these).
+/// Asked of YouTube's own page-data endpoint (the one the app lists a channel's videos from), so no API key is needed.
+/// None when the answer doesn't say (no handle, an error) — the caller then leaves what it has alone.
+pub async fn fetch_channel_identity(channel_id: &str) -> Result<Option<(String, String)>, String> {
+    if !channel_id.starts_with("UC") || channel_id.len() != 24 {
+        return Ok(None);
+    }
+    let data = super::YouTubeClient::new(super::ClientType::Web).browse(Some(channel_id.to_string()), None).await?;
+    Ok(parse_channel_identity(&data, channel_id))
+}
+
+/// The handle and name in a channel's browse response (see fetch_channel_identity): its `channelMetadataRenderer`'s
+/// title, and the handle from its vanity URL, else from the page header's link to itself. The response must be this
+/// channel's own (its externalId matches), so some other page is never taken for a rename.
+pub(crate) fn parse_channel_identity(data: &serde_json::Value, channel_id: &str) -> Option<(String, String)> {
+    let meta = &data["metadata"]["channelMetadataRenderer"];
+    if meta["externalId"].as_str() != Some(channel_id) {
+        return None;
+    }
+    let name = meta["title"].as_str()?.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let from_vanity = meta["vanityChannelUrl"].as_str().and_then(|u| u.split("/@").nth(1)).map(|h| h.split(['/', '?']).next().unwrap_or("").to_string());
+    let handle = from_vanity.filter(|h| !h.is_empty()).or_else(|| {
+        // The header links to the channel by its handle ("canonicalBaseUrl":"/@IHMC").
+        let header = data["header"].to_string();
+        let re = regex::Regex::new(r#""canonicalBaseUrl":"/@([^"/?]+)""#).unwrap();
+        re.captures(&header).map(|c| c[1].to_string())
+    })?;
+    // A handle with letters outside ASCII can come percent-encoded.
+    let handle = urlencoding::decode(&handle).map(|h| h.into_owned()).unwrap_or(handle);
+    Some((format!("@{handle}"), name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const ID: &str = "UCabcdefghijklmnopqrstuv";
+
+    #[test]
+    fn reads_handle_and_name_from_the_channel_metadata() {
+        let data = json!({ "metadata": { "channelMetadataRenderer": {
+            "externalId": ID, "title": "TheIHMC & Friends", "vanityChannelUrl": "http://www.youtube.com/@IHMC"
+        } } });
+        assert_eq!(parse_channel_identity(&data, ID), Some(("@IHMC".into(), "TheIHMC & Friends".into())));
+        // No vanity URL: the header's link to the channel.
+        let data = json!({
+            "metadata": { "channelMetadataRenderer": { "externalId": ID, "title": "Name" } },
+            "header": { "pageHeaderRenderer": { "x": { "canonicalBaseUrl": "/@New%C3%A9" } } }
+        });
+        assert_eq!(parse_channel_identity(&data, ID), Some(("@Newé".into(), "Name".into())));
+    }
+
+    /// Against YouTube itself (needs the network, so not in the normal run): `cargo test --lib live_channel -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn live_channel_identity() {
+        let found = fetch_channel_identity("UC_x5XG1OV2P6uZZ5FSM9Ttw").await.unwrap();
+        println!("live: {found:?}");
+        assert!(found.is_some_and(|(handle, name)| handle.starts_with('@') && !name.is_empty()));
+    }
+
+    /// What the player endpoint says about a removed video and a normal one (needs the network; prints only).
+    #[tokio::test]
+    #[ignore]
+    async fn live_player_status() {
+        for id in ["Q9Th3wDpr_g", "dQw4w9WgXcQ", "aaaaaaaaaaa"] {
+            let data = super::super::YouTubeClient::new(super::super::ClientType::Web).player(id).await.unwrap();
+            println!(
+                "live {id}: status={} reason={} title={}",
+                data["playabilityStatus"]["status"], data["playabilityStatus"]["reason"], data["videoDetails"]["title"]
+            );
+        }
+    }
+
+    #[test]
+    fn another_channel_or_no_handle_says_nothing() {
+        let other = json!({ "metadata": { "channelMetadataRenderer": { "externalId": "UCzzzzzzzzzzzzzzzzzzzzzz", "title": "X", "vanityChannelUrl": "http://www.youtube.com/@X" } } });
+        assert_eq!(parse_channel_identity(&other, ID), None);
+        let no_handle = json!({ "metadata": { "channelMetadataRenderer": { "externalId": ID, "title": "X" } } });
+        assert_eq!(parse_channel_identity(&no_handle, ID), None);
+    }
+}
+
 pub async fn extract_handle_from_channel_id(channel_id: &str) -> Result<Option<String>, String> {
     if !channel_id.starts_with("UC") || channel_id.len() != 24 {
         return Ok(None);

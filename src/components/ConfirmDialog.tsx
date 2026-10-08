@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Modal } from "./Modal";
+import { SecondaryButton } from './ui/Button';
 
 interface ConfirmDialogProps {
     /** Plain text, or markup to bold parts of it. Line breaks in it are kept. */
@@ -20,12 +21,11 @@ export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = "De
             layer="top"
             footer={
                 <>
-                    <button
+                    <SecondaryButton
                         onClick={onCancel}
-                        className="px-4 py-2 rounded-lg bg-[#222222] border border-[#383838] hover:bg-[#3f3f3f] cursor-pointer text-white text-sm font-semibold transition-colors"
                     >
                         Cancel
-                    </button>
+                    </SecondaryButton>
                     <button
                         onClick={onConfirm}
                         className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 cursor-pointer text-white text-sm font-semibold transition-colors"

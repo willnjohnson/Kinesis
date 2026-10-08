@@ -5,6 +5,7 @@ import { decodeWdbs, encodeWdbs, getVideoSequences, type DriveSequenceState } fr
 import { driveSegmentLabel } from '../../lib/utils';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { SequenceModal } from './SequenceModal';
+import { backdropProps } from '../../lib/backdrop';
 
 interface Props {
     videoId: string;
@@ -261,7 +262,7 @@ export function SequenceDock({
             {editorOpen && driveEditor && createPortal(
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200"
-                    onClick={() => setEditorOpen(false)}
+                    {...backdropProps(() => setEditorOpen(false))}
                 >
                     <div
                         onClick={e => e.stopPropagation()}

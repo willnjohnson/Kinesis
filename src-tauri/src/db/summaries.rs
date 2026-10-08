@@ -70,13 +70,24 @@ pub(crate) fn append_channel_info_footer(conn: &Connection, video_id: &str) -> R
 /// Rewrites every summary's footer from what it says now: the one-off for summaries saved before the creator's name
 /// linked to their biography (What's New, v0.5.1). Only the footer changes; returns how many summaries did.
 /// `progress` hears (looked at, out of) as it goes, every few summaries and once at the end.
-pub fn relink_channel_info_footers(db_path: &str, mut progress: impl FnMut(usize, usize)) -> Result<usize> {
+pub fn relink_channel_info_footers(db_path: &str, progress: impl FnMut(usize, usize)) -> Result<usize> {
+    relink_footers(db_path, None, progress)
+}
+
+/// The same, for one channel's videos only: after its biography's name or handle changed (db/biography.rs).
+pub fn relink_channel_info_footers_of(db_path: &str, handle: &str) -> Result<usize> {
+    relink_footers(db_path, Some(handle), |_, _| {})
+}
+
+fn relink_footers(db_path: &str, handle: Option<&str>, mut progress: impl FnMut(usize, usize)) -> Result<usize> {
     let mut conn = Connection::open(db_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
     let tx = conn.transaction()?;
     let rows: Vec<(String, String)> = {
-        let mut stmt = tx.prepare(&format!("SELECT video_id, summary FROM Videos WHERE INSTR(summary, '{CHANNEL_INFO}') > 0"))?;
-        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+        let mut stmt = tx.prepare(&format!(
+            "SELECT video_id, summary FROM Videos WHERE INSTR(summary, '{CHANNEL_INFO}') > 0 AND (?1 IS NULL OR LOWER(handle) = LOWER(?1))"
+        ))?;
+        let rows = stmt.query_map(params![handle], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
         rows
     };
     let total = rows.len();

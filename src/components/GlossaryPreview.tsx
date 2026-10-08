@@ -89,7 +89,7 @@ export function SnippetCard({ anchor, title, markdown, onOpen, side = 'auto', co
 
 /** What a preview card shows: a title, the start of some markdown text under it, and, when it can be copied, the real
  *  markdown behind that preview (the full entry, not cut short). */
-interface PreviewContent {
+export interface PreviewContent {
     title: string;
     markdown: string;
     copyText?: string;
@@ -181,6 +181,13 @@ function usePreviewCard(load: () => Promise<PreviewContent | null>, { side, zInd
     );
 
     return { handlers, card };
+}
+
+/** A hover preview of any text: `load` gives its title and markdown (null for nothing to show, so no card opens). The same
+ *  card and timing as the glossary and biography previews below; used by the Calendar for a video's summary and a task's
+ *  description. */
+export function useTextPreview(load: () => Promise<PreviewContent | null>, options?: PreviewOptions) {
+    return usePreviewCard(load, options);
 }
 
 /** The hover preview for an in-app glossary link (in a transcript, a summary, another entry): the term and the start of

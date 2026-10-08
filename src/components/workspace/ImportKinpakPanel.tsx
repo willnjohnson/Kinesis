@@ -15,7 +15,7 @@ interface Props {
 // What the pack holds, in the words the rest of the app uses. Kinds not listed aren't shown.
 const COUNT_LABELS: [string, string][] = [
     ["video", "videos"], ["wdbs", "categories"], ["glossary", "glossary terms"], ["biography", "bios"],
-    ["custom_prompt", "custom prompts"], ["video_note", "notes"], ["attachment", "attachments"], ["history", "searches"],
+    ["custom_prompt", "custom prompts"], ["video_note", "notes"], ["attachment", "attachments"], ["calendar_track", "calendar tracks"], ["history", "searches"],
 ];
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;
@@ -67,8 +67,8 @@ export function ImportKinpakPanel({ defaultLocation, onBack }: Props) {
         setError(null);
         try {
             const done = await importKinpak(file, name, true, merging ? null : location);
-            // Anything that couldn't be imported is worth reading before the app reloads into the workspace.
-            if (done.summary.error_count > 0) {
+            // Anything that couldn't be imported, or was left out on purpose, is worth reading before the app reloads into the workspace.
+            if (done.summary.error_count > 0 || (done.summary.notices?.length ?? 0) > 0) {
                 setResult(done);
                 setBusy(false);
             } else {
@@ -87,14 +87,27 @@ export function ImportKinpakPanel({ defaultLocation, onBack }: Props) {
     if (result) {
         return (
             <div className="space-y-4">
-                <h3 className="text-base font-bold">{result.merged ? "Added, with some problems" : "Imported, with some problems"}</h3>
+                <h3 className="text-base font-bold">
+                    {result.summary.error_count > 0
+                        ? (result.merged ? "Added, with some problems" : "Imported, with some problems")
+                        : (result.merged ? "Added" : "Imported")}
+                </h3>
                 <div className="p-3 bg-green-900/10 border border-green-500/30 rounded-lg text-green-400 text-xs leading-relaxed">
                     {result.merged ? `Added to "${result.workspace.name}": ` : "The workspace was created: "}
                     {result.summary.imported.toLocaleString()} items came in.
-                    <div className="mt-2 text-orange-400">
-                        {result.summary.error_count} couldn't be imported:
-                        <ul className="list-disc ml-4 mt-1 break-words">{result.summary.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-                    </div>
+                    {result.summary.error_count > 0 && (
+                        <div className="mt-2 text-orange-400">
+                            {result.summary.error_count} couldn't be imported:
+                            <ul className="list-disc ml-4 mt-1 break-words">{result.summary.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                        </div>
+                    )}
+                    {/* Left out on purpose: the workspace's own things are never replaced. */}
+                    {(result.summary.notices?.length ?? 0) > 0 && (
+                        <div className="mt-2 text-[#aaaaaa]">
+                            Left as they were:
+                            <ul className="list-disc ml-4 mt-1 break-words">{result.summary.notices.map((n, i) => <li key={i}>{n}</li>)}</ul>
+                        </div>
+                    )}
                 </div>
                 <button onClick={() => reloadApp(name)} className={`w-full ${primaryBtn}`}>Open the workspace</button>
             </div>

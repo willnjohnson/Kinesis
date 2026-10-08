@@ -87,8 +87,11 @@ export function WorkspaceSwitcher({ variant, name, showName = false }: Props) {
         }
     };
 
+    // The title bar's: a rhomboid sunk into the bar, leaning like the section tabs' slanted sides. The shape is a skewed
+    // layer behind the label (theme variables there, as index.css's hex mappings don't reach a ::before), so the text
+    // stays upright; the padding keeps it clear of the slanted ends.
     const buttonClass = variant === "icon"
-        ? `flex items-center justify-center h-[22px] rounded text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer ${showName && name ? "gap-1 pl-2 pr-1 text-[13px] leading-none" : "w-[22px]"}`
+        ? `relative isolate flex items-center justify-center h-[calc(var(--k-titlebar-height)-5px)] text-gray-400 hover:text-white transition-colors cursor-pointer before:absolute before:inset-0 before:-z-10 before:-skew-x-[20deg] before:rounded-[3px] before:border before:border-[var(--k-border-303030)] before:bg-[var(--k-titlebar-sunken)] before:transition-colors hover:before:bg-[var(--k-bg-1a1a1a)] ${showName && name ? "gap-1 pl-3 pr-2 text-[13px] leading-none" : "w-[26px]"}`
         : variant === "name"
         ? "flex items-center gap-1 text-xs leading-4 text-gray-500 hover:text-white transition-colors cursor-pointer"
         : "w-full h-6 flex items-center justify-center border-t border-[#272727] text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer";

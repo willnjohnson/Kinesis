@@ -3,6 +3,7 @@ import { BRAND } from "../../branding";
 import { useEffect, useState } from "react";
 import { Toggle } from "./Toggle";
 import { getCloseToTray, setCloseToTray, traySupported, type DisplaySettings } from "../../api";
+import { Select } from '../ui/Select';
 
 const RESOLUTIONS = [
     "800x600", "1024x768", "1280x720",
@@ -53,10 +54,10 @@ export function DisplayTab({ settings, showSortControlButtons, currentVideoListM
                             <span className="text-sm font-semibold text-white block">Window Resolution</span>
                             <span className="text-xs text-[#aaaaaa]">Choose your preferred window dimensions</span>
                         </div>
-                        <select
+                        <Select
+                            look="setting"
                             value={settings.resolution}
-                            onChange={(e) => onUpdate({ resolution: e.target.value })}
-                            className="bg-[#121212] border border-[#303030] text-sm text-white rounded-lg px-4 py-2 outline-none cursor-pointer hover:bg-[#202020] transition-colors"
+                            onValueChange={resolution => onUpdate({ resolution })}
                         >
                             {/* A size the user dragged the window to isn't a preset. It's kept out of the list (hidden),
                                 but the box still needs an option for the current value or it would show the first preset. */}
@@ -66,7 +67,7 @@ export function DisplayTab({ settings, showSortControlButtons, currentVideoListM
                             {RESOLUTIONS.map(res => (
                                 <option key={res} value={res}>{res}</option>
                             ))}
-                        </select>
+                        </Select>
                     </div>
 
                     {/* Fullscreen */}

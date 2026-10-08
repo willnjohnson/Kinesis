@@ -1,13 +1,16 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
     getTranscript, getVideoHandle, getDisplaySettings, setDisplaySettings,
-    getApiKey, getKeyStatus, getSetting, openExternalUrl, bulkUpdateVideoWdbs, addToDriveSequence,
+    getApiKey, getKeyStatus, getSetting, openExternalUrl,
     type Video, type BiographyEntry, saveTags, getBiography,
-    getVideoById, getGlossaryTerms, getWdbsTree, decodeWdbs, getSequenceSummary, type WdbsNode,
+    getVideoById, getGlossaryTerms, getWdbsTree, decodeWdbs, getSequenceSummary, type WdbsNode, type GlossaryTerm,
     UNSORTED_WDBS_FILTER, TRASH_RESTORED_EVENT, TRASH_CHANGED_EVENT, type TrashKind,
 } from "./api";
 import { useTrash } from "./hooks/useTrash";
 import { useNavHistory } from "./hooks/useNavHistory";
+import { useGraphReturn } from "./hooks/useGraphReturn";
+import { usePins } from "./hooks/usePins";
+import { useBulkAssign } from "./hooks/useBulkAssign";
 import { TrashModal } from "./components/TrashModal";
 import { DriveManagerModal } from "./components/drive-manager/DriveManagerModal";
 import { driveSegmentLabel, formatBytes, parseTagList } from "./lib/utils";
@@ -25,6 +28,10 @@ import { VideoList, type SortField, type SortOrder, type FilterType } from "./co
 import { Sidebar, type SidebarHandle } from "./components/Sidebar";
 import { BRAND } from "./branding";
 import { WorkspaceSwitcher } from "./components/workspace/WorkspaceSwitcher";
+import { AboutKinesisModal } from "./components/workspace/AboutKinesisModal";
+import { PinsMenu } from "./components/PinsMenu";
+import { GraphModal } from "./components/GraphModal";
+import { FlashcardsModal } from "./components/FlashcardsModal";
 import { BrandLogo } from "./components/BrandLogo";
 import { afterDialogs } from "./lib/dialogs";
 import { recordRecent } from "./lib/recents";
@@ -35,10 +42,11 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { SettingsModal, type SettingsTarget } from "./components/SettingsModal";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { SETTINGS_ENTRIES, TAB_LABELS, type SettingsTabId } from "./lib/settings-search";
-import { Settings, ChevronUp, LayoutGrid, List, ChevronDown, Sparkles, Search, BookMarked, BookA, UserSearch, HardDrive, MousePointerClick, FolderTree, Key, Layers, Monitor, Palette, History, Cpu, RefreshCw, FileDown, Trash2, ArrowLeft, ArrowRight } from "lucide-react";
+import { Settings, ChevronUp, LayoutGrid, List, ChevronDown, Sparkles, Search, BookMarked, BookA, UserSearch, CalendarDays, ListChecks, HardDrive, MousePointerClick, FolderTree, Key, Layers, Monitor, Palette, History, Cpu, RefreshCw, FileDown, Trash2, ArrowLeft, ArrowRight, Info, Network } from "lucide-react";
 import { GlossaryView } from "./components/GlossaryView";
 import { BiographyView } from "./components/BiographyView";
 import { BiographyModal } from "./components/BiographyView";
+import { CalendarView } from "./components/CalendarView";
 import { WdbsTreePanel } from "./components/WdbsTreePanel";
 import { useWdbsTree } from "./hooks/useWdbsTree";
 import { BulkAssignMenu } from "./components/BulkAssignMenu";
@@ -52,7 +60,7 @@ import { getLibraryFacets, getLibraryQuery } from "./lib/search-facets";
 import { setExitGuard } from "./lib/exit-guard";
 import { announceNavigation, useCloseOnNavigate } from "./lib/navigation";
 
-type ViewMode = 'search' | 'library' | 'glossary' | 'biography';
+type ViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
 
 
 
@@ -78,20 +86,29 @@ function App() {
     // below). Used to live as its own strip under the tree in WdbsTreePanel; moved here so it has
     // one home instead of two.
     const [driveFilterAlias, setDriveFilterAlias] = useState<string | null>(null);
-    // Bulk Assign Mode: click a card to select it (no checkboxes), right-click to assign the
-    // whole selection to a Warp Drive category at once — see BulkAssignMenu.tsx. Only offered
-    // while the Drive panel is open, since assigning implies picking a destination category.
-    const [bulkAssignMode, setBulkAssignMode] = useState(false);
-    const [bulkSelectedIds, setBulkSelectedIds] = useState<Set<string>>(new Set());
-    const [bulkAssignMenu, setBulkAssignMenu] = useState<{ x: number; y: number; videoIds: string[] } | null>(null);
-    const [bulkAssigning, setBulkAssigning] = useState(false);
-    const [bulkAssignError, setBulkAssignError] = useState<string | null>(null);
     const [glossarySearchQuery, setGlossarySearchQuery] = useState("term_search:");
     // Counts "Manage tags in <Glossary>" requests (the sidebar's tag dropdown): above 0, the Glossary opens on its tags
     // list. Back to 0 once the app leaves the Glossary, so going there any other way opens it as usual.
     const [glossaryTagsRequest, setGlossaryTagsRequest] = useState(0);
     useEffect(() => { if (viewMode !== 'glossary') setGlossaryTagsRequest(0); }, [viewMode]);
     const [biographySearchQuery, setBiographySearchQuery] = useState("person_search:");
+    // The Calendar's search bar filters its tracks and items: plain words or one facet (see lib/calendar-filter.ts).
+    const [calendarSearchQuery, setCalendarSearchQuery] = useState("");
+    // A track to open in the Calendar's panel (a sidebar track chip's name); `at` makes the same track again a new request.
+    const [calendarFocus, setCalendarFocus] = useState<{ id: number; at: number } | null>(null);
+    // Only for that trip to the Calendar: a later visit opens as it otherwise would.
+    // A day to show in the Calendar's week (the pin menu's "due today" or "to do tomorrow"); `at` as above.
+    const [calendarDate, setCalendarDate] = useState<{ date: string; at: number } | null>(null);
+    useEffect(() => { if (viewMode !== 'calendar') { setCalendarFocus(null); setCalendarDate(null); } }, [viewMode]);
+    // Whether the Calendar's tracks panel is open (its button sits beside the search bar, like the Drive panel's). Remembered
+    // in this browser, as a per-viewer convenience.
+    const [showTracksPanel, setShowTracksPanel] = useState(() => {
+        try { return localStorage.getItem('kinesis.calendar.panelOpen') !== 'false'; } catch { return true; }
+    });
+    const setTracksPanel = useCallback((open: boolean) => {
+        setShowTracksPanel(open);
+        try { localStorage.setItem('kinesis.calendar.panelOpen', String(open)); } catch { /* just not remembered */ }
+    }, []);
     const [notification, setNotification] = useState<NotificationContent | null>(null);
     // External link pending confirmation: the dialog asks before leaving Kinesis.
     const [pendingExternal, setPendingExternal] = useState<{ url: string; title: string } | null>(null);
@@ -158,6 +175,34 @@ function App() {
     // A term or biography opened over the page closes when the app goes somewhere else (lib/navigation.ts).
     useCloseOnNavigate(linkedTerm !== null, () => setLinkedTerm(null));
     useCloseOnNavigate(selectedBiography !== null, () => setSelectedBiography(null));
+    // The graph view (Ctrl+K's "Open Graph View"), and getting back to it from what it opened (hooks/useGraphReturn.ts).
+    // It's a place in Back/Forward (see navPlace).
+    const { showGraph, setShowGraph, graphResume, setGraphResume, graphOpening, fromGraphVideo, closedFromGraph } =
+        useGraphReturn({ sidebarOpen, selectedVideo, linkedTerm, selectedBiography, viewMode });
+    // Flashcards (the Glossary's). Something opened from a card (a video, a term's or person's window) puts it aside, and
+    // once that's closed again (and whatever was opened from it in turn) Flashcards comes back where it was left. Going
+    // to another section lets it go. Not a place in Back/Forward.
+    const [flashcards, setFlashcards] = useState<{ entries: GlossaryTerm[]; deckName: string } | null>(null);
+    const [flashcardsResume, setFlashcardsResume] = useState(false);
+    const [flashcardsAside, setFlashcardsAside] = useState(false);
+    const openFlashcards = (entries: GlossaryTerm[], deckName: string) => {
+        setFlashcardsResume(false);
+        setFlashcardsAside(false);
+        setFlashcards({ entries, deckName });
+    };
+    const openedOverFlashcards = Boolean((sidebarOpen && selectedVideo) || linkedTerm || selectedBiography);
+    useEffect(() => {
+        if (!flashcards) return;
+        if (openedOverFlashcards) setFlashcardsAside(true);
+        else if (flashcardsAside) { setFlashcardsResume(true); setFlashcardsAside(false); }
+    }, [openedOverFlashcards]); // eslint-disable-line react-hooks/exhaustive-deps
+    const flashcardsView = useRef(viewMode);
+    useEffect(() => {
+        if (viewMode === flashcardsView.current) return;
+        flashcardsView.current = viewMode;
+        setFlashcards(null);
+        setFlashcardsAside(false);
+    }, [viewMode]);
 
     // ── Hooks ────────────────────────────────────────────────────────────────
     const search = useSearch(hasApiKey);
@@ -179,6 +224,21 @@ function App() {
     const displayedVideos = useMemo(() => {
         return viewMode === 'library' ? library.libraryVideos : search.filteredVideos;
     }, [viewMode, library.libraryVideos, search.filteredVideos]);
+
+    // Bulk Assign Mode (hooks/useBulkAssign.ts): click a card to select it (no checkboxes), right-click to assign the
+    // whole selection to a Drive at once (see BulkAssignMenu.tsx). Only offered while the Drive panel is open, since
+    // assigning implies picking a destination.
+    const {
+        bulkAssignMode, setBulkAssignMode, bulkSelectedIds, setBulkSelectedIds, bulkAssignMenu, setBulkAssignMenu,
+        bulkAssigning, bulkAssignError, setBulkAssignError, exitBulk,
+        handleToggleBulkSelect, handleBulkSelectRange, handleBulkContextMenu, handleBulkAssign, handleBulkAddToSequence,
+    } = useBulkAssign({
+        displayedVideos,
+        library,
+        sequenceName: labels.aliasSequence,
+        notify: setNotification,
+        onFiled: () => setDriveVersion(v => v + 1),
+    });
 
     // ── Init ─────────────────────────────────────────────────────────────────
     useEffect(() => {
@@ -264,9 +324,7 @@ function App() {
         if (!canBulkAssign) {
             // Bulk Assign Mode's toggle button disappears when editing is disabled: exit the mode
             // too so the grid doesn't stay stuck in bulk-select with no visible way out.
-            setBulkAssignMode(false);
-            setBulkSelectedIds(new Set());
-            setBulkAssignMenu(null);
+            exitBulk();
         }
     }, [canBulkAssign]);
 
@@ -470,16 +528,12 @@ function App() {
     }, [viewMode, library, search, handleSelectVideo]);
 
     const handleLibrarySearch = useCallback((query: string) => {
-        setBulkAssignMode(false);
-        setBulkSelectedIds(new Set());
-        setBulkAssignMenu(null);
+        exitBulk();
         library.setLibrarySearch(query);
     }, [library.setLibrarySearch]);
 
     const handleLibraryFilterChange = useCallback((filter: FilterType) => {
-        setBulkAssignMode(false);
-        setBulkSelectedIds(new Set());
-        setBulkAssignMenu(null);
+        exitBulk();
         library.setFilterKind(filter);
     }, [library.setFilterKind]);
 
@@ -507,9 +561,7 @@ function App() {
         setShowDrivePanel(false);
         library.setWdbsFilter(null);
         setDriveFilterLabel('');
-        setBulkAssignMode(false);
-        setBulkSelectedIds(new Set());
-        setBulkAssignMenu(null);
+        exitBulk();
         setSidebarOpen(false);
         setViewMode('library');
         library.setLibrarySearch(query);
@@ -521,9 +573,7 @@ function App() {
     const goToLibraryDrive = useCallback((storagePath: string, label: string, alias: string | null = null) => {
         void recordRecent({ kind: 'drive', key: storagePath, label: alias ?? label, sub: label, alias });
         announceNavigation();
-        setBulkAssignMode(false);
-        setBulkSelectedIds(new Set());
-        setBulkAssignMenu(null);
+        exitBulk();
         setSidebarOpen(false);
         setViewMode('library');
         library.setLibrarySearch('');
@@ -553,6 +603,22 @@ function App() {
     // 'tag' searches Quick Tags (#), 'term' searches glossary terms (^), 'library' is plain text.
     const handleSearchInLibrary = (term: string, mode: 'tag' | 'term' | 'library') => {
         goToLibrarySearch(mode === 'tag' ? `tag_search:${term}` : mode === 'term' ? `term_search:${term}` : term);
+    };
+
+    // Pinned videos: the sidebar's pin button and the title bar's pin menu (components/PinsMenu.tsx).
+    const { pinnedIds, refreshPins, togglePin, setPin } = usePins(selectedVideo?.id ?? null, setNotification);
+    // A video picked in the pin menu opens in the sidebar over whatever view is open.
+    const openMenuVideo = async (videoId: string) => {
+        const video = await getVideoById(videoId).catch(() => null);
+        if (!video) {
+            setNotification({ message: 'That video is no longer in the library.', type: 'info' });
+            refreshPins();
+            return;
+        }
+        setLinkedTerm(null);
+        setSelectedBiography(null);
+        setPlayerStart(null);
+        await handleSelectVideo(video);
     };
 
     const handleViewBiography = useCallback(async (channelHandle: string) => {
@@ -711,15 +777,20 @@ function App() {
         showDrivePanel,
         glossaryQuery: glossarySearchQuery,
         biographyQuery: biographySearchQuery,
+        calendarQuery: calendarSearchQuery,
         video: sidebarOpen ? selectedVideo : null,
+        graph: showGraph,
     };
     const nav = useNavHistory(
         navPlace,
-        p => `${p.view}|${p.wdbs ?? ''}|${p.video?.id ?? ''}`,
+        // The graph view is a place of its own (so Back from a video opened in it comes back to it). While it's open, a
+        // video opening under it doesn't make a new place: it closes as the video opens, and that's the next place.
+        p => (p.graph ? `${p.view}|graph` : `${p.view}|${p.wdbs ?? ''}|${p.video?.id ?? ''}`),
         p => {
-            setBulkAssignMode(false);
-            setBulkSelectedIds(new Set());
-            setBulkAssignMenu(null);
+            // Back to the graph: as it was left (its layout, zoom and filters), not laid out afresh.
+            setGraphResume(p.graph);
+            setShowGraph(p.graph);
+            exitBulk();
             setViewMode(p.view);
             // The Drive first: choosing one (or none) resets the Library's search text, so that goes in after.
             library.setWdbsFilter(p.wdbs);
@@ -729,7 +800,9 @@ function App() {
             setShowDrivePanel(p.showDrivePanel);
             setGlossarySearchQuery(p.glossaryQuery);
             setBiographySearchQuery(p.biographyQuery);
-            if (p.video) {
+            setCalendarSearchQuery(p.calendarQuery);
+            // In the graph's place, no sidebar (the video opened from it is the next place).
+            if (p.video && !p.graph) {
                 void handleSelectVideo(p.video);
             } else {
                 setSidebarOpen(false);
@@ -800,6 +873,8 @@ function App() {
     // The Trash window is App's, so the status bar chips and the command palette both open it. Nothing in it is
     // saved anywhere: it's emptied when the app closes.
     const [trashOpen, setTrashOpen] = useState<TrashKind | null>(null);
+    // The About walkthrough (Ctrl+K's "About Kinesis"; the Workspaces screen has its own button for it).
+    const [showAbout, setShowAbout] = useState(false);
     // The Manage Drive window (the button beside Bulk Assign Mode under the Drive panel).
     const [manageDriveOpen, setManageDriveOpen] = useState(false);
     const videoTrash = useTrash('video');
@@ -831,6 +906,9 @@ function App() {
         if (flags.viewVisible.library) cmds.push({ id: 'view-library', label: `Go to ${labels.aliasLibrary}`, icon: BookMarked, keywords: 'library saved videos', run: () => setViewMode('library') });
         if (flags.viewVisible.glossary) cmds.push({ id: 'view-glossary', label: `Go to ${labels.aliasGlossary}`, icon: BookA, keywords: 'glossary terms tags', run: () => { setGlossarySearchQuery(""); setViewMode('glossary'); } });
         if (flags.viewVisible.biography) cmds.push({ id: 'view-biography', label: `Go to ${labels.aliasBiography}`, icon: UserSearch, keywords: 'biography people channels creators', run: () => { setBiographySearchQuery(""); setViewMode('biography'); } });
+        if (flags.viewVisible.calendar) cmds.push({ id: 'view-calendar', label: `Go to ${labels.aliasCalendar}`, icon: CalendarDays, keywords: 'calendar schedule tracks plan routine', run: () => { setCalendarSearchQuery(""); setViewMode('calendar'); } });
+        cmds.push({ id: 'graph', label: 'Open Graph View', icon: Network, keywords: 'graph network map links connections web nodes relationships', run: () => { setGraphResume(false); setShowGraph(true); } });
+        cmds.push({ id: 'about', label: `About ${BRAND.name}`, icon: Info, keywords: 'about help tour walkthrough guide intro welcome', run: () => setShowAbout(true) });
         if (flags.settingsVisible) cmds.push({ id: 'settings', label: 'Open Settings', icon: Settings, keywords: 'preferences options', run: () => setShowSettings(true) });
         // Each page of Settings, and the particular settings people look for, found by what they're
         // called (lib/settings-search.ts). Only pages this workspace shows; Sync only in development.
@@ -929,113 +1007,7 @@ function App() {
         });
     };
 
-    const handleToggleBulkSelect = useCallback((video: Video) => {
-        setBulkSelectedIds(prev => {
-            const next = new Set(prev);
-            if (next.has(video.id)) next.delete(video.id); else next.add(video.id);
-            return next;
-        });
-    }, []);
 
-    // Shift-click range select/deselect — VideoList.tsx's handleBulkCardClick has already worked
-    // out the full resulting selection (base-selection-before-the-anchor-click, with the anchor-
-    // to-target range forced to match the anchor's own state), so this just applies it wholesale
-    // rather than layering another add/remove on top.
-    const handleBulkSelectRange = useCallback((nextSelectedIds: Set<string>) => {
-        setBulkSelectedIds(nextSelectedIds);
-    }, []);
-
-    // Standard file-manager-style right-click: if the card is already part of the selection, the
-    // menu applies to the whole selection; otherwise it applies to just this card (replacing
-    // whatever was selected before), so a single video can be reassigned without a separate
-    // select-then-right-click step.
-    const handleBulkContextMenu = useCallback((video: Video, x: number, y: number) => {
-        setBulkAssignError(null);
-        setBulkSelectedIds(prev => {
-            const targetIds = prev.has(video.id) ? Array.from(prev) : [video.id];
-            setBulkAssignMenu({ x, y, videoIds: targetIds });
-            return prev.has(video.id) ? prev : new Set([video.id]);
-        });
-    }, []);
-
-    // `alsoSequence` (from BulkAssignMenu's checkbox) appends the same videos to that Drive's own
-    // sequence right after assigning them — as a second step, once assignment has actually
-    // succeeded, so add_to_drive_sequence's "filed at or beneath the Drive" check can never reject
-    // them: they were just filed there, by this same action.
-    const handleBulkAssign = useCallback(async (wdbs: string, alsoSequence: boolean) => {
-        if (!bulkAssignMenu) return;
-        setBulkAssigning(true);
-        setBulkAssignError(null);
-        try {
-            const result = await bulkUpdateVideoWdbs(bulkAssignMenu.videoIds, wdbs);
-            const label = wdbs.trim() || "unassigned";
-
-            if (result.succeeded.length === 0 && result.failed.length > 0) {
-                setBulkAssignError(result.failed[0][1]);
-                return;
-            }
-
-            let seqAdded = 0;
-            let seqAlreadyIn = 0;
-            // Nothing to sequence into once the selection was cleared back to unassigned.
-            if (alsoSequence && wdbs.trim() && result.succeeded.length > 0) {
-                const shown = new Map(displayedVideos.map((v, i) => [v.id, i]));
-                const ids = [...result.succeeded].sort((a, b) => (shown.get(a) ?? Infinity) - (shown.get(b) ?? Infinity));
-                const seqSort = library.sortField === 'added' ? 'added' : library.sortField === 'popularity' ? 'views' : 'published';
-                const seqOut = await addToDriveSequence(wdbs, ids, { sort: seqSort, descending: library.sortOrder === 'desc' });
-                seqAdded = seqOut.added;
-                seqAlreadyIn = seqOut.alreadyIn;
-            }
-
-            const assignPart = `Assigned ${result.succeeded.length} video${result.succeeded.length === 1 ? '' : 's'} to ${label}`;
-            const failedPart = result.failed.length > 0 ? `; ${result.failed.length} failed` : '';
-            const seqPart = alsoSequence && wdbs.trim()
-                ? `, added ${seqAdded} to its ${labels.aliasSequence.toLowerCase()}${seqAlreadyIn > 0 ? ` (${seqAlreadyIn} already in it)` : ''}`
-                : '';
-            setNotification({ message: `${assignPart}${seqPart}${failedPart}.`, type: result.failed.length === 0 ? "success" : "info" });
-            setBulkSelectedIds(new Set());
-            setBulkAssignMenu(null);
-            library.refreshLibrary();
-            setDriveVersion(v => v + 1);
-        } catch (e: any) {
-            setBulkAssignError(typeof e === "string" ? e : e?.message ?? "Bulk assign failed.");
-        } finally {
-            setBulkAssigning(false);
-        }
-    }, [bulkAssignMenu, library, displayedVideos, setNotification]);
-
-    // Adds the selection to a Drive's sequence in the order the grid shows it (so sorting the grid by
-    // date, then selecting a range, gives a chronological sequence), not the order they were clicked.
-    const handleBulkAddToSequence = useCallback(async (drive: string) => {
-        if (!bulkAssignMenu) return;
-        setBulkAssigning(true);
-        setBulkAssignError(null);
-        try {
-            const shown = new Map(displayedVideos.map((v, i) => [v.id, i]));
-            const ids = [...bulkAssignMenu.videoIds].sort((a, b) => (shown.get(a) ?? Infinity) - (shown.get(b) ?? Infinity));
-            const seqSort = library.sortField === 'added' ? 'added' : library.sortField === 'popularity' ? 'views' : 'published';
-            const out = await addToDriveSequence(drive, ids, { sort: seqSort, descending: library.sortOrder === 'desc' });
-            const name = drive.trim().toUpperCase();
-            const skipped = [
-                out.alreadyIn > 0 ? `${out.alreadyIn} already in it` : '',
-                out.notInDrive > 0 ? `${out.notInDrive} not filed under ${name}` : '',
-            ].filter(Boolean).join(', ');
-            if (out.added === 0) {
-                setBulkAssignError(`Nothing added${skipped ? `: ${skipped}` : ''}.`);
-            } else {
-                setNotification({
-                    message: `Added ${out.added} video${out.added === 1 ? '' : 's'} to the ${name} ${labels.aliasSequence.toLowerCase()}${skipped ? `; ${skipped}` : ''}.`,
-                    type: skipped ? "info" : "success",
-                });
-                setBulkSelectedIds(new Set());
-                setBulkAssignMenu(null);
-            }
-        } catch (e: any) {
-            setBulkAssignError(typeof e === "string" ? e : e?.message ?? `Couldn't add to the ${labels.aliasSequence.toLowerCase()}.`);
-        } finally {
-            setBulkAssigning(false);
-        }
-    }, [bulkAssignMenu, displayedVideos, setNotification]);
 
     // "No videos are tagged under X yet" is only true when the category itself is being shown
     // unfiltered — with a search or filter (transcript/summary) active, the category can easily
@@ -1095,6 +1067,7 @@ function App() {
         ...(flags.viewVisible.library ? [{ key: 'library', label: labels.aliasLibrary, icon: <BookMarked className={tabIcon} />, active: viewMode === 'library', onClick: leaveSidebarThen(() => setViewMode('library')) }] : []),
         ...(flags.viewVisible.glossary ? [{ key: 'glossary', label: labels.aliasGlossary, icon: <BookA className={tabIcon} />, active: viewMode === 'glossary', onClick: leaveSidebarThen(() => { setGlossarySearchQuery(""); setViewMode('glossary'); }) }] : []),
         ...(showBiography ? [{ key: 'biography', label: labels.aliasBiography, icon: <UserSearch className={tabIcon} />, active: viewMode === 'biography', onClick: leaveSidebarThen(() => { setBiographySearchQuery(""); setViewMode('biography'); }) }] : []),
+        ...(flags.viewVisible.calendar ? [{ key: 'calendar', label: labels.aliasCalendar, icon: <CalendarDays className={tabIcon} />, active: viewMode === 'calendar', onClick: leaveSidebarThen(() => { setCalendarSearchQuery(""); setViewMode('calendar'); }) }] : []),
     ] : undefined;
     // The layout toggle and Settings: on the right of the title bar, before What's New. A click here closes any open
     // dialog first (afterDialogs), then does its thing; Settings toggles.
@@ -1140,6 +1113,22 @@ function App() {
                 workspaceName={navigationOrientation === 'horizontal' ? undefined : labels.workspaceName}
                 toolbar={titleBarTools}
                 tabs={titleBarTabs}
+                pins={locked => (
+                    <PinsMenu
+                        locked={locked}
+                        onOpenVideo={id => { void openMenuVideo(id); }}
+                        // Quoted: "Watch Later" has a space.
+                        onShowTag={tag => handleSearchInLibrary(`"${tag}"`, 'tag')}
+                        onPinsChanged={refreshPins}
+                        // Its "due today" and "to do tomorrow" rows go to the Calendar (only where the Calendar is shown),
+                        // on that day's week, its items flashing.
+                        onOpenCalendar={flags.viewVisible.calendar ? (date?: string) => leaveSidebarThen(() => {
+                            setCalendarSearchQuery("");
+                            setViewMode('calendar');
+                            if (date) setCalendarDate({ date, at: Date.now() });
+                        })() : undefined}
+                    />
+                )}
             />
 
             {/* Navigation - conditional rendering */}
@@ -1192,6 +1181,15 @@ function App() {
                                 title={labels.aliasBiography}
                             >
                                 <UserSearch className="w-6 h-6" />
+                            </button>
+                        )}
+                        {flags.viewVisible.calendar && (
+                            <button
+                                onClick={() => { setCalendarSearchQuery(""); setViewMode('calendar'); }}
+                                className={`p-1.5 rounded-lg transition-all cursor-pointer ${viewMode === 'calendar' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white hover:bg-[#272727]'}`}
+                                title={labels.aliasCalendar}
+                            >
+                                <CalendarDays className="w-6 h-6" />
                             </button>
                         )}
                     </div>
@@ -1264,12 +1262,12 @@ function App() {
                                         </button>
                                     );
                                 })}
-                                {(flags.viewVisible.glossary || showBiography) && (
+                                {(flags.viewVisible.glossary || showBiography || flags.viewVisible.calendar) && (
                                 <div className="relative">
                                     <button
                                         onClick={() => setShowGlossaryMenu(!showGlossaryMenu)}
                                         onBlur={() => setTimeout(() => setShowGlossaryMenu(false), 200)}
-                                        className={`p-2 rounded-lg transition-all cursor-pointer flex items-center justify-center ${viewMode === 'glossary' || viewMode === 'biography' || showGlossaryMenu ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
+                                        className={`p-2 rounded-lg transition-all cursor-pointer flex items-center justify-center ${viewMode === 'glossary' || viewMode === 'biography' || viewMode === 'calendar' || showGlossaryMenu ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
                                         title="More Options"
                                     >
                                         <ChevronDown className="w-5 h-5" />
@@ -1290,6 +1288,14 @@ function App() {
                                                     className={`w-full text-left px-4 py-2 text-sm hover:bg-[#3f3f3f] cursor-pointer ${viewMode === 'biography' ? 'text-white font-bold' : 'text-gray-300'}`}
                                                 >
                                                     {labels.aliasBiography}
+                                                </button>
+                                            )}
+                                            {flags.viewVisible.calendar && (
+                                                <button
+                                                    onClick={() => { setCalendarSearchQuery(""); setViewMode('calendar'); setShowGlossaryMenu(false); }}
+                                                    className={`w-full text-left px-4 py-2 text-sm hover:bg-[#3f3f3f] cursor-pointer ${viewMode === 'calendar' ? 'text-white font-bold' : 'text-gray-300'}`}
+                                                >
+                                                    {labels.aliasCalendar}
                                                 </button>
                                             )}
                                         </div>
@@ -1320,6 +1326,16 @@ function App() {
 
                     {/* -mt-2: the search bar (and the Drive button) sit 8px higher, in every layout, for more room below. */}
                     <div className="flex items-center gap-2 -mt-2">
+                        {/* The Calendar's tracks panel: toggled from the same spot, the same way, as the Library's Drive panel. */}
+                        {viewMode === 'calendar' && (
+                            <button
+                                onClick={() => setTracksPanel(!showTracksPanel)}
+                                className={`shrink-0 p-2.5 mb-2 rounded-full border transition-all cursor-pointer ${showTracksPanel ? 'bg-red-600 border-red-600 text-white' : 'bg-[#121212] border-[#404040] text-gray-400 hover:text-white hover:border-[#505050]'}`}
+                                title="Toggle Tracks"
+                            >
+                                <ListChecks className="w-5 h-5" />
+                            </button>
+                        )}
                         {viewMode === 'library' && showDrive && (
                             <button
                                 onClick={() => setShowDrivePanel(prev => {
@@ -1331,9 +1347,7 @@ function App() {
                                     // any in-progress selection) goes with it.
                                     if (!next) {
                                         library.setWdbsFilter(null);
-                                        setBulkAssignMode(false);
-                                        setBulkSelectedIds(new Set());
-                                        setBulkAssignMenu(null);
+                                        exitBulk();
                                     }
                                     return next;
                                 })}
@@ -1344,32 +1358,38 @@ function App() {
                             </button>
                         )}
                         {/* The search bar's own side padding (px-4) sat on top of the row's gap; beside the Drive button, take most of it back. */}
-                        <div className={`flex-1 min-w-0 ${viewMode === 'library' && showDrive ? '-ml-3' : ''}`}>
+                        <div className={`flex-1 min-w-0 ${(viewMode === 'library' && showDrive) || viewMode === 'calendar' ? '-ml-3' : ''}`}>
                             <SearchBar
                                 key={viewMode}
-                                onSearch={viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : handleSearch))}
+                                onSearch={viewMode === 'calendar' ? setCalendarSearchQuery : viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : handleSearch))}
                                 onLiveFilter={
                                     viewMode === 'search'
                                         ? (search.videos.length > 0 ? search.handleInput : undefined)
-                                        : (viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : undefined)))
+                                        : viewMode === 'calendar'
+                                            ? setCalendarSearchQuery
+                                            : (viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : undefined)))
                                 }
                                 loading={search.loading}
                                 viewMode={viewMode}
                                 initialFacets={
-                                    viewMode === 'glossary'
+                                    viewMode === 'calendar'
+                                        ? getLibraryFacets(calendarSearchQuery, 'calendar')
+                                        : viewMode === 'glossary'
                                         ? getLibraryFacets(glossarySearchQuery, 'glossary')
                                         : viewMode === 'biography'
                                             ? getLibraryFacets(biographySearchQuery, 'biography')
                                             : (viewMode === 'library' ? (library.librarySearch ? getLibraryFacets(library.librarySearch, 'library') : []) : search.activeFacets as Facet[])
                                 }
                                 initialQuery={
-                                    viewMode === 'glossary'
+                                    viewMode === 'calendar'
+                                        ? getLibraryQuery(calendarSearchQuery, 'calendar')
+                                        : viewMode === 'glossary'
                                         ? getLibraryQuery(glossarySearchQuery, 'glossary')
                                         : viewMode === 'biography'
                                             ? getLibraryQuery(biographySearchQuery, 'biography')
                                         : (viewMode === 'library' ? getLibraryQuery(library.librarySearch, 'library') : search.activeText)
                                 }
-                                 placeholder={viewMode === 'glossary' ? "Look up Tag/Term" : (viewMode === 'biography' ? `Look up ${labels.aliasBiographyItem}` : (viewMode === 'library' ? "Look up Videos and Transcripts" : "Search YouTube handle, playlist URL, or video URL"))}
+                                 placeholder={viewMode === 'calendar' ? 'Filter Tasks (Enter: Next Match)' : viewMode === 'glossary' ? "Look up Tag/Term" : (viewMode === 'biography' ? `Look up ${labels.aliasBiographyItem}` : (viewMode === 'library' ? "Look up Videos and Transcripts" : "Search YouTube handle, playlist URL, or video URL"))}
                             />
                         </div>
                     </div>
@@ -1511,6 +1531,9 @@ function App() {
                             />
                         </div>
                     </div>
+                ) : viewMode === 'calendar' ? (
+                    // Like the Library: its tracks panel and its week each scroll on their own (CalendarView lays them out).
+                    <CalendarView focusTrack={calendarFocus} focusDate={calendarDate} pinnedIds={pinnedIds} onSetPin={(id, on) => { void setPin(id, on); }} searchQuery={calendarSearchQuery} onVideoSelect={handleSelectVideo} panelOpen={showTracksPanel} onOpenPanel={() => setTracksPanel(true)} onNotify={setNotification} />
                 ) : (
                     // Glossary/Biography/Search share the one scroll pane directly — no Drive
                     // panel to keep independent of it. position: relative, see the comment above.
@@ -1523,6 +1546,7 @@ function App() {
                                 searchQuery={glossarySearchQuery}
                                 onSearchInLibrary={handleSearchInLibrary}
                                 onOpenVideo={handleSelectVideo}
+                                onOpenFlashcards={openFlashcards}
                                 allowModification={allowModificationGlossary}
                                 onNotify={setNotification}
                                 onOpenTrash={() => setTrashOpen('glossary')}
@@ -1600,6 +1624,12 @@ function App() {
                 startAt={playerStart && playerStart.videoId === selectedVideo?.id ? playerStart.at : undefined}
                 isOpen={sidebarOpen}
                 onClose={() => {
+                    // Opened straight from the graph: closing goes back to it (unsaved changes were already asked about).
+                    if (fromGraphVideo.current && fromGraphVideo.current === selectedVideo?.id && nav.canBack) {
+                        fromGraphVideo.current = null;
+                        nav.back();
+                        return;
+                    }
                     setSidebarOpen(false);
                     setSidebarInitialTab(undefined);
                 }}
@@ -1608,10 +1638,21 @@ function App() {
                 title={selectedVideo?.title || ""}
                 videoId={selectedVideo?.id}
                 handle={selectedVideo?.handle}
+                onOpenTrack={trackId => {
+                    // Into the Calendar, with that track open in its panel.
+                    setSidebarOpen(false);
+                    setSidebarInitialTab(undefined);
+                    setCalendarSearchQuery("");
+                    setCalendarFocus({ id: trackId, at: Date.now() });
+                    setViewMode('calendar');
+                }}
+                pinned={!!selectedVideo && pinnedIds.has(selectedVideo.id)}
+                onTogglePin={selectedVideo ? () => { void togglePin(); } : undefined}
                 onSave={selectedVideo ? (summary) => library.handleSaveVideo(selectedVideo, summary, transcript) : undefined}
                 onDelete={() => library.handleDeleteFromSidebar(selectedVideo)}
                 onRefetch={selectedVideo ? () => handleSelectVideo(selectedVideo) : undefined}
                 onRestored={library.refreshLibrary}
+                onTitleChanged={title => { setSelectedVideo(v => (v ? { ...v, title } : v)); library.refreshLibrary(); }}
                 onTranscriptChange={setTranscript}
                 pluginSummarizeEnabled={effectivePluginSummarizeEnabled}
                 pluginPhotosynthesisEnabled={effectivePluginPhotosynthesisEnabled}
@@ -1707,6 +1748,30 @@ function App() {
                 />
             )}
 
+            {showAbout && <AboutKinesisModal inApp onClose={() => setShowAbout(false)} />}
+            {flashcards && !flashcardsAside && (
+                <FlashcardsModal
+                    entries={flashcards.entries}
+                    deckName={flashcards.deckName}
+                    resume={flashcardsResume}
+                    onClose={() => setFlashcards(null)}
+                />
+            )}
+
+            {showGraph && (
+                <GraphModal
+                    resume={graphResume}
+                    onClose={() => setShowGraph(false)}
+                    onOpen={(kind, key) => {
+                        // The graph closes once it has opened (see graphOpening). If it didn't (gone, or hidden here, which
+                        // says so), nothing is waiting any more once the attempt is over.
+                        graphOpening.current = kind;
+                        void handleOpenLink(kind, key).finally(() => {
+                            requestAnimationFrame(() => { if (graphOpening.current === kind) graphOpening.current = null; });
+                        });
+                    }}
+                />
+            )}
             {trashOpen && (
                 <TrashModal
                     kind={trashOpen}
@@ -1727,7 +1792,8 @@ function App() {
             {selectedBiography && (
                 <BiographyModal
                     biography={selectedBiography}
-                    onClose={() => setSelectedBiography(null)}
+                    onChanged={setSelectedBiography}
+                    onClose={() => { setSelectedBiography(null); closedFromGraph('bio'); }}
                     onVideoSelect={handleSelectVideo}
                     onViewMore={(handle) => {
                         goToLibrarySearch(`handle:${handle}`);
@@ -1744,7 +1810,7 @@ function App() {
             {linkedTerm && (
                 <TermDefinitionModal
                     term={linkedTerm}
-                    onClose={() => setLinkedTerm(null)}
+                    onClose={() => { setLinkedTerm(null); closedFromGraph('glossary'); }}
                     onSearch={(term, mode) => {
                         setLinkedTerm(null);
                         handleSearchInLibrary(term, mode);

@@ -99,6 +99,7 @@ CREATE TABLE Biographies (
 	channel_id TEXT NOT NULL,
 	subscriber_count INTEGER,
 	display_name TEXT DEFAULT ('') NOT NULL,
+	alias TEXT DEFAULT ('') NOT NULL,
 	bio TEXT DEFAULT ('') NOT NULL,
 	wikipedia TEXT DEFAULT ('') NOT NULL,
 	website TEXT DEFAULT ('') NOT NULL,
@@ -119,6 +120,107 @@ CREATE TABLE DriveSequence (
     video_id TEXT NOT NULL,
     position INTEGER NOT NULL,
     PRIMARY KEY (drive, video_id)
+) STRICT;
+
+CREATE TABLE CalendarTracks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            drive TEXT NOT NULL DEFAULT '',
+            advance_mode TEXT NOT NULL DEFAULT 'completion' CHECK (advance_mode IN ('completion', 'calendar', 'hybrid')),
+            loop_entries INTEGER NOT NULL DEFAULT 0,
+            source_drive_sequence INTEGER NOT NULL DEFAULT 0,
+            weekdays TEXT NOT NULL DEFAULT '',
+            start_date TEXT NOT NULL,
+            archived INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            time_start INTEGER,
+            time_duration INTEGER,
+            cycle_offset INTEGER NOT NULL DEFAULT 0,
+            previous_start_date TEXT,
+            previous_cycle_offset INTEGER
+) STRICT;
+
+CREATE TABLE CalendarEntries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER NOT NULL,
+            video_id TEXT,
+            label TEXT NOT NULL DEFAULT '',
+            position INTEGER,
+            target_date TEXT,
+            icon TEXT NOT NULL DEFAULT '',
+            description TEXT NOT NULL DEFAULT '',
+            priority INTEGER NOT NULL DEFAULT 0,
+            former_video_id TEXT,
+            is_folder INTEGER NOT NULL DEFAULT 0,
+            folder_id INTEGER,
+            UNIQUE (track_id, video_id)
+) STRICT;
+
+CREATE TABLE CalendarCompletions (
+            entry_id INTEGER NOT NULL,
+            cycle INTEGER NOT NULL DEFAULT 0,
+            completed_at TEXT NOT NULL,
+            PRIMARY KEY (entry_id, cycle)
+) STRICT;
+
+CREATE TABLE CalendarTerms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            track_id INTEGER NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            start_date TEXT NOT NULL,
+            end_date TEXT NOT NULL,
+            annual INTEGER NOT NULL DEFAULT 0
+) STRICT;
+
+CREATE TABLE CalendarHolidaySets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            annual INTEGER NOT NULL DEFAULT 0,
+            builtin TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE TABLE CalendarHolidayDates (
+            set_id INTEGER NOT NULL,
+            date TEXT NOT NULL,
+            name TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (set_id, date)
+) STRICT;
+
+CREATE TABLE CalendarTrackHolidayRules (
+            track_id INTEGER NOT NULL,
+            set_id INTEGER NOT NULL,
+            mode TEXT NOT NULL CHECK (mode IN ('exclude', 'include')),
+            PRIMARY KEY (track_id, set_id)
+) STRICT;
+
+CREATE TABLE CalendarProgress (
+            entry_id INTEGER NOT NULL,
+            cycle INTEGER NOT NULL DEFAULT 0,
+            started_at TEXT NOT NULL,
+            PRIMARY KEY (entry_id, cycle)
+) STRICT;
+
+CREATE TABLE PinnedVideos (
+            video_id TEXT PRIMARY KEY,
+            pinned_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE VideoPositions (
+            video_id TEXT PRIMARY KEY,
+            seconds REAL NOT NULL,
+            duration REAL,
+            updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE VideoWatched (
+            video_id TEXT PRIMARY KEY,
+            watched_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE OrphanedVideos (
+            video_id TEXT PRIMARY KEY,
+            reason TEXT NOT NULL DEFAULT '',
+            found_at TEXT NOT NULL
 ) STRICT;
 
 CREATE TABLE SyncItems (
@@ -211,6 +313,10 @@ CREATE INDEX idxVideosWDBS ON Videos(WDBS);
 CREATE INDEX idxVideoAttachmentsOrder ON VideoAttachments(video_id, position);
 CREATE INDEX idxDriveSequenceOrder ON DriveSequence(drive, position);
 CREATE INDEX idxDriveSequenceVideo ON DriveSequence(video_id);
+CREATE INDEX idxCalendarEntriesTrack ON CalendarEntries(track_id, position);
+CREATE INDEX idxCalendarEntriesVideo ON CalendarEntries(video_id);
+CREATE INDEX idxCalendarTermsTrack ON CalendarTerms(track_id);
+CREATE UNIQUE INDEX idxCalendarHolidaySetsBuiltin ON CalendarHolidaySets(builtin) WHERE builtin != '';
 CREATE UNIQUE INDEX idxBiographiesHandleLower ON Biographies(LOWER(handle));
 
 CREATE VIRTUAL TABLE ftsVideos USING fts5(
@@ -457,6 +563,89 @@ CREATE TRIGGER trgVideosAfterDEL_DriveSequence_CascadeDelete
         AFTER DELETE ON Videos
         BEGIN
             DELETE FROM DriveSequence WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgVideosAfterDEL_CalendarEntries_KeepPlace
+        AFTER DELETE ON Videos
+        BEGIN
+            UPDATE CalendarEntries
+            SET label = CASE WHEN label = '' THEN COALESCE(NULLIF(OLD.title, ''), OLD.video_id) ELSE label END,
+                former_video_id = OLD.video_id,
+                video_id = NULL
+            WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgCalendarEntriesAfterDEL_Progress
+        AFTER DELETE ON CalendarEntries
+        BEGIN
+            DELETE FROM CalendarProgress WHERE entry_id = OLD.id;
+END;
+
+CREATE TRIGGER trgCalendarTracksAfterDEL_Progress
+        AFTER DELETE ON CalendarTracks
+        BEGIN
+            DELETE FROM CalendarProgress WHERE entry_id IN (SELECT id FROM CalendarEntries WHERE track_id = OLD.id);
+END;
+
+CREATE TRIGGER trgVideosAfterDEL_PinnedVideos
+        AFTER DELETE ON Videos
+        BEGIN
+            DELETE FROM PinnedVideos WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgVideosAfterDEL_VideoPositions
+        AFTER DELETE ON Videos
+        BEGIN
+            DELETE FROM VideoPositions WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgVideosAfterDEL_VideoWatched
+        AFTER DELETE ON Videos
+        BEGIN
+            DELETE FROM VideoWatched WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgVideosAfterDEL_OrphanedVideos
+        AFTER DELETE ON Videos
+        BEGIN
+            DELETE FROM OrphanedVideos WHERE video_id = OLD.video_id;
+END;
+
+CREATE TRIGGER trgVideosAfterINS_CalendarEntries_Reconnect
+        AFTER INSERT ON Videos
+        BEGIN
+            UPDATE CalendarEntries
+            SET video_id = NEW.video_id,
+                former_video_id = NULL,
+                label = CASE WHEN label = COALESCE(NULLIF(NEW.title, ''), NEW.video_id) THEN '' ELSE label END
+            WHERE id IN (
+                SELECT MIN(id) FROM CalendarEntries
+                WHERE former_video_id = NEW.video_id
+                  AND track_id NOT IN (SELECT track_id FROM CalendarEntries WHERE video_id = NEW.video_id)
+                GROUP BY track_id
+            );
+END;
+
+CREATE TRIGGER trgCalendarTracksAfterDEL_Cascade
+        AFTER DELETE ON CalendarTracks
+        BEGIN
+            DELETE FROM CalendarCompletions WHERE entry_id IN (SELECT id FROM CalendarEntries WHERE track_id = OLD.id);
+            DELETE FROM CalendarEntries WHERE track_id = OLD.id;
+            DELETE FROM CalendarTerms WHERE track_id = OLD.id;
+            DELETE FROM CalendarTrackHolidayRules WHERE track_id = OLD.id;
+END;
+
+CREATE TRIGGER trgCalendarEntriesAfterDEL_Cascade
+        AFTER DELETE ON CalendarEntries
+        BEGIN
+            DELETE FROM CalendarCompletions WHERE entry_id = OLD.id;
+END;
+
+CREATE TRIGGER trgCalendarHolidaySetsAfterDEL_Cascade
+        AFTER DELETE ON CalendarHolidaySets
+        BEGIN
+            DELETE FROM CalendarHolidayDates WHERE set_id = OLD.id;
+            DELETE FROM CalendarTrackHolidayRules WHERE set_id = OLD.id;
 END;
 
 CREATE TRIGGER trgVideosBeforeUPD_Videos_ValidateWDBS

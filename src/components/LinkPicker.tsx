@@ -13,6 +13,7 @@ import { PlaylistThumb, sequenceName } from './SequenceCard';
 import {
     buildLink, LINK_PICKER_EVENT, type LinkKind, type LinkPickerRequest,
 } from '../lib/internal-links';
+import { backdropProps } from '../lib/backdrop';
 
 interface Choice {
     key: string;
@@ -195,7 +196,7 @@ export function LinkPicker() {
     if (!request || tabs.length === 0) return null;
 
     return (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-150" onClick={close}>
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4 animate-in fade-in duration-150" {...backdropProps(close)}>
             <div
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {

@@ -15,6 +15,7 @@ export const LABEL_DEFS = [
     { key: 'aliasDriveLink', default: 'Link', max: 18, title: 'Drive link', hint: 'A video also filed elsewhere, e.g. Main Ref.' },
     { key: 'aliasDriveSymlink', default: 'Symlink', max: 18, title: 'Drive symlink', hint: 'e.g. Alt Ref.' },
     { key: 'aliasSequence', default: 'Sequence', max: 18, title: 'Sequence', hint: 'e.g. Playlist.' },
+    { key: 'aliasCalendar', default: 'Calendar', max: 18, title: 'Calendar', hint: 'The section name, e.g. Schedule.' },
 ] as const;
 
 export type LabelKey = typeof LABEL_DEFS[number]['key'];

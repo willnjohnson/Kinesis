@@ -343,7 +343,7 @@ fn trigger_exists(conn: &Connection, trigger_name: &str) -> Result<bool> {
 // folded so e.g. a pre-existing `WDBS` is recognized as satisfying a check for `wdbs` — SQLite
 // itself already treats those as the exact same column (identifiers are case-insensitive), so
 // this just needs to agree so it doesn't add a second, redundant column beside the first.
-fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
+pub(crate) fn column_exists(conn: &Connection, table_name: &str, column_name: &str) -> Result<bool> {
     let mut stmt = conn.prepare(&format!("PRAGMA table_info({table_name})"))?;
     let exists = stmt
         .query_map([], |row| row.get::<_, String>(1))?
@@ -728,6 +728,13 @@ pub fn init_db(db_path: &str) -> Result<()> {
         [],
     );
 
+    // The Calendar's tracks, entries, terms and holiday sets (see db/calendar.rs). Kinesis-owned, created on every database.
+    super::calendar::ensure_calendar_schema(&conn)?;
+    // Pinned videos (see db/pins.rs).
+    super::pins::ensure_pins_schema(&conn)?;
+    super::orphans::ensure_orphans_schema(&conn)?;
+    super::positions::ensure_positions_schema(&conn)?;
+
     // Which glossary-linked terms db::summaries::sync_terms_from_video_text itself added to a
     // video's Videos.tags the last time it ran — real provenance, not a heuristic, so an unlinked
     // term with no formal Glossary definition can still be told apart from a genuine hand-added
@@ -831,7 +838,8 @@ pub fn init_db(db_path: &str) -> Result<()> {
             reddit TEXT NOT NULL DEFAULT '',
             discord TEXT NOT NULL DEFAULT '',
             channel_id TEXT NOT NULL DEFAULT '',
-            subscriber_count INTEGER NOT NULL DEFAULT -1
+            subscriber_count INTEGER NOT NULL DEFAULT -1,
+            alias TEXT NOT NULL DEFAULT ''
         ) STRICT",
         [],
     )?;
@@ -856,6 +864,11 @@ pub fn init_db(db_path: &str) -> Result<()> {
     }
     if !column_exists(&conn, "Biographies", "subscriber_count")? {
         conn.execute("ALTER TABLE Biographies ADD COLUMN subscriber_count INTEGER NOT NULL DEFAULT -1", [])?;
+    }
+    // An optional name of the reader's own for the channel (the person behind it, say), shown as a badge before its
+    // display name and, by default, what the Biography list sorts by.
+    if !column_exists(&conn, "Biographies", "alias")? {
+        conn.execute("ALTER TABLE Biographies ADD COLUMN alias TEXT NOT NULL DEFAULT ''", [])?;
     }
     // One-time normalization of existing rows still holding the old 9999 sentinel, so a database
     // that already went through the ADD COLUMN above (under the old default) doesn't keep it

@@ -8,7 +8,7 @@ import { FloatingCard, type Side } from './FloatingCard';
  *
  * It opens below the element, or above, to the right or to the left if there is no room there, with a small arrow
  * pointing at the element; an element can ask for a side with `data-tooltip-side="top|bottom|left|right"` (still
- * flipped if it doesn't fit). It is kept inside the window, the arrow staying on the element. It opens after a short wait,
+ * flipped if it doesn't fit). With `data-tooltip-labels`, each line's leading "Label:" is bold ("Alias: ..."). It is kept inside the window, the arrow staying on the element. It opens after a short wait,
  * at once in the title bar, and closes on a click, a key, a scroll, or when the element goes away.
  *
  * Mounted once (main.tsx), so every window that has it (the app, the tray popup) gets the same tooltips.
@@ -20,6 +20,25 @@ interface Shown {
     text: string;
     rect: DOMRect;
     side: Side | 'auto';
+    /** Each line's leading "Label:" in bold (the element asked, with data-tooltip-labels). */
+    labels: boolean;
+}
+
+/** A tooltip's lines with each one's leading "Label:" in bold. */
+function Labeled({ text }: { text: string }) {
+    return (
+        <>
+            {text.split('\n').map((line, i) => {
+                const m = line.match(/^([^:\n]{1,40}:)(.*)$/);
+                return (
+                    <span key={i}>
+                        {i > 0 && '\n'}
+                        {m ? <><strong className="font-semibold">{m[1]}</strong>{m[2]}</> : line}
+                    </span>
+                );
+            })}
+        </>
+    );
 }
 
 const SET_ASIDE = 'data-tooltip-text';
@@ -73,7 +92,7 @@ export function TooltipLayer() {
                 if (!current?.isConnected) return;
                 const asked = current.closest('[data-tooltip-side]')?.getAttribute('data-tooltip-side');
                 const side = asked === 'top' || asked === 'bottom' || asked === 'left' || asked === 'right' ? asked : 'auto';
-                setShown({ text, rect: current.getBoundingClientRect(), side });
+                setShown({ text, rect: current.getBoundingClientRect(), side, labels: current.hasAttribute('data-tooltip-labels') });
                 // The element can go away under a still pointer (a re-render): no mouseout comes then.
                 watcher = window.setInterval(() => {
                     if (!current?.isConnected) { leave(); return; }
@@ -129,7 +148,7 @@ export function TooltipLayer() {
             zIndex={2147483647}
             className="w-max max-w-[min(34rem,calc(100vw-1rem))] [overflow-wrap:anywhere] px-3 py-1.5 text-sm font-normal leading-snug text-white whitespace-pre-line"
         >
-            {shown.text}
+            {shown.labels ? <Labeled text={shown.text} /> : shown.text}
         </FloatingCard>
     );
 }

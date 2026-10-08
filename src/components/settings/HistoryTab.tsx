@@ -9,6 +9,8 @@ import { useWorkspace } from "../../hooks/useWorkspace";
 import { settingsPrimaryBtn } from "./buttons";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { useLockedSettings, LOCKED_TITLE } from "../../hooks/useLockedSettings";
+import { Select } from '../ui/Select';
+import { UnderlineTabs } from '../ui/UnderlineTabs';
 
 // Settings keys. `saveSearchHistory` is also a DB-owner flag (see docs/customizing.md): when the owner
 // turns it off, or a sync server locks it, the switch below is disabled.
@@ -115,19 +117,7 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll, on
                 </div>
             </div>
 
-            <div className="flex items-center gap-4">
-                {HISTORY_VIEWS.map(({ id, label, Icon }) => (
-                    <button
-                        key={id}
-                        onClick={() => setView(id)}
-                        className={`flex items-center gap-1.5 pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${view === id ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
-                    >
-                        <Icon className="w-3.5 h-3.5" />
-                        {label}
-                        {view === id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-red-600" />}
-                    </button>
-                ))}
-            </div>
+            <UnderlineTabs active={view} onChange={setView} tabs={HISTORY_VIEWS.map(({ id, label, Icon }) => ({ id, label, icon: Icon }))} />
 
             {view === "settings" && (
                 <div className="bg-[#121212] border border-[#303030] rounded-xl divide-y divide-[#252525]">
@@ -149,17 +139,18 @@ export function HistoryTab({ entries, onDeleteEntry, onClearDate, onClearAll, on
                             <div className="text-sm font-bold">Clear history after</div>
                             <div className="text-[11px] text-[#aaaaaa]">Older searches are removed automatically.</div>
                         </div>
-                        <select
+                        <Select
+                            look="setting"
                             value={clearAfter}
-                            onChange={(e) => handleClearAfterChange(e.target.value)}
+                            onValueChange={handleClearAfterChange}
                             disabled={!canClear || isLocked(CLEAR_AFTER_KEY)}
                             title={isLocked(CLEAR_AFTER_KEY) ? LOCKED_TITLE : undefined}
-                            className="bg-[#0f0f0f] border border-[#303030] text-sm text-white rounded-lg px-3 py-1.5 outline-none cursor-pointer hover:bg-[#202020] transition-colors disabled:opacity-50 disabled:cursor-default shrink-0"
+                            wrapperClassName="shrink-0"
                         >
                             {CLEAR_AFTER_CHOICES.map(c => (
                                 <option key={c.value} value={c.value}>{c.label}</option>
                             ))}
-                        </select>
+                        </Select>
                     </div>
                 </div>
             )}

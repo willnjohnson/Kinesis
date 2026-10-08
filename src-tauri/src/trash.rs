@@ -177,7 +177,16 @@ fn capture_video(db_path: &str, video_id: &str) -> rusqlite::Result<Option<(Payl
     // Restore a captured biography before the video, so production's INSERT trigger can find and
     // canonicalize the handle. Existing rows are conflict-ignored, never overwritten.
     tables.push(video);
-    for (table, omit, ignore) in [("VideoWDBSLinks", &[][..], true), ("DriveSequence", &[][..], true), ("VideoNotes", &[][..], true)] {
+    // Its pin and whether it's orphaned (YouTube no longer has it) go with it too, so a restored video is still both.
+    for (table, omit, ignore) in [
+        ("VideoWDBSLinks", &[][..], true),
+        ("DriveSequence", &[][..], true),
+        ("VideoNotes", &[][..], true),
+        ("PinnedVideos", &[][..], true),
+        ("OrphanedVideos", &[][..], true),
+        ("VideoPositions", &[][..], true),
+        ("VideoWatched", &[][..], true),
+    ] {
         if let Some(rows) = snapshot(&conn, table, "video_id = ?1", &id, omit, ignore)? {
             if !rows.rows.is_empty() {
                 tables.push(rows);
@@ -235,6 +244,25 @@ pub fn delete_video(trash: &Mutex<TrashStore>, db_path: &str, video_id: &str) ->
         return Ok(Some(push(trash, TrashItem { id: 0, kind: TrashKind::Video, key: video_id.to_string(), label, detail, deleted_at: now_ms(), db_path: db_path.to_string(), payload, changes, bytes })));
     }
     Ok(None)
+}
+
+/// Deletes many videos at once, each its own Trash item (restored one at a time like any other). Faster than one by
+/// one: the rows go together and the links to them in one pass. Returns how many went to the Trash.
+pub fn delete_videos(trash: &Mutex<TrashStore>, db_path: &str, video_ids: &[String]) -> Result<usize, String> {
+    let mut captured = Vec::with_capacity(video_ids.len());
+    for id in video_ids {
+        captured.push(capture_video(db_path, id).map_err(|e| e.to_string())?);
+    }
+    let changes = db::delete_videos_recorded(db_path, video_ids).map_err(|e| e.to_string())?;
+    let mut count = 0;
+    for ((id, captured), changes) in video_ids.iter().zip(captured).zip(changes) {
+        if let Some((payload, label, detail, bytes)) = captured {
+            let bytes = bytes + changes.iter().map(|c| c.before.len() + c.after.len()).sum::<usize>();
+            push(trash, TrashItem { id: 0, kind: TrashKind::Video, key: id.clone(), label, detail, deleted_at: now_ms(), db_path: db_path.to_string(), payload, changes, bytes });
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 /// Deletes one glossary entry (a term's row for exactly `drives`), keeping it and the links that went with it.
@@ -392,8 +420,12 @@ mod tests {
             conn.execute("UPDATE Videos SET summary = 'See [first](kinesis://video/v1) now' WHERE video_id = 'v2'", []).unwrap();
         }
 
+        crate::db::set_pinned(&db, "v1", true).unwrap();
+        crate::db::set_orphaned(&db, "v1", true, "Video unavailable").unwrap();
+
         delete_video(&trash, &db, "v1").unwrap();
         assert_eq!(count(&db, "SELECT COUNT(*) FROM Videos WHERE video_id = 'v1'"), 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM OrphanedVideos"), 0, "the delete trigger took its orphan row");
         assert_eq!(count(&db, "SELECT COUNT(*) FROM AttachmentBlobs"), 0, "the delete trigger removed its stored file");
         assert_eq!(text(&db, "SELECT summary FROM Videos WHERE video_id = 'v2'"), "See first now", "the link is gone, its words stay");
         let listed = list(&trash, &db, TrashKind::Video);
@@ -407,8 +439,35 @@ mod tests {
         assert_eq!(count(&db, "SELECT COUNT(*) FROM AttachmentBlobs WHERE hash = 'h1'"), 1, "the stored file is back");
         assert_eq!(count(&db, "SELECT COUNT(*) FROM VideoWDBSLinks WHERE video_id = 'v1'"), 1);
         assert_eq!(count(&db, "SELECT COUNT(*) FROM DriveSequence WHERE video_id = 'v1'"), 1);
+        assert_eq!(text(&db, "SELECT reason FROM OrphanedVideos WHERE video_id = 'v1'"), "Video unavailable", "still orphaned");
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM PinnedVideos WHERE video_id = 'v1'"), 1, "still pinned");
         assert_eq!(text(&db, "SELECT summary FROM Videos WHERE video_id = 'v2'"), "See [first](kinesis://video/v1) now", "the link is back");
         assert!(list(&trash, &db, TrashKind::Video).is_empty(), "restored items leave the Trash");
+    }
+
+    #[test]
+    fn a_bulk_delete_trashes_each_video_and_each_restores_with_its_own_links() {
+        let db = temp_db("video_bulk");
+        let trash = store();
+        save(&db, "v1", "First");
+        save(&db, "v2", "Second");
+        save(&db, "v3", "Keeps links");
+        Connection::open(&db).unwrap()
+            .execute("UPDATE Videos SET summary = 'See [one](kinesis://video/v1) and [two](kinesis://video/v2).' WHERE video_id = 'v3'", [])
+            .unwrap();
+
+        assert_eq!(delete_videos(&trash, &db, &["v1".to_string(), "v2".to_string()]).unwrap(), 2);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM Videos WHERE video_id IN ('v1', 'v2')"), 0);
+        assert_eq!(text(&db, "SELECT summary FROM Videos WHERE video_id = 'v3'"), "See one and two.");
+        let listed = list(&trash, &db, TrashKind::Video);
+        assert_eq!(listed.len(), 2, "each is its own Trash item");
+
+        // Put back the second one deleted (the last change to the text): its link comes back, the other stays text.
+        let second = listed.iter().find(|e| e.label == "Second").unwrap().id;
+        restore(&trash, &db, second).unwrap();
+        assert_eq!(text(&db, "SELECT title FROM Videos WHERE video_id = 'v2'"), "Second");
+        assert_eq!(text(&db, "SELECT summary FROM Videos WHERE video_id = 'v3'"), "See one and [two](kinesis://video/v2).");
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]
@@ -416,7 +475,7 @@ mod tests {
         let db = temp_db("video_biography");
         let trash = store();
         crate::db::upsert_biography_from_video(&db, "@chan", "Channel Name", Some("UC123"), 42).unwrap();
-        crate::db::update_biography_details(&db, "@chan", "Carefully written bio", "wiki", "site", "x", "ig", "fb", "threads", "yt", "tt", "twitch", "reddit", "discord").unwrap();
+        crate::db::update_biography_details(&db, "@chan", "Carefully written bio", "wiki", "site", "x", "ig", "fb", "threads", "yt", "tt", "twitch", "reddit", "discord", "Chan Alias").unwrap();
         save(&db, "v1", "Only video");
         {
             let conn = Connection::open(&db).unwrap();
@@ -435,6 +494,7 @@ mod tests {
         restore(&trash, &db, item).unwrap();
 
         assert_eq!(text(&db, "SELECT bio FROM Biographies WHERE lower(handle) = lower('@chan')"), "Carefully written bio");
+        assert_eq!(text(&db, "SELECT alias FROM Biographies WHERE lower(handle) = lower('@chan')"), "Chan Alias");
         assert_eq!(text(&db, "SELECT handle FROM Videos WHERE video_id = 'v1'"), "@chan");
         let _ = std::fs::remove_file(&db);
     }
@@ -444,7 +504,7 @@ mod tests {
         let db = temp_db("video_biography_order");
         let trash = store();
         crate::db::upsert_biography_from_video(&db, "@chan", "Channel Name", Some("UC123"), 42).unwrap();
-        crate::db::update_biography_details(&db, "@chan", "Carefully written bio", "", "", "", "", "", "", "", "", "", "", "").unwrap();
+        crate::db::update_biography_details(&db, "@chan", "Carefully written bio", "", "", "", "", "", "", "", "", "", "", "", "").unwrap();
         save(&db, "v1", "First");
         save(&db, "v2", "Second");
         {

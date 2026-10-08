@@ -15,6 +15,11 @@ pub mod tokens;
 pub mod workspace;
 pub mod sequences;
 pub mod drive_manage;
+pub mod calendar;
+pub mod pins;
+pub mod orphans;
+pub mod positions;
+pub mod graph;
 
 pub use schema::*;
 pub use videos::*;
@@ -29,6 +34,11 @@ pub use export::*;
 pub use workspace::*;
 pub use sequences::*;
 pub use drive_manage::*;
+pub use calendar::*;
+pub use pins::*;
+pub use orphans::*;
+pub use positions::*;
+pub use graph::*;
 
 #[cfg(test)]
 mod production_tests;

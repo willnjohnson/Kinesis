@@ -11,6 +11,8 @@ import { useWorkspace } from '../../hooks/useWorkspace';
 import { useVideoPreview } from '../VideoPreview';
 import { handlePlainContextMenu } from '../../lib/markdown-editor';
 import { useDragReorder, DropIndicator } from '../../hooks/useDragReorder';
+import { Select } from '../ui/Select';
+import { backdropProps } from '../../lib/backdrop';
 
 interface Props {
     /** The Drive's display path (":CS-DSA") the modal opens on. The header's breadcrumb (and its "More" menu) can move it to another Drive's sequence. */
@@ -298,7 +300,7 @@ export function SequenceModal({ drive: startDrive, driveLabel: startLabel, curre
     // On the page itself, not inside the video panel: that panel slides in with a CSS transform, which would
     // make this "fixed" window position against the panel instead of the screen.
     return createPortal(
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" onClick={onClose}>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-4 animate-in fade-in duration-200" {...backdropProps(onClose)}>
             <div
                 onClick={e => e.stopPropagation()}
                 className="bg-[#0f0f0f] border border-[#303030] rounded-2xl w-full max-w-xl h-[80vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200"
@@ -514,13 +516,9 @@ export function SequenceModal({ drive: startDrive, driveLabel: startLabel, curre
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                                 <div className="flex items-center gap-1.5">
                                     <span className="text-[10px] font-bold uppercase tracking-wider text-[#666666]" title="Sorts this list only. An explicit pick is added in the order you ticked it, not by this.">Sort</span>
-                                    <select
-                                        value={sort}
-                                        onChange={e => setSort(e.target.value as SequenceSort)}
-                                        className="px-2 py-1.5 bg-[#272727] hover:bg-[#3f3f3f] text-white rounded-md text-[11px] font-semibold cursor-pointer outline-none"
-                                    >
+                                    <Select value={sort} onValueChange={v => setSort(v as SequenceSort)}>
                                         {SORT_CHOICES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                                    </select>
+                                    </Select>
                                     <button
                                         onClick={() => setDescending(d => !d)}
                                         title={`${SORT_CHOICES.find(c => c.key === sort)![descending ? 'desc' : 'asc']} (click to reverse)`}

@@ -5,9 +5,13 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { format } from 'date-fns';
 import { saveImageAs } from '../lib/save-image-as';
 import { formatDate, formatViewCount, parseViewCount } from '../lib/video-format';
+import { usableText } from '../lib/utils';
 import { useFlags } from '../hooks/useFlags';
 import { BottomBar } from './BottomBar';
 import { TrashChip } from './TrashChip';
+import { OrphanedChip } from './OrphanedModal';
+import { reportThumbnail } from '../lib/orphan-watch';
+import { getVideoById } from '../api';
 import { LifeLoader } from './LifeLoader';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { youtubeChannelUrl } from './CreatorMenu';
@@ -713,6 +717,14 @@ export function VideoList({
     // Videos deleted this session, to put back. The words show when the bar is wide enough for them (an open Drive
     // panel takes room, so it needs a wider bar then), otherwise just the icon.
     const trashChip = onOpenTrash ? <TrashChip kind="video" labelFrom={driveLabel ? '6xl' : '4xl'} onOpen={onOpenTrash} /> : null;
+    // Saved videos YouTube no longer has (found as they're opened), beside the Trash: the Library's only.
+    const orphanedChip = isLibrary ? (
+        <OrphanedChip
+            wide={driveLabel ? '6xl' : '4xl'}
+            allowDeletion={allowDeletion}
+            onOpenVideo={id => { void getVideoById(id).then(v => { if (v) onSelect(v); }); }}
+        />
+    ) : null;
 
     const headerContent = (
         <>
@@ -726,6 +738,7 @@ export function VideoList({
 
             {/* Search and Library alike: at the right, just before the sort buttons. */}
             <div className="flex items-center self-stretch gap-2 shrink-0 ml-auto">
+                {orphanedChip}
                 {trashChip}
                 {sortControls}
             </div>
@@ -816,6 +829,7 @@ export function VideoList({
                                             onDelete={onDelete}
                                             allowDeletion={allowDeletion}
                                             onSaveImageAs={handleSaveImageAs}
+                                            watchThumbnail={isLibrary}
                                             bulkAssignMode={bulkAssignMode}
                                             selected={bulkSelectedIds?.has(video.id) ?? false}
                                             onToggleSelect={onToggleBulkSelect ? (e) => handleBulkCardClick(video, e) : undefined}
@@ -861,9 +875,12 @@ interface VideoCardProps {
     /** Bulk Assign Mode: a press on the card, which may start a drag-select (VideoList's startBulkDrag). */
     onBulkMouseDown?: (e: React.MouseEvent) => void;
     onBulkContextMenu?: (x: number, y: number) => void;
+    /** A saved video (the Library): how its thumbnail loads is passed on to lib/orphan-watch.ts, which checks with
+     *  YouTube whether it's orphaned (a broken thumbnail) or no longer is (a good one on an orphaned video). */
+    watchThumbnail?: boolean;
 }
 
-function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowDeletion, onSaveImageAs, bulkAssignMode = false, selected = false, onToggleSelect, onBulkMouseDown, onBulkContextMenu }: VideoCardProps) {
+function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowDeletion, onSaveImageAs, bulkAssignMode = false, selected = false, onToggleSelect, onBulkMouseDown, onBulkContextMenu, watchThumbnail = false }: VideoCardProps) {
     const { flags } = useFlags();
     // Right-clicking a card opens a menu of what can be done with the video (in Bulk Assign Mode it opens that mode's
     // menu instead). Saving the thumbnail, which a right-click on the picture used to do by itself, is one of its entries.
@@ -873,7 +890,9 @@ function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowD
     const [noThumbnail, setNoThumbnail] = useState(!video.thumbnail);
     const checkThumbnail = (img: HTMLImageElement) => {
         if (!img.complete) return;
-        if (img.naturalWidth === 0 || (img.naturalWidth === 120 && img.naturalHeight === 90)) setNoThumbnail(true);
+        const broken = img.naturalWidth === 0 || (img.naturalWidth === 120 && img.naturalHeight === 90);
+        if (broken) setNoThumbnail(true);
+        if (watchThumbnail) reportThumbnail(video.id, !broken);
     };
     const url = `https://www.youtube.com/watch?v=${video.id}`;
     const copy = (text: string) => { navigator.clipboard?.writeText(text).catch(() => {}); };
@@ -928,7 +947,7 @@ function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowD
                     loading="lazy"
                     ref={(el) => { if (el) checkThumbnail(el); }}
                     onLoad={(e) => checkThumbnail(e.currentTarget)}
-                    onError={() => setNoThumbnail(true)}
+                    onError={() => { setNoThumbnail(true); if (watchThumbnail) reportThumbnail(video.id, false); }}
                 />
             </div>
             {/* Instead of zooming the thumbnail, hovering the card draws a line in the theme's accent color along its bottom edge,
@@ -1046,11 +1065,5 @@ function apaCitation(video: Video, url: string): string {
     return video.author
         ? `${video.author}. ${date}. ${title}. YouTube. ${url}`
         : `${title}. ${date}. YouTube. ${url}`;
-}
-
-/** A transcript or summary as preview text: null when there is nothing real in it (empty, or the "NA" or "." a cleared transcript holds). */
-function usableText(text: string | null | undefined): string | null {
-    const t = text?.trim() ?? '';
-    return t === '' || t === '.' || t.toUpperCase() === 'NA' || t.toUpperCase() === 'N/A' ? null : t;
 }
 

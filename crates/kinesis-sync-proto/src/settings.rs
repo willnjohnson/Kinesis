@@ -22,8 +22,9 @@ pub const FEATURE_FLAGS: &[(&str, &str)] = &[
     ("showLibrary", "true"),
     ("showGlossary", "true"),
     ("showBiography", "true"),
+    ("showCalendar", "true"),
     ("showDrive", "true"),
-    // Which view opens first: search, library, glossary or biography (a hidden view falls back).
+    // Which view opens first: search, library, glossary, biography or calendar (a hidden view falls back).
     ("defaultView", "search"),
     // ── Library and search results
     ("showSortControls", "true"),
