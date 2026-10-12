@@ -26,6 +26,7 @@ const optionLabels = (labels: WorkspaceLabels): { key: ToggleKey; label: string;
     { key: "biographies", label: labels.aliasBiography },
     { key: "calendar", label: labels.aliasCalendar, hint: "Tracks, with their items, schedules and holidays." },
     { key: "calendarProgress", label: `Include ${labels.aliasCalendar} progress`, hint: "What's been checked off. Leave off to share a plan without your own checkmarks." },
+    { key: "studyNotes", label: `Shared ${labels.aliasNotes.toLowerCase()}`, hint: "Notes made shared. Personal notes never go in." },
     { key: "prompts", label: "Custom summary prompts", more: true },
     { key: "sequences", label: `${labels.aliasSequence}s`, hint: `Which order videos play in, per ${labels.aliasDriveName}.`, more: true },
     { key: "notes", label: "Video notes", more: true },
@@ -54,7 +55,7 @@ export function KinpakExport() {
     const [options, setOptions] = useState<KinpakOptions>({
         taxonomy: true, videos: true, transcripts: true, glossary: true, biographies: true, prompts: true,
         sequences: true, settings: true, workspace: true, history: true, notes: true, attachments: true,
-        calendar: true, calendarProgress: true,
+        calendar: true, calendarProgress: true, studyNotes: true,
         drives: DEFAULT_DRIVE_SCOPE,
     });
     // The export's state lives outside this component, so it's still here (running, or how it ended)
@@ -166,7 +167,7 @@ export function KinpakExport() {
                 <div className="mt-4 p-3 bg-green-900/10 border border-green-500/30 rounded-lg text-green-400 text-xs leading-relaxed break-words">
                     Exported {(summary.counts.video ?? 0).toLocaleString()} videos, {(summary.counts.wdbs ?? 0).toLocaleString()} categories,{" "}
                     {(summary.counts.glossary ?? 0).toLocaleString()} glossary terms, {(summary.counts.biography ?? 0).toLocaleString()} bios,{" "}
-                    {(summary.counts.drive_sequence ?? 0).toLocaleString()} {labels.aliasSequence.toLowerCase()} entries, {(summary.counts.attachment ?? 0).toLocaleString()} attachments, {(summary.counts.calendar_track ?? 0).toLocaleString()} {labels.aliasCalendar.toLowerCase()} tracks and{" "}
+                    {(summary.counts.drive_sequence ?? 0).toLocaleString()} {labels.aliasSequence.toLowerCase()} entries, {(summary.counts.attachment ?? 0).toLocaleString()} attachments, {(summary.counts.calendar_track ?? 0).toLocaleString()} {labels.aliasCalendar.toLowerCase()} tracks, {(summary.counts.study_note ?? 0).toLocaleString()} shared {labels.aliasNotes.toLowerCase()} and{" "}
                     {summary.settings} settings ({formatBytes(summary.bytes)}) to {summary.path}.
                 </div>
             )}

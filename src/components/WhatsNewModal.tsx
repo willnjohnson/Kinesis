@@ -19,7 +19,7 @@ const ACTIONS: Record<string, {
     // v0.5.1: summaries saved before the creator's name in "Channel Info:" linked to their biography.
     'link-channel-info': {
         run: linkChannelInfoFooters,
-        done: n => (n === 0 ? 'Nothing to update: every summary is already linked.' : `Linked the creator in ${n} ${n === 1 ? 'summary' : 'summaries'}.`),
+        done: n => (n === 0 ? 'Nothing to update: Every summary is already linked.' : `Linked the creator in ${n} ${n === 1 ? 'summary' : 'summaries'}.`),
         progressEvent: 'link_channel_info_progress',
         noun: 'summaries',
     },

@@ -1,3 +1,50 @@
+# Changelog (v0.5.4)
+
+## Added
+
+### Notes
+
+* **Notes Section**: Write study notes in Markdown, apart from any one video. They save as you type, can be filed under Drives, and stay personal until you share them.
+* **Cite Your Sources**: Right-click selected words in a Transcript or AI Summary to cite them in a note, or click **Cite Moment** on the player to pause and write a thought. A citation opens the video at that moment.
+* **Questions and Answers**: A `Q:` line with an `A:` line under it keeps the answer covered until you click **Show Answer**.
+* **Workbooks**: Put notes in order and read them a page at a time. A note or a workbook can be shared, linked to, and added to a Calendar track.
+* **Collapsible Callouts**: `> [!NOTE]-` starts folded and `> [!NOTE]+` starts open. Click the title to fold or unfold it.
+* **Maths and Formulas**: Write LaTeX between dollar signs: `$E = mc^2$` in a line, or `$$ ... $$` on lines of its own.
+* **Find, Sort and Export**: `Ctrl+F` finds and replaces in the open note, the bottom bar sorts the list, and right-click exports a note as Markdown or a workbook as a ZIP.
+
+### Logs
+
+* **Logs Section**: Keep a dated record of what you did, with a title and a description for each day.
+* **Columns, Dates and Export**: Drag a column's edge to resize it, choose a date format in **Entry Template**, and right-click a log to export it as CSV or Excel.
+
+### Calendar
+
+* **Repeat Patterns**: A scheduled track can repeat every other day or week, on the first Monday of the month, or by a rule of your own.
+
+### Library
+
+* **Sequences List**: The Drive panel can list every sequence, with a filter to find one.
+
+### Themes
+
+* **Light Themes**: Gruvbox Light and Catppuccin Latte.
+
+## Improved
+
+### Glossary
+
+* **Terms in Sub-Drives**: File a term under any level of a Drive. Picking a Drive shows the terms beneath it too.
+* **Flashcards**: Switch decks without closing Flashcards, and link to a deck from a note.
+
+### Calendar
+
+* **New Track and Edit Track**: Reorganized into Schedule and Options, and asks before closing with unsaved changes.
+
+### Writing
+
+* **Code Blocks**: Name a language after the triple backticks (```), and the code is colored to match your theme.
+* **Callouts**: Start a quote with `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, or pick one under **Quote/Callout** in the right-click menu.
+
 # Changelog (v0.5.3)
 
 ## Added
@@ -95,19 +142,3 @@
 ### Drives
 
 * **Drive Tree Updates**: Changing a Drive's alias, Category Marker or Decoration Marker in Manage Drive now updates the Drive Tree right away, along with the Drive name shown in the status bar.
-
-# Changelog (v0.5.0)
-
-## Added
-
-### Manage Drive
-
-* **Manage Drive Section**:
-  * Get an overview of an entire drive.
-  * View all of the sequences that exist.
-  * View all videos that aren't sorted into a Drive and view each Drive (similar to the existing Drive Tree).
-  * Viewing an individual drive shows an overview, allows user to edit markers and alias.
-* **Drive Node Actions**:
-  * Add sub-drives.
-  * Rename the current drive node.
-  * Move/merge into another node.

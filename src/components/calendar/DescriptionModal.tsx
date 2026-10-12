@@ -1,7 +1,9 @@
 import ReactMarkdown from 'react-markdown';
+import { CODE_HIGHLIGHT } from '../../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import { FileText } from 'lucide-react';
 import { remarkHighlight } from '../../lib/remark-highlight';
+import { remarkCallouts } from '../../lib/remark-callouts';
 import { remarkTimestamps } from '../../lib/remark-timestamps';
 import { remarkEmbeds } from '../../lib/remark-embeds';
 import { markdownUrlTransform } from '../../lib/internal-links';
@@ -22,7 +24,8 @@ export function DescriptionModal({ title, trackName, description, onClose }: {
         <Modal onClose={onClose} icon={FileText} title={title} subtitle={trackName} size="lg" closeOnNavigate>
             <div {...selectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400`}>
                 <ReactMarkdown
-                    remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                    remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                    rehypePlugins={CODE_HIGHLIGHT}
                     urlTransform={markdownUrlTransform}
                     components={{
                         a: MarkdownLink,

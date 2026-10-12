@@ -387,8 +387,11 @@ mod tests {
 
     #[test]
     fn a_screen_smaller_than_every_preset_gets_its_own_size_within_the_minimum() {
-        assert_eq!(fit_size(1440.0, 900.0, 700.0, 450.0), (crate::MIN_WINDOW_WIDTH, crate::MIN_WINDOW_HEIGHT));
-        assert_eq!(fit_size(1440.0, 900.0, 900.0, 550.0), (900.0, 550.0));
+        assert_eq!(fit_size(1440.0, 900.0, 400.0, 300.0), (crate::MIN_WINDOW_WIDTH, crate::MIN_WINDOW_HEIGHT));
+        // The minimum is the smallest preset (800x600), so a screen smaller than that either way still gets a window
+        // that size on that side: it can't be made smaller by hand either.
+        assert_eq!(fit_size(1440.0, 900.0, 700.0, 450.0), (800.0, 600.0));
+        assert_eq!(fit_size(1440.0, 900.0, 900.0, 550.0), (900.0, 600.0));
     }
 
     #[test]

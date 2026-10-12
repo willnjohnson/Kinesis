@@ -6,7 +6,7 @@ import {
     type GlossaryLink, type GlossaryMatch,
 } from '../../lib/glossary-detect';
 import { buildLink } from '../../lib/internal-links';
-import { resolveEntry } from '../../lib/glossary';
+import { driveFit, resolveEntry } from '../../lib/glossary';
 import { Select } from '../ui/Select';
 
 interface Props {
@@ -14,7 +14,7 @@ interface Props {
     text: string;
     /** Every glossary row (a term with its definition and the Drives it's filed under). */
     glossaryTerms: GlossaryTerm[];
-    /** The Drives the video is in (":CHEM"): their glossaries are offered first. */
+    /** The Drives the video is in (":CHEM", ":FRENCH-CH2"): their glossaries are offered first. */
     driveRoots: string[];
     /** Puts the changed text (links added or taken out) back into the editor. */
     onApply: (newText: string) => void;
@@ -53,12 +53,13 @@ export function GlossaryDetectPanel({ text, glossaryTerms, driveRoots, onApply, 
     // clicking any other row jumps to it and makes that the highlighted one instead.
     const [highlighted, setHighlighted] = useState<string | null>(null);
 
-    // Which glossary to look through: one of the video's own Drives, or the terms filed under no Drive
-    // at all ("General"). Never another Drive's: its terms mean something else where this video is. A
-    // Quick Tag has no definition, so there's nothing to link it to.
+    // Which glossary to look through: one of the video's own Drives (with the terms of the Drives above it:
+    // FRENCH's terms count in FRENCH-CH2), or the terms filed under no Drive at all ("General"). Never
+    // another Drive's: its terms mean something else where this video is. A Quick Tag has no definition,
+    // so there's nothing to link it to.
     const withDefinition = useMemo(() => glossaryTerms.filter(r => r.definition.trim() !== ''), [glossaryTerms]);
     const scopes = useMemo(() => {
-        const inDrive = (root: string) => new Set(withDefinition.filter(r => r.drives.includes(root)).map(r => r.term));
+        const inDrive = (drive: string) => new Set(withDefinition.filter(r => driveFit(r.drives, [drive]) > 0).map(r => r.term));
         const general = new Set(withDefinition.filter(r => r.drives.length === 0).map(r => r.term));
         return [
             ...driveRoots.map(root => ({ id: root, label: root.replace(/^:/, ''), terms: inDrive(root) })),

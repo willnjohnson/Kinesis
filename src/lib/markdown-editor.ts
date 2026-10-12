@@ -2,8 +2,8 @@ import type { KeyboardEvent, MouseEvent } from 'react';
 import { requestLinkPicker } from './internal-links';
 import { stripMarkdownFormatting } from './markdown-format';
 import {
-    blockInsertion, enterOnList, indentTarget, listBlock, nestedItemUnder, outdentTarget, parseListItem, parseTask,
-    renumberOrdered, shiftLines, TABLE_FIRST_CELL, TABLE_TEMPLATE, tableFromTabs, toggleDone, toggleTaskLines,
+    blockInsertion, enterOnList, indentTarget, listBlock, nestedItemUnder, outdentTarget, parseListItem, parseTask, QA_QUESTION, QA_TEMPLATE,
+    qaFromSelection, renumberOrdered, shiftLines, TABLE_FIRST_CELL, TABLE_TEMPLATE, tableFromTabs, toggleDone, toggleTaskLines,
 } from './markdown-lists';
 
 /**
@@ -16,8 +16,9 @@ import {
 
 export type MarkdownAction =
     | 'bold' | 'italic' | 'strikethrough' | 'highlight' | 'code' | 'link' | 'image'
-    | 'linkToApp' | 'blockquote' | 'bulletList' | 'numberedList' | 'taskList' | 'table' | 'horizontalRule'
-    | 'clearFormatting';
+    | 'linkToApp' | 'blockquote' | 'blockquoteSingle' | 'blockquoteMulti' | 'bulletList' | 'numberedList' | 'taskList' | 'table' | 'horizontalRule'
+    | 'clearFormatting' | 'questionAnswer' | 'linkFlashcards' | 'makeTerm'
+    | 'calloutNote' | 'calloutTip' | 'calloutImportant' | 'calloutWarning' | 'calloutCaution';
 
 const patterns: Record<string, { prefix: string; suffix: string; detect?: RegExp; defaultText?: string }> = {
     bold: { prefix: '**', suffix: '**', detect: /^\*\*(.*)\*\*$/s },
@@ -43,8 +44,30 @@ function wrapSelection(target: HTMLTextAreaElement, type: string) {
     let newSelectionStart: number;
     let newSelectionEnd: number;
 
+    // Code over more than one line is a fenced block (``` on a line of its own above and below), not a pair of single
+    // backticks, which only mark code within a line. A fenced block selected whole is taken out of its fence.
+    const fenced = type === 'code' ? /^(`{3,})[^\n]*\n([\s\S]*)\n\1$/.exec(selectedText) : null;
+    // Whole lines selected with the line break after them: the break stays after the block, not inside it.
+    const trailingBreak = selectedText.endsWith('\n');
+    const lines = trailingBreak ? selectedText.slice(0, -1) : selectedText;
+
     const unwrapped = selectedText && detect ? selectedText.match(detect) : null;
-    if (unwrapped) {
+    if (fenced) {
+        replacement = fenced[2];
+        newSelectionStart = start;
+        newSelectionEnd = start + replacement.length;
+    } else if (type === 'code' && lines.includes('\n') && !unwrapped) {
+        // A longer fence when the text has ``` of its own. The fence gets lines of its own: a break is added before it
+        // where the selection starts partway through a line, and after it where it ends partway through one.
+        const fence = lines.includes('```') ? '````' : '```';
+        const before = start > 0 && target.value[start - 1] !== '\n' ? '\n' : '';
+        const after = trailingBreak ? '\n' : end < target.value.length && target.value[end] !== '\n' ? '\n' : '';
+        const block = `${fence}\n${lines}\n${fence}`;
+        replacement = before + block + after;
+        // The block itself selected, so the same button takes the fence off again.
+        newSelectionStart = start + before.length;
+        newSelectionEnd = newSelectionStart + block.length;
+    } else if (unwrapped) {
         // Unwrap: remove markdown
         replacement = unwrapped[1];
         newSelectionStart = start;
@@ -178,6 +201,93 @@ function insertTable(target: HTMLTextAreaElement) {
         return;
     }
     insertBlock(target, TABLE_TEMPLATE, TABLE_FIRST_CELL);
+}
+
+/** A callout (lib/remark-callouts.ts): the lines selected become a quote under its mark, `> [!NOTE]`; with nothing
+ *  selected, on an empty line, an empty one is started with the caret on its first line. Lines already quoted aren't
+ *  quoted twice. `fold`: one that folds, as a note can have (`> [!NOTE]-` starts folded, `> [!NOTE]+` starts open). */
+export function insertCallout(target: HTMLTextAreaElement, kind: string, fold: '' | '-' | '+' = '') {
+    const value = target.value;
+    const from = lineBounds(value, target.selectionStart).start;
+    const to = lineBounds(value, target.selectionEnd).end;
+    const lines = value.substring(from, to).split('\n').map(l => (l.startsWith('>') ? l : `> ${l}`));
+    const text = `> [!${kind}]${fold}\n${lines.join('\n')}`;
+    replaceRange(target, from, to, text, from + text.length);
+}
+
+/** Inserts a multi-quote block: three lines with `> ` prefix, the third being `> —`. */
+export function insertMultiQuote(target: HTMLTextAreaElement) {
+    const value = target.value;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const hasSelection = start !== end;
+
+    if (hasSelection) {
+        // With selection, behave like regular blockquote: prefix each line with "> "
+        return prependLines(target, () => '> ');
+    }
+
+    // Without selection: insert three lines "> QUOTE", "> ", "> — SOURCE"
+    const from = lineBounds(value, start).start;
+    const text = '> QUOTE\n> \n> — SOURCE';
+    replaceRange(target, from, from, text, from + text.length);
+}
+
+/** Whether `pos` is inside maths already (a note's `$...$` or `$$...$$`, lib/note-math.ts): between a `$$` pair, or
+ *  after an odd number of single dollars on its line. A dollar with a backslash before it isn't one. */
+function insideMath(value: string, pos: number): boolean {
+    const before = value.substring(0, pos);
+    if ((before.match(/(?<!\\)\$\$/g) ?? []).length % 2 === 1) return true;
+    const line = before.substring(before.lastIndexOf('\n') + 1).replace(/(?<!\\)\$\$/g, '');
+    return (line.match(/(?<!\\)\$/g) ?? []).length % 2 === 1;
+}
+
+/**
+ * Puts a piece of LaTeX into a note (the right-click menu's Math & Formulas). Inside a formula already, it's added as
+ * it is; anywhere else it's given its dollar signs, so it's a formula of its own. `select`: the part of it to leave
+ * selected, to type over (a fraction's "a"); without one the caret goes after it.
+ *
+ * With `wrap`, it's the formula itself that's wanted, not a piece of one: the selected text becomes a formula (in a
+ * line, or on lines of its own for 'block'), or an empty one is started with the caret inside.
+ */
+export function insertMath(target: HTMLTextAreaElement, latex: string, { select, wrap }: { select?: string; wrap?: 'inline' | 'block' } = {}) {
+    const value = target.value;
+    const start = target.selectionStart, end = target.selectionEnd;
+    if (wrap) {
+        const inner = value.substring(start, end);
+        if (wrap === 'inline') {
+            replaceRange(target, start, end, `$${inner}$`);
+            // Text made a formula stays selected (inside its dollars); an empty one has the caret inside.
+            setTimeout(() => target.setSelectionRange(start + 1, start + 1 + inner.length), 0);
+            return;
+        }
+        // On lines of its own: a break before where the line has text already, and after where more follows.
+        const lead = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
+        const tail = end < value.length && value[end] !== '\n' ? '\n' : '';
+        replaceRange(target, start, end, `${lead}$$\n${inner}\n$$${tail}`);
+        const at = start + lead.length + 3;
+        setTimeout(() => target.setSelectionRange(at, at + inner.length), 0);
+        return;
+    }
+    const bare = insideMath(value, start);
+    const text = bare ? latex : `$${latex}$`;
+    replaceRange(target, start, end, text);
+    const offset = bare ? 0 : 1;
+    const found = select ? latex.indexOf(select) : -1;
+    setTimeout(() => {
+        if (select && found !== -1) target.setSelectionRange(start + offset + found, start + offset + found + select.length);
+        // After the piece, still inside the formula: more of it can be typed or picked.
+        else target.setSelectionRange(start + offset + latex.length, start + offset + latex.length);
+    }, 0);
+}
+
+/** A question and answer (a note's "Q:" / "A:" lines): the selected text becomes one, its first line the question and
+ *  the rest the answer; with nothing selected, an empty one is added after the line, the caret on its question. */
+function insertQuestionAnswer(target: HTMLTextAreaElement) {
+    const start = target.selectionStart;
+    const made = qaFromSelection(target.value, start, target.selectionEnd);
+    if (made) replaceRange(target, start, target.selectionEnd, made.insert, made.caret);
+    else insertBlock(target, QA_TEMPLATE, QA_QUESTION);
 }
 
 /** The lines above `pos`, nearest last (a bounded number of them: nesting only looks a little way up). */
@@ -347,7 +457,10 @@ export function applyMarkdownAction(target: HTMLTextAreaElement, action: Markdow
             requestLinkPicker({ textarea: target, start: target.selectionStart, end: target.selectionEnd });
             return;
         case 'blockquote':
+        case 'blockquoteSingle':
             return prependLines(target, () => '> ');
+        case 'blockquoteMulti':
+            return insertMultiQuote(target);
         case 'bulletList':
             return prependLines(target, () => '- ');
         case 'numberedList':
@@ -360,6 +473,21 @@ export function applyMarkdownAction(target: HTMLTextAreaElement, action: Markdow
             return insertBlock(target, '---');
         case 'clearFormatting':
             return clearFormatting(target);
+        case 'questionAnswer':
+            return insertQuestionAnswer(target);
+        case 'calloutNote': return insertCallout(target, 'NOTE');
+        case 'calloutTip': return insertCallout(target, 'TIP');
+        case 'calloutImportant': return insertCallout(target, 'IMPORTANT');
+        case 'calloutWarning': return insertCallout(target, 'WARNING');
+        case 'calloutCaution': return insertCallout(target, 'CAUTION');
+        case 'makeTerm':
+            // The Notes section answers (components/MakeTermModal.tsx): a Glossary term out of what's selected.
+            window.dispatchEvent(new CustomEvent('kinesis:make-term', { detail: { textarea: target, start: target.selectionStart, end: target.selectionEnd } }));
+            return;
+        case 'linkFlashcards':
+            // The same pane as Link to, opened on its Flashcards tab: pick the Drive whose terms the link studies.
+            requestLinkPicker({ textarea: target, start: target.selectionStart, end: target.selectionEnd, tab: 'flashcards' });
+            return;
         default:
             return wrapSelection(target, action);
     }

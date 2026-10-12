@@ -28,15 +28,20 @@ pub fn ensure_built_in_tags(db_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// A Drive in display form at any level: ":" then one or more names joined by '-' (":FRENCH",
+/// ":FRENCH-CH1"). The bare ":" placeholder isn't one. Glossary terms can be filed at any level.
+pub fn is_drive_path(path: &str) -> bool {
+    let Some(body) = path.strip_prefix(':') else { return false };
+    !body.contains([':', '_'])
+        && !body.chars().any(|c| c.is_control())
+        && body.split('-').all(|segment| !segment.is_empty() && segment.chars().count() <= 128 && segment.trim() == segment)
+}
+
 /// A Drive *root*: ":" followed by exactly one level (":CRYPTO"). Deeper paths (":CRYPTO-DOAC") and
-/// the bare ":" placeholder are not roots. Glossary terms can only be filed at this level.
+/// the bare ":" placeholder are not roots.
+#[cfg(test)]
 pub fn is_root_path(path: &str) -> bool {
-    let Some(segment) = path.strip_prefix(':') else { return false };
-    !segment.is_empty()
-        && segment.chars().count() <= 128
-        && !segment.contains(['-', ':', '_'])
-        && !segment.chars().any(|c| c.is_control())
-        && segment.trim() == segment
+    is_drive_path(path) && !path.contains('-')
 }
 
 /// One Glossary row: one definition of a term and every Drive it's filed under. `drives` is empty
@@ -58,8 +63,8 @@ pub(crate) fn sorted_unique(mut drives: Vec<String>) -> Vec<String> {
     drives
 }
 
-/// `Glossary.drives`' on-disk encoding: the roots newline-joined, '' meaning uncategorized. A root
-/// can't contain a newline (or any control character — see `is_root_path`), so '\n' is an
+/// `Glossary.drives`' on-disk encoding: the Drives newline-joined, '' meaning uncategorized. A Drive
+/// can't contain a newline (or any control character — see `is_drive_path`), so '\n' is an
 /// unambiguous separator.
 pub(crate) fn encode_drives(drives: &[String]) -> String {
     sorted_unique(drives.to_vec()).join("\n")
@@ -69,12 +74,12 @@ pub(crate) fn decode_drives(raw: &str) -> Vec<String> {
     sorted_unique(raw.split('\n').map(str::to_string).collect())
 }
 
-/// Drives coming from the UI or from outside (sync, packs): each must be a root. Errors on anything
-/// else, so a deeper level can never be stored. Returns them sorted and de-duplicated.
+/// Drives coming from the UI or from outside (sync, packs): each must be a well-formed Drive path,
+/// at any level. Errors on anything else. Returns them sorted and de-duplicated.
 pub(crate) fn validated_drives(drives: &[String]) -> Result<Vec<String>> {
     for d in drives.iter().filter(|d| !d.is_empty()) {
-        if !is_root_path(d) {
-            return Err(invalid(format!("'{d}' is not a Drive root; terms can only be assigned to top-level drives")));
+        if !is_drive_path(d) {
+            return Err(invalid(format!("'{d}' is not a Drive path like :FRENCH or :FRENCH-CH1")));
         }
     }
     Ok(sorted_unique(drives.to_vec()))
@@ -108,6 +113,8 @@ pub fn get_glossary_terms(db_path: &str) -> Result<Vec<GlossaryEntry>> {
 /// Deletes one entry: the row of `term` filed under exactly `drives` (empty = the uncategorized
 /// row). Links to the term are only dropped once no row for it is left (links are by name, so
 /// another definition still satisfies them).
+// The app deletes through the Trash (the _recorded form below); this one is what the tests use.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn delete_glossary_group(db_path: &str, term: &str, drives: &[String]) -> Result<()> {
     delete_glossary_group_recorded(db_path, term, drives).map(|_| ())
 }
@@ -274,16 +281,31 @@ mod tests {
     }
 
     #[test]
-    fn only_top_level_roots_are_accepted() {
+    fn terms_can_be_filed_at_any_level_but_not_under_malformed_paths() {
         assert!(is_root_path(":CRYPTO"));
         assert!(is_root_path(":Fin Tech"));
-        for bad in [":", "", "CRYPTO", ":CRYPTO-DOAC", ":CRYPTO-DOAC-VVV", ":A:B", ":A_B", ": ", ":X\n", "θψCRYPTO"] {
-            assert!(!is_root_path(bad), "{bad:?} must not be a root");
+        assert!(!is_root_path(":CRYPTO-DOAC"));
+        for good in [":CRYPTO", ":CRYPTO-DOAC", ":CRYPTO-DOAC-VVV", ":Fin Tech-Q1"] {
+            assert!(is_drive_path(good), "{good:?} is a Drive");
         }
-        let db = temp_db("roots");
-        let err = save_glossary_group(&db, None, "T", "def", &v(&[":CRYPTO-DOAC"])).unwrap_err().to_string();
-        assert!(err.contains("top-level"), "{err}");
-        assert!(get_glossary_terms(&db).unwrap().is_empty(), "a rejected save must not leave a half-saved term");
+        for bad in [":", "", "CRYPTO", ":A:B", ":A_B", ": ", ":X\n", "θψCRYPTO", ":A--B", ":A-", ":-A", ":A- B"] {
+            assert!(!is_drive_path(bad), "{bad:?} must not be a Drive");
+        }
+        let db = temp_db("levels");
+        save_glossary_group(&db, None, "T", "def", &v(&[":CRYPTO-DOAC", ":FIN"])).unwrap();
+        assert_eq!(rows_of(&db, "T"), vec![":CRYPTO-DOAC\n:FIN"]);
+        let err = save_glossary_group(&db, None, "U", "def", &v(&[":A_B"])).unwrap_err().to_string();
+        assert!(err.contains("not a Drive path"), "{err}");
+        assert!(rows_of(&db, "U").is_empty(), "a rejected save must not leave a half-saved term");
+        let _ = std::fs::remove_file(&db);
+    }
+
+    #[test]
+    fn a_sub_drive_can_hold_its_own_definition_of_a_term() {
+        let db = temp_db("subdrive");
+        save_glossary_group(&db, None, "Avoir", "To have.", &v(&[":FRENCH"])).unwrap();
+        save_glossary_group(&db, None, "Avoir", "To have (as an auxiliary).", &v(&[":FRENCH-CH2"])).unwrap();
+        assert_eq!(rows_of(&db, "Avoir"), vec![":FRENCH", ":FRENCH-CH2"], "a parent and its child are different Drives");
         let _ = std::fs::remove_file(&db);
     }
 
@@ -347,7 +369,7 @@ mod tests {
     }
 
     #[test]
-    fn the_dropdown_lists_only_top_level_drives_including_empty_ones() {
+    fn the_dropdown_lists_every_drive_as_a_tree_including_empty_ones() {
         let db = temp_db("rootlist");
         crate::db::save_video(&db, "v1", "T", "A", 1, "x", 1, "2026-01-01T00:00:00Z", "@a", None).unwrap();
         crate::db::save_video(&db, "v2", "T2", "A", 1, "x", 1, "2026-01-01T00:00:00Z", "@a", None).unwrap();
@@ -358,15 +380,22 @@ mod tests {
         crate::db::set_wdbs_alias(&db, "θψCRYPTO", "Crypto Assets").unwrap();
         // A root with no videos yet, and ones that exist only because a term is filed under them.
         crate::db::ensure_wdbs_path_exists(&db, ":EMPTY").unwrap();
-        save_glossary_group(&db, None, "Halving", "d", &v(&[":ONLYTERM", ":OTHERONLY"])).unwrap();
+        save_glossary_group(&db, None, "Halving", "d", &v(&[":ONLYTERM", ":OTHERONLY-CH1"])).unwrap();
 
         let roots = crate::db::get_wdbs_roots(&db).unwrap();
         let names: Vec<&str> = roots.iter().map(|r| r.segment.as_str()).collect();
-        assert_eq!(names, vec!["CRYPTO", "EMPTY", "FIN", "ONLYTERM", "OTHERONLY"], "no DOAC/VVV, sorted");
+        assert_eq!(names, vec!["CRYPTO", "EMPTY", "FIN", "ONLYTERM", "OTHERONLY"], "the top level, sorted");
         assert!(roots.iter().all(|r| is_root_path(&r.path)));
         assert_eq!(roots[0].path, ":CRYPTO");
         assert_eq!(roots[0].alias.as_deref(), Some("Crypto Assets"));
         assert_eq!(roots[2].alias, None, "an uncurated alias isn't reported");
+        // Deeper levels hang off their parent, one level at a time.
+        let doac = &roots[0].children;
+        assert_eq!(doac.iter().map(|r| r.path.as_str()).collect::<Vec<_>>(), vec![":CRYPTO-DOAC"]);
+        assert_eq!(doac[0].segment, "DOAC");
+        assert_eq!(doac[0].children[0].path, ":CRYPTO-DOAC-VVV");
+        assert!(roots[2].children.is_empty());
+        assert_eq!(roots[4].children[0].path, ":OTHERONLY-CH1", "a sub-Drive known only from a term is listed under its parent");
         let _ = std::fs::remove_file(&db);
     }
 

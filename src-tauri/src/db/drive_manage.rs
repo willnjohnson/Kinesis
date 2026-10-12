@@ -7,7 +7,8 @@
 //!   - Videos.WDBS, each video's home (storage form, "θψCS_DSA");
 //!   - VideoWDBSLinks, the "Also in" links (storage form);
 //!   - DriveSequence.drive, the sequences (display form);
-//!   - Glossary.drives, the roots a term is filed under (display form, top level only);
+//!   - Glossary.drives, the Drives a term is filed under (display form, any level);
+//!   - Notes.drives and PersonalNotes.drives, the Drives a note is filed under (the same form);
 //!   - `kinesis://drive/<storage form>` links in text (see db/links.rs).
 //!
 //! The hand-maintained production schema shapes how this is written: a video's WDBS must already exist
@@ -21,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use serde::Serialize;
 
-use super::glossary::{decode_drives, encode_drives, is_root_path, sorted_unique};
+use super::glossary::{decode_drives, encode_drives, is_drive_path, sorted_unique};
 use super::links::{apply_link_edits, count_texts_linking, LinkEdit, LinkKind};
 use super::schema::table_exists;
 use super::sequences::{covers, normalize_drive, renumber, video_drives};
@@ -43,10 +44,6 @@ fn level(display: &str) -> usize {
     display.trim_start_matches(':').split('-').count()
 }
 
-fn root_of(display: &str) -> String {
-    format!(":{}", display.trim_start_matches(':').split('-').next().unwrap_or(""))
-}
-
 fn last_segment(display: &str) -> &str {
     display.rsplit(['-', ':']).next().unwrap_or("")
 }
@@ -64,7 +61,7 @@ pub fn normalize_segment(raw: &str) -> Result<String> {
         return Err(invalid("A Drive needs a name."));
     }
     if !s.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
-        return Err(invalid(format!("'{s}' can't be a Drive name: only letters A-Z and digits 0-9.")));
+        return Err(invalid(format!("'{s}' can't be a Drive name: Only letters A-Z and digits 0-9.")));
     }
     if s.chars().count() > MAX_SEGMENT_CHARS {
         return Err(invalid(format!("A Drive name can be at most {MAX_SEGMENT_CHARS} characters.")));
@@ -79,7 +76,7 @@ fn storage_under(column: &str) -> String {
 }
 
 /// Every Drive path the database knows about, in display form: registered nodes, videos' homes and
-/// links, sequences and glossary roots, plus every level above each of them.
+/// links, sequences, glossary entries and notes, plus every level above each of them.
 fn known_paths(conn: &Connection) -> Result<BTreeSet<String>> {
     let mut raw: Vec<String> = Vec::new();
     if table_exists(conn, "tblWDBS")? {
@@ -98,6 +95,11 @@ fn known_paths(conn: &Connection) -> Result<BTreeSet<String>> {
     }
     {
         let mut stmt = conn.prepare("SELECT DISTINCT drives FROM Glossary WHERE drives != ''")?;
+        let lists: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+        raw.extend(lists.iter().flat_map(|l| decode_drives(l)));
+    }
+    for table in NOTE_TABLES {
+        let mut stmt = conn.prepare(&format!("SELECT DISTINCT drives FROM {table} WHERE drives != ''"))?;
         let lists: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
         raw.extend(lists.iter().flat_map(|l| decode_drives(l)));
     }
@@ -146,7 +148,7 @@ pub struct ManageNode {
     pub total: i64,
     /// Videos in this Drive's own sequence.
     pub sequence: i64,
-    /// Glossary entries filed under it (top-level Drives only; always 0 below that).
+    /// Glossary entries filed at exactly this Drive.
     pub terms: i64,
     pub children: Vec<ManageNode>,
 }
@@ -255,7 +257,7 @@ pub fn get_drive_manage_tree(db_path: &str) -> Result<Vec<ManageNode>> {
                     linked: child.linked,
                     total: child.videos.len() as i64,
                     sequence: seq.get(&display).copied().unwrap_or(0),
-                    terms: if prefix.is_empty() { terms.get(&display).copied().unwrap_or(0) } else { 0 },
+                    terms: terms.get(&display).copied().unwrap_or(0),
                     children: build(child, &display, seq, terms, curated),
                     display,
                 }
@@ -415,8 +417,8 @@ pub struct RelocateReport {
     pub sequences: i64,
     /// Glossary entries refiled.
     pub terms: i64,
-    /// When a top-level Drive moves under another, its glossary entries go to the new top level: this one.
-    pub terms_moved_to: Option<String>,
+    /// Notes refiled.
+    pub notes: i64,
     /// Texts (summaries, notes, definitions, ...) whose links to the moved Drives are updated.
     pub texts: i64,
 }
@@ -449,8 +451,8 @@ pub fn relocate_drive(db_path: &str, from: &str, to: &str, dry_run: bool) -> Res
     }
     let old_storage: Vec<String> = moving.iter().map(|p| display_to_storage(p)).collect();
     // Counted before any write, on this connection, so it reads the database as it stands. Links to the Drives
-    // (storage form) and to their sequences (display form) both follow the move.
-    let texts = count_texts_linking(db_path, &[(LinkKind::Drive, &old_storage), (LinkKind::Playlist, &moving)])? as i64;
+    // (storage form), and to their sequences and their flashcards (display form), all follow the move.
+    let texts = count_texts_linking(db_path, &[(LinkKind::Drive, &old_storage), (LinkKind::Playlist, &moving), (LinkKind::Flashcards, &moving)])? as i64;
 
     let mut report = RelocateReport { from: from.clone(), to: to.clone(), merged, texts, ..Default::default() };
     let tx = conn.transaction()?;
@@ -546,16 +548,10 @@ pub fn relocate_drive(db_path: &str, from: &str, to: &str, dry_run: bool) -> Res
         }
     }
 
-    // 6. Glossary entries, which are only ever filed at the top level.
-    if level(&from) == 1 {
-        let target_root = root_of(&to);
-        if target_root != from {
-            report.terms = refile_glossary_root(&tx, &from, &target_root)?;
-            if level(&to) > 1 && report.terms > 0 {
-                report.terms_moved_to = Some(target_root);
-            }
-        }
-    }
+    // 6. Glossary entries filed at the moved Drives go with them.
+    report.terms = refile_glossary(&tx, &from, &to)?;
+    // Notes too, with nothing to clash: a note is one text however many Drives it's under.
+    report.notes = refile_notes(&tx, &from, &to)?;
 
     // 7. The old nodes, deepest first, now that nothing points at them.
     if has_tbl {
@@ -576,7 +572,8 @@ pub fn relocate_drive(db_path: &str, from: &str, to: &str, dry_run: bool) -> Res
             let np = map_path(&from, &to, p);
             [
                 LinkEdit::Retarget(LinkKind::Drive, display_to_storage(p), display_to_storage(&np)),
-                LinkEdit::Retarget(LinkKind::Playlist, p.clone(), np),
+                LinkEdit::Retarget(LinkKind::Playlist, p.clone(), np.clone()),
+                LinkEdit::Retarget(LinkKind::Flashcards, p.clone(), np),
             ]
         })
         .collect();
@@ -586,16 +583,22 @@ pub fn relocate_drive(db_path: &str, from: &str, to: &str, dry_run: bool) -> Res
     Ok(report)
 }
 
-/// Replaces `from_root` with `to_root` in every glossary entry filed under it. Entries of one term that
+/// Moves every glossary entry filed at `from` or beneath it to the matching Drive under `to`
+/// (":FRENCH-CH1" becomes ":LANG-FRENCH-CH1" when :FRENCH moves under :LANG). Entries of one term that
 /// end up with the same definition become one; a Drive that would hold two different definitions of a
 /// term refuses the whole change (nothing is written). Returns how many entries were refiled.
-fn refile_glossary_root(tx: &Connection, from_root: &str, to_root: &str) -> Result<i64> {
+fn refile_glossary(tx: &Connection, from: &str, to: &str) -> Result<i64> {
     let affected: Vec<String> = {
-        let mut stmt = tx.prepare(
-            "SELECT DISTINCT term FROM Glossary WHERE instr(char(10) || drives || char(10), char(10) || ?1 || char(10)) > 0",
-        )?;
-        let rows = stmt.query_map(params![from_root], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
-        rows
+        let mut stmt = tx.prepare("SELECT term, drives FROM Glossary WHERE drives != ''")?;
+        let rows: Vec<(String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+        let mut terms: Vec<String> = rows
+            .into_iter()
+            .filter(|(_, raw)| decode_drives(raw).iter().any(|d| covers(from, d)))
+            .map(|(term, _)| term)
+            .collect();
+        terms.sort();
+        terms.dedup();
+        terms
     };
     let mut refiled = 0;
     let mut conflicts: Vec<String> = Vec::new();
@@ -610,10 +613,10 @@ fn refile_glossary_root(tx: &Connection, from_root: &str, to_root: &str) -> Resu
         let mut by_definition: Vec<(String, Vec<String>)> = Vec::new();
         for (_, definition, raw) in rows {
             let mut drives = decode_drives(&raw);
-            if drives.iter().any(|d| d == from_root) {
+            if drives.iter().any(|d| covers(from, d)) {
                 refiled += 1;
-                for d in drives.iter_mut().filter(|d| *d == from_root) {
-                    *d = to_root.to_string();
+                for d in drives.iter_mut().filter(|d| covers(from, d)) {
+                    *d = map_path(from, to, d);
                 }
             }
             match by_definition.iter_mut().find(|(def, _)| *def == definition) {
@@ -633,18 +636,55 @@ fn refile_glossary_root(tx: &Connection, from_root: &str, to_root: &str) -> Resu
     }
     if !conflicts.is_empty() {
         return Err(invalid(format!(
-            "The Glossary has different definitions for {} in {from_root} and {to_root}. Give one a qualifier (like 'Term (chem)') or remove one first.",
+            "The Glossary has different definitions for {} in {from} and {to}. Give one a qualifier (like 'Term (chem)') or remove one first.",
             conflicts.iter().map(|t| format!("'{t}'")).collect::<Vec<_>>().join(", ")
         )));
     }
     for (term, entries) in plans {
         tx.execute("DELETE FROM Glossary WHERE term = ?1", params![term])?;
         for (definition, drives) in entries {
-            debug_assert!(drives.iter().all(|d| is_root_path(d)));
+            debug_assert!(drives.iter().all(|d| is_drive_path(d)));
             tx.execute("INSERT INTO Glossary (term, definition, drives) VALUES (?1, ?2, ?3)", params![term, definition, encode_drives(&drives)])?;
         }
     }
     Ok(refiled)
+}
+
+/// The two notes tables (db/notes.rs).
+const NOTE_TABLES: [&str; 2] = [super::notes::SHARED_NOTES, super::notes::PERSONAL_NOTES];
+
+/// Moves every note filed at `from` or beneath it to the matching Drive under `to`, as refile_glossary does for terms.
+/// Returns how many notes were refiled.
+fn refile_notes(tx: &Connection, from: &str, to: &str) -> Result<i64> {
+    let mut refiled = 0;
+    for table in NOTE_TABLES {
+        let rows: Vec<(String, String)> = {
+            let mut stmt = tx.prepare(&format!("SELECT id, drives FROM {table} WHERE drives != ''"))?;
+            let found = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+            found
+        };
+        for (id, raw) in rows {
+            let drives = decode_drives(&raw);
+            if !drives.iter().any(|d| covers(from, d)) {
+                continue;
+            }
+            let moved: Vec<String> = drives.iter().map(|d| if covers(from, d) { map_path(from, to, d) } else { d.clone() }).collect();
+            tx.execute(&format!("UPDATE {table} SET drives = ?1 WHERE id = ?2"), params![encode_drives(&sorted_unique(moved)), id])?;
+            refiled += 1;
+        }
+    }
+    Ok(refiled)
+}
+
+/// How many notes are filed at `display` or beneath it.
+fn notes_under(conn: &Connection, display: &str) -> Result<i64> {
+    let mut count = 0;
+    for table in NOTE_TABLES {
+        let mut stmt = conn.prepare(&format!("SELECT drives FROM {table} WHERE drives != ''"))?;
+        let lists: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+        count += lists.iter().filter(|raw| decode_drives(raw).iter().any(|d| covers(display, d))).count() as i64;
+    }
+    Ok(count)
 }
 
 // ─── Deleting ────────────────────────────────────────────────────────────────
@@ -675,14 +715,10 @@ pub fn delete_drive(db_path: &str, display: &str, dry_run: bool) -> Result<Delet
     let storage = display_to_storage(&display);
     let homes: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM Videos WHERE {}", storage_under("WDBS")), params![storage], |r| r.get(0))?;
     let links: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM VideoWDBSLinks WHERE {}", storage_under("WDBS")), params![storage], |r| r.get(0))?;
-    let terms: i64 = if level(&display) == 1 {
-        conn.query_row(
-            "SELECT COUNT(*) FROM Glossary WHERE instr(char(10) || drives || char(10), char(10) || ?1 || char(10)) > 0",
-            params![display],
-            |r| r.get(0),
-        )?
-    } else {
-        0
+    let terms = {
+        let mut stmt = conn.prepare("SELECT drives FROM Glossary WHERE drives != ''")?;
+        let lists: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))?.filter_map(|r| r.ok()).collect();
+        lists.iter().filter(|raw| decode_drives(raw).iter().any(|d| covers(&display, d))).count() as i64
     };
     let mut still: Vec<String> = Vec::new();
     if homes > 0 {
@@ -694,12 +730,16 @@ pub fn delete_drive(db_path: &str, display: &str, dry_run: bool) -> Result<Delet
     if terms > 0 {
         still.push(format!("{terms} glossary entr{}", if terms == 1 { "y" } else { "ies" }));
     }
+    let notes = notes_under(&conn, &display)?;
+    if notes > 0 {
+        still.push(format!("{notes} note{}", if notes == 1 { "" } else { "s" }));
+    }
     if !still.is_empty() {
         return Err(invalid(format!("{display} still has {}. Move or merge them first.", still.join(", "))));
     }
 
     let old_storage: Vec<String> = removing.iter().map(|p| display_to_storage(p)).collect();
-    let texts = count_texts_linking(db_path, &[(LinkKind::Drive, &old_storage), (LinkKind::Playlist, &removing)])? as i64;
+    let texts = count_texts_linking(db_path, &[(LinkKind::Drive, &old_storage), (LinkKind::Playlist, &removing), (LinkKind::Flashcards, &removing)])? as i64;
     let report = DeleteReport { drive: display.clone(), drives: removing.len() as i64, texts };
     if dry_run {
         return Ok(report);
@@ -717,7 +757,7 @@ pub fn delete_drive(db_path: &str, display: &str, dry_run: bool) -> Result<Delet
     let edits: Vec<LinkEdit> = old_storage
         .into_iter()
         .map(|s| LinkEdit::Unlink(LinkKind::Drive, s))
-        .chain(removing.iter().map(|p| LinkEdit::Unlink(LinkKind::Playlist, p.clone())))
+        .chain(removing.iter().flat_map(|p| [LinkEdit::Unlink(LinkKind::Playlist, p.clone()), LinkEdit::Unlink(LinkKind::Flashcards, p.clone())]))
         .collect();
     if let Err(e) = apply_link_edits(db_path, &edits) {
         log::warn!("Couldn't remove links to deleted {display}: {e}");
@@ -881,26 +921,42 @@ mod tests {
     }
 
     #[test]
-    fn glossary_entries_follow_a_top_level_drive() {
+    fn glossary_entries_follow_their_drive_and_the_drives_beneath_it() {
         let db = temp_db("glossary");
         video(&db, "a", ":FIN");
         crate::db::ensure_wdbs_path_exists(&db, ":MONEY").unwrap();
         save_glossary_term(&db, None, "Halving", "Supply cut", ":FIN").unwrap();
-        save_glossary_term(&db, None, "Yield", "Return", ":FIN").unwrap();
-        save_glossary_term(&db, None, "Yield", "Return", ":MONEY").unwrap();
+        save_glossary_term(&db, None, "Coupon", "Bond interest", ":FIN-BONDS").unwrap();
 
         relocate_drive(&db, ":FIN", ":FINANCE", false).unwrap();
-        let entries = get_glossary_terms(&db).unwrap();
-        let halving = entries.iter().find(|e| e.term == "Halving").unwrap();
-        assert_eq!(halving.drives, vec![":FINANCE".to_string()]);
+        let drives_of = |term: &str| get_glossary_terms(&db).unwrap().into_iter().find(|e| e.term == term).unwrap().drives;
+        assert_eq!(drives_of("Halving"), vec![":FINANCE".to_string()]);
+        assert_eq!(drives_of("Coupon"), vec![":FINANCE-BONDS".to_string()], "a sub-Drive's entries move with it");
 
-        // Moving it under :MONEY files its entries at :MONEY, joining same-text ones.
+        // Moving it under :MONEY keeps each entry at the same place in it.
         let report = relocate_drive(&db, ":FINANCE", ":MONEY-FINANCE", false).unwrap();
-        assert_eq!(report.terms_moved_to.as_deref(), Some(":MONEY"));
-        let entries = get_glossary_terms(&db).unwrap();
-        let yields: Vec<_> = entries.iter().filter(|e| e.term == "Yield").collect();
-        assert_eq!(yields.len(), 1, "same definition, one entry");
-        assert_eq!(yields[0].drives, vec![":MONEY".to_string()]);
+        assert_eq!(report.terms, 2);
+        assert_eq!(drives_of("Halving"), vec![":MONEY-FINANCE".to_string()]);
+        assert_eq!(drives_of("Coupon"), vec![":MONEY-FINANCE-BONDS".to_string()]);
+
+        // Merging a child into its parent joins same-text entries into one.
+        save_glossary_term(&db, None, "Halving", "Supply cut", ":MONEY-FINANCE-BONDS").unwrap();
+        relocate_drive(&db, ":MONEY-FINANCE-BONDS", ":MONEY-FINANCE", false).unwrap();
+        let halvings: Vec<_> = get_glossary_terms(&db).unwrap().into_iter().filter(|e| e.term == "Halving").collect();
+        assert_eq!(halvings.len(), 1, "same definition, one entry");
+        assert_eq!(halvings[0].drives, vec![":MONEY-FINANCE".to_string()]);
+        assert_eq!(drives_of("Coupon"), vec![":MONEY-FINANCE".to_string()]);
+    }
+
+    #[test]
+    fn a_drive_with_a_term_beneath_it_cant_be_deleted() {
+        let db = temp_db("deleteterm");
+        create_drive(&db, None, "FRENCH").unwrap();
+        create_drive(&db, Some(":FRENCH"), "CH1").unwrap();
+        save_glossary_term(&db, None, "Avoir", "To have", ":FRENCH-CH1").unwrap();
+        let err = delete_drive(&db, ":FRENCH", false).unwrap_err().to_string();
+        assert!(err.contains("1 glossary entry"), "{err}");
+        assert_eq!(find(&get_drive_manage_tree(&db).unwrap(), ":FRENCH-CH1").unwrap().terms, 1, "counted where it's filed");
     }
 
     #[test]

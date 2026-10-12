@@ -223,3 +223,32 @@ export function blockInsertion(value: string, lineEnd: number, block: string): {
     const after = rest === '' || rest === '\n' || rest.startsWith('\n\n') ? '' : '\n';
     return { insert: before + block + after, blockStart: before.length };
 }
+
+/** An empty question and answer, as a note draws them (lib/remark-qa.ts): a "Q:" line with an "A:" line under it. */
+export const QA_TEMPLATE = 'Q: \nA: ';
+/** Where the caret goes in it: after "Q: ", ready for the question. */
+export const QA_QUESTION = { start: 3, length: 0 };
+
+/**
+ * What to write in place of the selection [start, end) to make it a question and answer: its first line is the
+ * question and the rest the answer (none yet, when only one line is selected), with `caret` where the answer ends,
+ * ready to carry on. The pair has to start a line, and its answer runs on until a blank line, so it's set on lines of
+ * its own: off the text it was selected out of, and with a blank line before whatever follows. Null when nothing but
+ * space is selected.
+ */
+export function qaFromSelection(value: string, start: number, end: number): { insert: string; caret: number } | null {
+    const lines = value.slice(start, end).split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) return null;
+    // Marks already written (a "Q:" typed by hand) aren't doubled.
+    const question = lines[0].replace(/^\**Q:\**\s*/i, '');
+    const answer = lines.slice(1).join('\n').replace(/^\**A:\**\s*/i, '');
+    const card = `Q: ${question}\nA: ${answer}`;
+    const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+    const nextBreak = value.indexOf('\n', end);
+    const lineEnd = nextBreak === -1 ? value.length : nextBreak;
+    const previousLine = lineStart === 0 ? '' : value.slice(value.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1);
+    const lead = value.slice(lineStart, start).trim() !== '' ? '\n\n' : previousLine.trim() === '' ? '' : '\n';
+    const rest = value.slice(end);
+    const tail = value.slice(end, lineEnd).trim() !== '' ? '\n\n' : rest === '' || /^\n[ \t]*(\n|$)/.test(rest) ? '' : '\n';
+    return { insert: lead + card + tail, caret: start + lead.length + card.length };
+}

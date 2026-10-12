@@ -50,9 +50,10 @@ function scrollRangeIntoView(range: Range) {
  * matches are painted with the CSS Custom Highlight API, so the text itself is left untouched; where
  * that isn't available the current match is selected instead.
  *
- * `content` is the text shown; it's searched again when it changes.
+ * `content` is the text shown; it's searched again when it changes. `scope` is where it looks: the Sidebar's text
+ * unless another is named (the Notes section's page, for a note being read).
  */
-export function useReadFind(active: boolean, content: string) {
+export function useReadFind(active: boolean, content: string, scope: string = FIND_SCOPE_SELECTOR) {
     const [findText, setFindText] = useState('');
     const [matchCase, setMatchCase] = useState(false);
     const [matchWholeWord, setMatchWholeWord] = useState(false);
@@ -69,7 +70,7 @@ export function useReadFind(active: boolean, content: string) {
 
     // Look for the text in what's on screen.
     useEffect(() => {
-        const root = active && findText ? document.querySelector(FIND_SCOPE_SELECTOR) : null;
+        const root = active && findText ? document.querySelector(scope) : null;
         if (!root) {
             rangesRef.current = [];
             setRanges([]);
@@ -93,7 +94,7 @@ export function useReadFind(active: boolean, content: string) {
         rangesRef.current = found;
         setRanges(found);
         setCurrent(found.length > 0 ? 0 : -1);
-    }, [active, findText, matchCase, matchWholeWord, content]);
+    }, [active, findText, matchCase, matchWholeWord, content, scope]);
 
     // Paint the matches, the current one differently, and bring it into view.
     useEffect(() => {

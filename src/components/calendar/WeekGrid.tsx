@@ -1,4 +1,4 @@
-import { Check, Folder, Video as VideoIcon } from 'lucide-react';
+import { Check, Folder, NotebookPen, Video as VideoIcon } from 'lucide-react';
 import type { CalendarDayItem, CalendarEntry, CalendarTrack, CalendarTrackSummary } from '../../api';
 import { calendarIcon } from '../../lib/calendar-icons';
 import { InProgressIcon } from '../ui/MarkIcons';
@@ -85,7 +85,7 @@ export function WeekGrid({ weekStart, today, tracks, items, fits, matchCount, fl
                                         <button
                                             onClick={e => onItem(item, e.clientX, e.clientY)}
                                             className="w-full flex items-center gap-1 rounded-md border border-dashed border-[#383838] px-2 py-1 text-left cursor-pointer hover:bg-[#1f1f1f]"
-                                            title={`${item.title}: an empty folder (drag videos or tasks into it in the track's list)`}
+                                            title={`${item.title}: An empty folder (drag videos or tasks into it in the track's list)`}
                                         >
                                             <Folder className="w-3 h-3 shrink-0 text-gray-500" />
                                             <span className="text-[11px] truncate flex-1 text-gray-500">{item.title}</span>
@@ -99,7 +99,7 @@ export function WeekGrid({ weekStart, today, tracks, items, fits, matchCount, fl
                                         {/* Done: a check. In progress: a half-filled circle, in amber. Otherwise the item's own icon. */}
                                         {item.done ? <Check className="w-3 h-3 shrink-0 text-gray-500" />
                                             : item.inProgress ? <InProgressIcon className="w-3 h-3 shrink-0 text-amber-400" />
-                                            : (() => { const Icon = item.videoId ? VideoIcon : calendarIcon(item.icon); return <Icon className="w-3 h-3 shrink-0 -translate-y-px text-[#aaaaaa]" />; })()}
+                                            : (() => { const Icon = item.videoId ? VideoIcon : item.noteId ? NotebookPen : calendarIcon(item.icon); return <Icon className="w-3 h-3 shrink-0 -translate-y-px text-[#aaaaaa]" />; })()}
                                         <span className={`text-[11px] truncate flex-1 ${item.done ? 'text-gray-500 line-through' : item.overdue ? 'text-red-400' : 'text-white'}`}><Marked text={item.title} of="item" /></span>
                                         {!item.done && <PriorityMark level={item.priority} className="w-3 h-3" />}
                                     </button>

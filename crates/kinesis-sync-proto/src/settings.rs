@@ -23,8 +23,10 @@ pub const FEATURE_FLAGS: &[(&str, &str)] = &[
     ("showGlossary", "true"),
     ("showBiography", "true"),
     ("showCalendar", "true"),
+    ("showNotes", "true"),
+    ("showLogs", "true"),
     ("showDrive", "true"),
-    // Which view opens first: search, library, glossary, biography or calendar (a hidden view falls back).
+    // Which view opens first: search, library, glossary, biography, calendar or notes (a hidden view falls back).
     ("defaultView", "search"),
     // ── Library and search results
     ("showSortControls", "true"),
@@ -74,6 +76,7 @@ pub const FEATURE_FLAGS: &[(&str, &str)] = &[
     ("showCustomPrompt", "true"),
     ("setTranscriptAfterSummarizeToNA", "false"),
     ("confirmBeforeEditingTranscript", "true"),
+    ("doNotAskToAlias", "false"),
     // ── AI summarize and image tools
     ("showSummarizeButton", "false"),
     // Off by default: meant for a technical person to opt into (Ollama needs a local install), not a Settings checkbox.
@@ -95,6 +98,9 @@ pub const FEATURE_FLAGS: &[(&str, &str)] = &[
     ("showGlossarySearchByTag", "true"),
     ("showGlossarySearchInLibrary", "true"),
     ("allowEditBio", "true"),
+    // ── Notes
+    // Writing, editing and deleting shared notes (personal notes are each reader's own and always open).
+    ("allowEditSharedNotes", "true"),
     // ── Workspace names (the names themselves live in the `WorkspaceLabels` table)
     // Off hides the Advanced section where Search, Library, Drive, ... can be renamed.
     ("showWorkspaceAdvanced", "true"),

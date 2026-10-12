@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, Video as VideoIcon } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, NotebookPen, Video as VideoIcon } from 'lucide-react';
 import { listCalendarDays, type CalendarDayItem } from '../../api';
 import { FloatingCard } from '../FloatingCard';
 import { calendarIcon } from '../../lib/calendar-icons';
@@ -131,7 +131,7 @@ export function MiniMonth({ weekStart, today, shownIds, fits, trackNames, versio
                     </div>
                     <ul className="space-y-1.5">
                         {previewItems.slice(0, PREVIEW_LIMIT).map(item => {
-                            const Icon = item.videoId ? VideoIcon : calendarIcon(item.icon);
+                            const Icon = item.videoId ? VideoIcon : item.noteId ? NotebookPen : calendarIcon(item.icon);
                             return (
                                 <li key={`${item.trackId}|${item.entryId}|${item.videoId}|${item.cycle}|${item.kind}`} className="flex items-start gap-2">
                                     <span className="mt-1.5 w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: trackColor(item.trackId) }} />

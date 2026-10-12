@@ -4,9 +4,10 @@ import { decodeWdbs } from '../api';
 import { parseInternalHref, openInternalLink, linkKindLabel } from '../lib/internal-links';
 import { openExternalUrlGuarded } from '../lib/external-links';
 import { formatClock } from '../lib/remark-timestamps';
+import { ALL_TERMS } from '../lib/glossary';
 import { useCreatorMenu } from './CreatorMenu';
 import { useWorkspace } from '../hooks/useWorkspace';
-import { useBioLinkPreview, useGlossaryPreview } from './GlossaryPreview';
+import { useBioLinkPreview, useChannelCard, useGlossaryPreview } from './GlossaryPreview';
 import { useSequenceLinkPreview } from './SequenceCard';
 import { useVideoPreview } from './VideoPreview';
 import { PlaylistEmbed, VideoEmbed } from './LinkEmbed';
@@ -38,7 +39,9 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed, 'data
     const aliasAlone = !!alias && showAlias && aliasOnly;
     // A glossary link previews its definition on hover, in place of the plain tooltip the other kinds get.
     const preview = useGlossaryPreview(internal?.kind === 'glossary' ? internal.key : '');
-    const bioPreview = useBioLinkPreview(internal?.kind === 'bio' ? internal.key : '');
+    // The creator in a summary's "Channel Info:" line has the channel's card instead (who it is, as labelled rows).
+    const bioPreview = useBioLinkPreview(internal?.kind === 'bio' && !channelInfo ? internal.key : '');
+    const channelCard = useChannelCard(internal?.kind === 'bio' && channelInfo ? internal.key : '');
     // A playlist link previews as a playlist card (first video's thumbnail, how many videos, what it starts with).
     const sequencePreview = useSequenceLinkPreview(internal?.kind === 'playlist' ? internal.key : '');
     // A video link previews as the video's card.
@@ -46,15 +49,19 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed, 'data
     // A biography link's right-click: Visit YouTube Channel, Open Biography.
     const creatorMenu = useCreatorMenu(internal?.kind === 'bio' ? internal.key : null);
     if (internal) {
-        const target = internal.kind === 'drive' ? decodeWdbs(internal.key) || internal.key : internal.key;
+        const target = internal.kind === 'drive' ? decodeWdbs(internal.key) || internal.key
+            : internal.kind === 'flashcards' && internal.key === ALL_TERMS ? 'All Terms'
+            : internal.key;
         const hover = internal.kind === 'glossary' ? preview
-            : internal.kind === 'bio' ? bioPreview
+            : internal.kind === 'bio' ? (channelInfo ? channelCard : bioPreview)
             : internal.kind === 'playlist' ? sequencePreview
             : internal.kind === 'video' ? videoPreview
             : null;
         const link = (
             <>
-                {alias && showAlias && !aliasAlone && <AliasBadge alias={alias} displayName={textOf(children)} className="mr-1.5" />}
+                {/* The badge has no tooltip of its own here: the channel's card (useChannelCard) says the alias and the
+                    channel's name, and opens from the badge as from the name. */}
+                {alias && showAlias && !aliasAlone && <span {...(hover ? hover.handlers : {})}><AliasBadge alias={alias} displayName={textOf(children)} tooltip={false} className="mr-1.5" /></span>}
                 <a
                     href="#"
                     onClick={(e) => {
@@ -72,20 +79,20 @@ export function MarkdownLink({ href, title, children, 'data-embed': embed, 'data
                     data-md-href={href}
                     className="text-red-500 hover:text-red-400 underline decoration-dotted decoration-red-500/60 underline-offset-4"
                 >
-                    {aliasAlone ? <AliasBadge alias={alias} displayName={textOf(children)} /> : children}
+                    {aliasAlone ? <AliasBadge alias={alias} displayName={textOf(children)} tooltip={false} /> : children}
                     {/* A video link that starts partway through says where, after its text: a play icon and the time in a
                         tinted chip (shaped like a [1:23] timestamp chip, lib/remark-timestamps.ts), so it reads as "plays
                         from here". Same size and font as the paragraph around it (tabular-nums keeps the digits even).
                         inline-flex keeps the link's dotted underline off it. */}
-                    {internal.at !== undefined && (
+                    {internal.kind === 'video' && (
                         <span
                             className="ml-1.5 inline-flex items-center gap-1 rounded px-1.5 tabular-nums leading-snug align-baseline bg-red-500/15 text-red-400"
-                            aria-label={`starts at ${formatClock(internal.at)}`}
+                            aria-label={internal.at !== undefined ? `starts at ${formatClock(internal.at)}` : 'Video'}
                             // Copied as markdown, the time is already in the link's address.
                             data-md-skip=""
                         >
                             <Play className="w-[0.7em] h-[0.7em] fill-current" />
-                            {formatClock(internal.at)}
+                            {internal.at !== undefined ? formatClock(internal.at) : 'Video'}
                         </span>
                     )}
                 </a>

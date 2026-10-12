@@ -171,4 +171,9 @@ pub struct DbDetails {
     pub biography_count: i64,
     pub attachment_count: i64,
     pub attachment_bytes: i64,
+    pub track_count: i64,
+    pub note_count: i64,
+    pub workbook_count: i64,
+    pub log_count: i64,
+    pub log_entry_count: i64,
 }

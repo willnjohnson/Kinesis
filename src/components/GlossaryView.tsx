@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, useMemo, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo, type ReactNode, type RefObject } from 'react';
 import { getGlossaryTerms, deleteGlossaryTerm, trashRestore, saveGlossaryTerm, getWdbsRoots, type GlossaryTerm, type WdbsRoot, type Video } from '../api';
-import { Plus, X, Pencil, Check, ChevronDown, GalleryVerticalEnd } from 'lucide-react';
+import { Plus, X, Pencil, ChevronDown, GalleryVerticalEnd } from 'lucide-react';
+import { allDrives, DriveTreeList, driveLabel, useDismiss } from './DriveTreeList';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { ConfirmDialog } from './ConfirmDialog';
 import { Modal } from './Modal';
@@ -16,60 +17,37 @@ import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { MarkdownField } from './MarkdownField';
 import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { foldVideoLinkTimes } from '../lib/internal-links';
-import { isBuiltInTag } from '../lib/glossary';
+import { ALL_TERMS, driveCovers, isBuiltInTag } from '../lib/glossary';
 import { builtInTagDescription, builtInTagIcon, builtInTagRank } from '../lib/built-in-tags';
 import { useFlags } from '../hooks/useFlags';
 import { SecondaryButton } from './ui/Button';
-import { Select } from './ui/Select';
 
 // The dropdown's value for "all Quick Tags" (drive roots look like ":CRYPTO", so this can't clash).
 const QUICK_VIEW = '__quick__';
 // The heading of the built-in tags' section, listed first (a word, so it can't clash with a letter or "#").
 const ESSENTIAL = 'Essentials';
 
-const nameOfRoot = (roots: WdbsRoot[], path: string) => roots.find(r => r.path === path)?.segment ?? path.replace(/^:/, '');
-
 const sameDrives = (a: string[], b: string[]) => a.length === b.length && a.every(d => b.includes(d));
 
 /** The drives an entry is filed under, by name, for telling apart two definitions of one term. */
-const driveBadge = (roots: WdbsRoot[], drives: string[]) => {
-    const named = drives.filter(d => d !== '').map(d => nameOfRoot(roots, d));
+const driveBadge = (drives: string[]) => {
+    const named = drives.filter(d => d !== '').map(driveLabel);
     return named.length === 0 ? 'General' : named.join(', ');
 };
 
-/** Dropdown with checkboxes for filing a Standard Glossary Tag under one or more top-level drives
- *  (each gets its own row holding the same definition). Only roots (level 1, e.g. CRYPTO) are
- *  offered: deeper levels like CRYPTO-DOAC can't be assigned. The list opens upward: these dialogs
- *  clip overflow, and the field sits near their bottom edge. */
+/** Dropdown with checkboxes for filing a Standard Glossary Tag under one or more drives, at any level
+ *  (FRENCH, or just FRENCH-CH1). The list opens upward: these dialogs clip overflow, and the field sits
+ *  near their bottom edge. */
 function DrivePicker({ roots, selected, onChange }: { roots: WdbsRoot[], selected: string[], onChange: (next: string[]) => void }) {
     const { labels } = useWorkspace();
     const [open, setOpen] = useState(false);
     const boxRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (!open) return;
-        const onDown = (e: MouseEvent) => {
-            if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-        };
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                // Close just the list, not the whole dialog behind it.
-                e.stopPropagation();
-                setOpen(false);
-            }
-        };
-        document.addEventListener('mousedown', onDown);
-        document.addEventListener('keydown', onKey, true);
-        return () => {
-            document.removeEventListener('mousedown', onDown);
-            document.removeEventListener('keydown', onKey, true);
-        };
-    }, [open]);
+    useDismiss(open, useCallback(() => setOpen(false), []), boxRef);
 
     const toggle = (path: string) =>
         onChange(selected.includes(path) ? selected.filter(p => p !== path) : [...selected, path]);
 
-    const names = selected.map(p => nameOfRoot(roots, p));
+    const names = selected.map(driveLabel);
     const summary = names.length === 0 ? 'None' : names.length <= 2 ? names.join(', ') : `${names.length} selected`;
 
     return (
@@ -93,30 +71,64 @@ function DrivePicker({ roots, selected, onChange }: { roots: WdbsRoot[], selecte
                         <div
                             role="listbox"
                             aria-multiselectable="true"
-                            className="absolute left-0 right-0 bottom-full mb-1 z-10 max-h-48 overflow-y-auto bg-[#141414] border border-[#333] rounded-xl py-1 shadow-xl"
+                            className="absolute left-0 right-0 bottom-full mb-1 z-10 max-h-64 overflow-y-auto bg-[#141414] border border-[#333] rounded-xl py-1 shadow-xl text-sm"
                         >
-                            {roots.map(r => {
-                                const on = selected.includes(r.path);
-                                return (
-                                    <button
-                                        key={r.path}
-                                        type="button"
-                                        role="option"
-                                        aria-selected={on}
-                                        onClick={() => toggle(r.path)}
-                                        title={r.alias ?? undefined}
-                                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-left text-gray-200 hover:bg-[#222222] transition-colors cursor-pointer"
-                                    >
-                                        <span className={`w-4 h-4 shrink-0 rounded border flex items-center justify-center ${on ? 'bg-[var(--k-accent)] border-[var(--k-accent)]' : 'border-[#555]'}`}>
-                                            {on && <Check className="w-3 h-3 text-white" strokeWidth={3} />}
-                                        </span>
-                                        <span className="truncate">{r.segment}</span>
-                                    </button>
-                                );
-                            })}
+                            <DriveTreeList roots={roots} isOn={p => selected.includes(p)} onPick={toggle} checkboxes />
                         </div>
                     )}
                 </>
+            )}
+        </div>
+    );
+}
+
+/** The heading's one dropdown for what's shown: all terms, all tags, or the terms of one drive and the drives
+ *  beneath it (picked from the same expandable list as the Add/Edit dialogs). */
+function GlossaryViewPicker({ value, onChange, roots, showTags, showDrives }: { value: string, onChange: (v: string) => void, roots: WdbsRoot[], showTags: boolean, showDrives: boolean }) {
+    const { labels } = useWorkspace();
+    const [open, setOpen] = useState(false);
+    const boxRef = useRef<HTMLDivElement>(null);
+    useDismiss(open, useCallback(() => setOpen(false), []), boxRef);
+    const pick = (v: string) => { onChange(v); setOpen(false); };
+    const label = value === '' ? 'All Terms' : value === QUICK_VIEW ? 'All Tags' : driveLabel(value);
+    const fixed = (v: string, text: string) => (
+        <button
+            type="button"
+            role="option"
+            aria-selected={value === v}
+            onClick={() => pick(v)}
+            className={`w-full flex items-center pl-[26px] pr-4 py-2 text-left hover:bg-[#222222] transition-colors cursor-pointer ${value === v ? 'text-[var(--k-accent)]' : 'text-gray-200'}`}
+        >
+            {text}
+        </button>
+    );
+
+    return (
+        // A fixed width, so the drives arriving after the terms (see loadRoots) don't resize it.
+        <div ref={boxRef} className="relative w-40">
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                aria-label={`Show ${labels.aliasGlossary.toLowerCase()} entries: All terms, all tags, or by ${labels.aliasDriveName}`}
+                title={label}
+                className="w-full flex items-center justify-between gap-2 pl-2.5 pr-2 py-1.5 bg-[#272727] hover:bg-[#3f3f3f] text-white rounded-md text-[11px] font-semibold transition-colors cursor-pointer"
+            >
+                <span className="truncate">{label}</span>
+                <ChevronDown className={`w-3.5 h-3.5 shrink-0 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+            {open && (
+                <div role="listbox" className="absolute right-0 top-full mt-1 z-20 w-64 max-h-80 overflow-y-auto bg-[#141414] border border-[#333] rounded-xl py-1 shadow-xl text-sm">
+                    {fixed('', 'All Terms')}
+                    {showTags && fixed(QUICK_VIEW, 'All Tags')}
+                    {showDrives && roots.length > 0 && (
+                        <>
+                            <div className="my-1 border-t border-[#272727]" />
+                            <DriveTreeList roots={roots} isOn={p => p === value} onPick={pick} checkboxes={false} />
+                        </>
+                    )}
+                </div>
             )}
         </div>
     );
@@ -143,7 +155,7 @@ function GlossaryNameButton({ entry, onOpen, badge }: { entry: GlossaryTerm; onO
     );
 }
 
-export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOpenFlashcards, allowModification = true, onChange, onNotify, onOpenTrash, reloadSignal, scrollContainerRef, startInTags = false }: { /** Opens Flashcards for the terms on screen (App owns the window: it's a place in Back/Forward). */ onOpenFlashcards: (entries: GlossaryTerm[], deckName: string) => void, onNotify?: (n: NotificationContent) => void, onOpenTrash?: () => void, reloadSignal?: number, /** Open on the tags list (the sidebar's "Manage tags in ..."), not the terms. */ startInTags?: boolean, searchQuery: string, onSearchInLibrary: (term: string, mode: 'tag' | 'term' | 'library') => void, onOpenVideo?: (video: Video) => void, allowModification?: boolean, onChange?: () => void, scrollContainerRef: RefObject<HTMLDivElement | null> }) {
+export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOpenFlashcards, allowModification = true, onChange, onNotify, onOpenTrash, reloadSignal, scrollContainerRef, startInTags = false }: { /** Opens Flashcards for the terms on screen (App owns the window: it's a place in Back/Forward). */ onOpenFlashcards: (entries: GlossaryTerm[], deckName: string, drive: string) => void, onNotify?: (n: NotificationContent) => void, onOpenTrash?: () => void, reloadSignal?: number, /** Open on the tags list (the sidebar's "Manage tags in ..."), not the terms. */ startInTags?: boolean, searchQuery: string, onSearchInLibrary: (term: string, mode: 'tag' | 'term' | 'library') => void, onOpenVideo?: (video: Video) => void, allowModification?: boolean, onChange?: () => void, scrollContainerRef: RefObject<HTMLDivElement | null> }) {
     const { labels } = useWorkspace();
     const glossaryLower = labels.aliasGlossary.toLowerCase();
     const [terms, setTerms] = useState<GlossaryTerm[]>([]);
@@ -211,7 +223,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
         const rootList = await getWdbsRoots().catch(() => [] as WdbsRoot[]);
         setRoots(rootList);
         // A drive that no longer exists can't stay selected in the dropdown.
-        setView(prev => (prev && prev !== QUICK_VIEW && !rootList.some(r => r.path === prev) ? '' : prev));
+        setView(prev => (prev && prev !== QUICK_VIEW && !allDrives(rootList).some(r => r.path === prev) ? '' : prev));
     };
 
     const openAddModal = () => {
@@ -341,8 +353,8 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
         let filtered = terms;
         if (showGlossaryTags) {
             filtered = terms.filter(t => t.definition.trim().length > 0);
-            // Only Standard tags belong to drives; picking one shows just the tags filed under it.
-            if (driveFilter) filtered = filtered.filter(t => t.drives.includes(driveFilter));
+            // Only Standard tags belong to drives; picking one shows just the tags filed under it or a drive beneath it.
+            if (driveFilter) filtered = filtered.filter(t => t.drives.some(d => driveCovers(driveFilter, d)));
         } else {
             filtered = terms.filter(t => t.definition.trim().length === 0);
         }
@@ -395,20 +407,13 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
                 <h2 className="text-xl font-bold text-white">{labels.aliasGlossary}</h2>
                 <div className="flex items-center gap-3">
                     {(flags.showQuickTags || (flags.glossaryDriveFilterVisible && roots.length > 0)) && (
-                    <Select
-                        value={view}
-                        onValueChange={setView}
-                        aria-label={`Show ${glossaryLower} entries: all terms, all tags, or by ${labels.aliasDriveName}`}
-                        // A fixed width, so the drives arriving after the terms (see loadRoots) don't resize it.
-                        wrapperClassName="w-40"
-                        className="w-full"
-                    >
-                        <option value="">All Terms</option>
-                        {flags.showQuickTags && <option value={QUICK_VIEW}>All Tags</option>}
-                        {flags.glossaryDriveFilterVisible && roots.map(r => (
-                            <option key={r.path} value={r.path} title={r.alias ?? undefined}>{r.segment}</option>
-                        ))}
-                    </Select>
+                        <GlossaryViewPicker
+                            value={view}
+                            onChange={setView}
+                            roots={roots}
+                            showTags={flags.showQuickTags}
+                            showDrives={flags.glossaryDriveFilterVisible}
+                        />
                     )}
                     {allowModification && (
                         <button
@@ -436,7 +441,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
                     <div className="text-center text-gray-500 py-24 bg-[#121212] rounded-xl border border-[#272727]">
                         {showGlossaryTags && driveFilter && !searchQuery.trim() ? (
                             <>
-                                <p className="text-xl font-bold text-white mb-2">No terms in {nameOfRoot(roots, driveFilter)}</p>
+                                <p className="text-xl font-bold text-white mb-2">No terms in {driveLabel(driveFilter)}</p>
                                 <p className="text-md">Edit a term and pick this {labels.aliasDriveName.toLowerCase()} to file it here.</p>
                             </>
                         ) : (
@@ -468,7 +473,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
                                             <GlossaryNameButton
                                                 entry={t}
                                                 onOpen={() => setSelectedTerm(t)}
-                                                badge={multiRowTerms.has(t.term) ? <span className="ml-2 text-[11px] font-semibold text-gray-500 no-underline">{driveBadge(roots, t.drives)}</span> : undefined}
+                                                badge={multiRowTerms.has(t.term) ? <span className="ml-2 text-[11px] font-semibold text-gray-500 no-underline">{driveBadge(t.drives)}</span> : undefined}
                                             />
                                             {/* A built-in tag can't be edited or deleted (the backend refuses too). Hidden
                                                 until the row is hovered (or a button has keyboard focus), right after the name. */}
@@ -510,7 +515,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
                         {showGlossaryTags && filteredTerms.length > 0 && (
                             <button
                                 type="button"
-                                onClick={() => onOpenFlashcards(filteredTerms, driveFilter ? nameOfRoot(roots, driveFilter) : 'All Terms')}
+                                onClick={() => onOpenFlashcards(filteredTerms, driveFilter ? driveLabel(driveFilter) : 'All Terms', driveFilter || ALL_TERMS)}
                                 title={`Study the ${filteredTerms.length} term${filteredTerms.length === 1 ? '' : 's'} shown as flashcards`}
                                 className="shrink-0 flex items-center gap-1.5 whitespace-nowrap px-1.5 py-0.5 text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
                             >
@@ -680,7 +685,7 @@ export function GlossaryView({ searchQuery, onSearchInLibrary, onOpenVideo, onOp
             {/* Confirm Delete Modal */}
             {termToDelete && (
                 <ConfirmDialog
-                    message={`Are you sure you want to delete the ${termToDelete.definition.trim() ? 'term' : 'tag'} "${termToDelete.term}"${driveBadge(roots, termToDelete.drives) !== 'General' ? ` (${driveBadge(roots, termToDelete.drives)})` : ''}?`}
+                    message={`Are you sure you want to delete the ${termToDelete.definition.trim() ? 'term' : 'tag'} "${termToDelete.term}"${driveBadge(termToDelete.drives) !== 'General' ? ` (${driveBadge(termToDelete.drives)})` : ''}?`}
                     onConfirm={handleDelete}
                     onCancel={() => setTermToDelete(null)}
                 />

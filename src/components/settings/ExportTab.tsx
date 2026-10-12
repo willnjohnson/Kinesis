@@ -64,10 +64,10 @@ function ObsidianExport() {
     const [error, setError] = useState<string | null>(null);
     const [summary, setSummary] = useState<ExportSummary | null>(null);
     const [options, setOptions] = useState<ObsidianOptions>({
-        videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, drives: DEFAULT_DRIVE_SCOPE,
+        videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, notes: true, logs: true, drives: DEFAULT_DRIVE_SCOPE,
     });
     // A vault with nothing ticked would be empty.
-    const anything = options.videos || options.glossary || options.biographies || options.calendar;
+    const anything = options.videos || options.glossary || options.biographies || options.calendar || options.notes || options.logs;
 
     useEffect(() => {
         getSetting(EXPORT_PATH_SETTING_KEY).then(setFolderPath).catch(() => {});
@@ -118,8 +118,10 @@ function ObsidianExport() {
                             { key: "transcripts", label: "Include transcripts", hint: "The bulk of the vault's size. Leave off for much smaller notes.", needsVideos: true },
                             { key: "glossary", label: labels.aliasGlossary },
                             { key: "biographies", label: labels.aliasBiography },
-                            { key: "calendar", label: labels.aliasCalendar, hint: "A note per track, its items as a checklist. A snapshot: ticking boxes in Obsidian doesn't change Kinesis." },
-                        ] as { key: "videos" | "transcripts" | "glossary" | "biographies" | "calendar"; label: string; hint?: string; needsVideos?: boolean }[]).map(({ key, label, hint, needsVideos }) => {
+                            { key: "calendar", label: labels.aliasCalendar, hint: "A note per track, its items as a checklist. A snapshot: Ticking boxes in Obsidian doesn't change Kinesis." },
+                            { key: "notes", label: labels.aliasNotes, hint: "Your notes, shared and personal, with each citation linked to its video's note." },
+                            { key: "logs", label: labels.aliasLogs, hint: "A note per log, its days as a table. Each date links to that day's note (Obsidian's Daily Notes)." },
+                        ] as { key: "videos" | "transcripts" | "glossary" | "biographies" | "calendar" | "notes" | "logs"; label: string; hint?: string; needsVideos?: boolean }[]).map(({ key, label, hint, needsVideos }) => {
                             const dependent = needsVideos && !options.videos;
                             return (
                                 <label key={key} className={`flex items-start gap-2 text-xs cursor-pointer ${dependent ? "opacity-40" : ""}`} title={hint}>
@@ -166,7 +168,7 @@ function ObsidianExport() {
                 {summary && (
                     <div className="mt-4 p-3 bg-green-900/10 border border-green-500/30 rounded-lg text-green-400 text-xs leading-relaxed">
                         Exported {summary.videos_exported} videos, {summary.glossary_terms} glossary terms,{" "}
-                        {summary.biographies} creator bios and {summary.calendar_tracks} {labels.aliasCalendar.toLowerCase()} tracks to {summary.folder_path}.
+                        {summary.biographies} creator bios, {summary.calendar_tracks} {labels.aliasCalendar.toLowerCase()} tracks, {summary.notes} {labels.aliasNotes.toLowerCase()} and {summary.logs} {labels.aliasLogs.toLowerCase()} to {summary.folder_path}.
                     </div>
                 )}
             </div>

@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArchiveRestore, ArrowLeft, ChevronDown, ChevronRight, Folder, FolderPlus, GripVertical, ListPlus, Pencil, Repeat, RotateCcw, Trash2, Undo2, Video as VideoIcon, X } from 'lucide-react';
-import { getSavedVideos, searchLibrary, type CalendarEntry, type CalendarTrackSummary, type Video } from '../../api';
+import { Archive, ArchiveRestore, ArrowLeft, BookOpenText, ChevronDown, ChevronRight, Folder, FolderPlus, GripVertical, ListPlus, NotebookPen, Pencil, Repeat, RotateCcw, Trash2, Undo2, Video as VideoIcon, X } from 'lucide-react';
+import { getSavedVideos, listNotes, listPins, listWorkbooks, searchLibrary, videoThumbnail, type CalendarEntry, type CalendarTrackSummary } from '../../api';
+import { noteDisplayTitle } from '../../lib/notes';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { handlePlainContextMenu } from '../../lib/markdown-editor';
 import { useDragReorder, DropIndicator, type DropPlace } from '../../hooks/useDragReorder';
 import { InProgressIcon } from '../ui/MarkIcons';
-import { MODE_LABEL, WEEKDAYS, trackColor, niceDate, trackTime, statusLine, PriorityMark, Marked, EntryTitle } from './shared';
+import { MODE_LABEL, repeatLabel, trackColor, niceDate, trackTime, statusLine, PriorityMark, Marked, EntryTitle } from './shared';
 
 /**
  * Where a drag leaves a track's entries (each folder followed by what's in it), or null when the drop changes nothing.
@@ -52,7 +53,7 @@ function relayout(all: CalendarEntry[], drop: DropPlace, collapsed: Set<number>)
 }
 
 /** A track opened in the panel: what it is, and its entries to check off, add to or remove. */
-export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMark, onProgress, onRemove, onAddVideo, onTask, onNewFolder, onLayout, onEdit, onStartOver, onUndoStartOver, onArchive, onDelete }: {
+export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMark, onProgress, onRemove, onAddVideo, onAddNote, onAddWorkbook, onTask, onNewFolder, onLayout, onEdit, onStartOver, onUndoStartOver, onArchive, onDelete }: {
     summary: CalendarTrackSummary;
     canEdit: boolean;
     /** While the search bar filters items: whether an entry fits (the rest are dimmed, so the ones that fit stand out). */
@@ -64,6 +65,10 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
     onProgress: (entry: CalendarEntry, on: boolean) => void;
     onRemove: (entry: CalendarEntry) => void;
     onAddVideo: (videoId: string) => void;
+    /** Adds a note (the Notes section) to the end of the track. Left out when the Notes section is hidden. */
+    onAddNote?: (noteId: string) => void;
+    /** Adds a workbook's notes, in its order (where notes can be added). */
+    onAddWorkbook?: (workbookId: string) => void;
     /** Opens the task window: for a new task (no entry), or to edit one (a folder too). */
     onTask: (entry: CalendarEntry | null) => void;
     /** Opens the window for a new folder. */
@@ -105,8 +110,10 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
     const status = statusLine(summary);
     const pct = state.total > 0 ? Math.round((state.done / state.total) * 100) : 0;
     return (
-        <div className="bg-[#121212] rounded-xl border border-[#272727]">
-            <div className="p-3 border-b border-[#222]">
+        // As tall as the column gives it (down to New Track): the heading stays at the top and the Add row at the
+        // foot, and the items scroll between them.
+        <div className="h-full min-h-[16rem] flex flex-col bg-[#121212] rounded-xl border border-[#272727]">
+            <div className="shrink-0 p-3 border-b border-[#222]">
                 <div className="flex items-center gap-1">
                     <button onClick={onBack} className="p-1 -ml-1 rounded text-gray-500 hover:text-white transition-colors cursor-pointer" title="All tracks"><ArrowLeft className="w-4 h-4" /></button>
                     <span className="w-2.5 h-2.5 rounded-full shrink-0 ml-1" style={{ backgroundColor: trackColor(track.id) }} />
@@ -131,7 +138,7 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                     {track.drive && <span className="px-1.5 py-0.5 rounded bg-[#222] border border-[#333] text-[10px] font-bold text-gray-400">{track.drive}</span>}
                     {track.advanceMode !== 'completion' && (
                         <span className="text-[10px] text-gray-500">
-                            {WEEKDAYS.filter(w => track.weekdays.includes(w.day)).map(w => w.short).join('/')}
+                            {repeatLabel(track.repeat, track.weekdays)}
                             {` · ${trackTime(track) ?? 'any time'}`}
                         </span>
                     )}
@@ -143,7 +150,7 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                     </div>
                 )}
             </div>
-            <div className="p-2">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-2">
                 {entries.length === 0 && <p className="text-[11px] text-gray-500 italic px-1 py-1">Nothing in this track yet.</p>}
                 <ol className="space-y-0.5">
                     {shown.map(entry => entry.isFolder ? (
@@ -249,38 +256,79 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                         </li>
                     ))}
                 </ol>
-                {track.sourceDriveSequence ? (
+                {track.sourceDriveSequence && (
                     <p className="text-[11px] text-gray-500 mt-2 px-1">
-                        Follows {track.drive}'s {labels.aliasSequence.toLowerCase()}: add or reorder videos there, and they show up here.
+                        Follows {track.drive}'s {labels.aliasSequence.toLowerCase()}: Add or reorder videos there, and they show up here.
                     </p>
-                ) : canEdit && <AddEntry onAddVideo={onAddVideo} onNewTask={() => onTask(null)} onNewFolder={onNewFolder} />}
+                )}
             </div>
+            {/* Always in reach, however long the track is. */}
+            {!track.sourceDriveSequence && canEdit && (
+                <div className="shrink-0 px-2 pb-2 border-t border-[#222]">
+                    <AddEntry onAddVideo={onAddVideo} onAddNote={onAddNote} onAddWorkbook={onAddWorkbook} onNewTask={() => onTask(null)} onNewFolder={onNewFolder} />
+                </div>
+            )}
         </div>
     );
 }
 
-/** Adds a video from the library (looked up by what's typed, right here) or a task (in its own window: onNewTask) to the
- *  end of a track. */
-export function AddEntry({ onAddVideo, onNewTask, onNewFolder }: { onAddVideo: (videoId: string) => void; onNewTask: () => void; onNewFolder?: () => void }) {
-    const [looking, setLooking] = useState(false);
+/** What the lookup lists: a video of the library, or a note (the Notes section). */
+interface Found { id: string; title: string; sub?: string | null; thumb?: string }
+
+/** Adds a video from the library or a note (each looked up by what's typed, right here), or a task (in its own window:
+ *  onNewTask), to the end of a track. The videos come in two groups, as the Tags dropdown's do (Essentials, then Custom):
+ *  Pinned (what the reader is working on now, so most likely what's wanted), then All Videos, without the pinned ones
+ *  again. */
+export function AddEntry({ onAddVideo, onAddNote, onAddWorkbook, onNewTask, onNewFolder }: { onAddVideo: (videoId: string) => void; onAddNote?: (noteId: string) => void; onAddWorkbook?: (workbookId: string) => void; onNewTask: () => void; onNewFolder?: () => void }) {
+    const [looking, setLooking] = useState<false | 'video' | 'note' | 'workbook'>(false);
     const [text, setText] = useState('');
-    // null while a lookup is on its way. With nothing typed, the library's newest videos (as the link picker shows).
-    const [results, setResults] = useState<Video[] | null>(null);
+    // null while a lookup is on its way. With nothing typed, the library's newest videos (as the link picker shows), or
+    // the notes changed last.
+    const [results, setResults] = useState<Found[] | null>(null);
+    // The pinned videos that fit what's typed (videos only), listed first.
+    const [pinned, setPinned] = useState<Found[]>([]);
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
         if (!looking) return;
         let cancelled = false;
         const query = text.trim();
+        const find = (): Promise<Found[]> => looking === 'workbook'
+            ? listWorkbooks().then(books => books
+                .filter(b => b.noteIds.length > 0 && (!query || b.title.toLowerCase().includes(query.toLowerCase())))
+                .slice(0, 8)
+                .map(b => ({ id: b.id, title: b.title, sub: `${b.noteIds.length} ${b.noteIds.length === 1 ? 'note' : 'notes'}` })))
+            : looking === 'note'
+            ? listNotes().then(notes => notes
+                .filter(n => !query || `${n.title}\n${n.body}`.toLowerCase().includes(query.toLowerCase()))
+                .slice(0, 8)
+                .map(n => ({ id: n.id, title: noteDisplayTitle(n), sub: n.shared ? 'Shared' : 'Personal' })))
+            : (query ? searchLibrary(query, { limit: 8 }) : getSavedVideos(false, { limit: 8 }))
+                .then(r => r.videos.map(v => ({ id: v.id, title: v.title, sub: v.author, thumb: v.thumbnail })));
+        // The pins that fit what's typed (by title or creator), newest pin first. None for notes, or if they can't be read.
+        const findPinned = (): Promise<Found[]> => looking !== 'video' ? Promise.resolve([])
+            : listPins()
+                .then(pins => pins
+                    .filter(p => !query || `${p.title}\n${p.author}`.toLowerCase().includes(query.toLowerCase()))
+                    .map(p => ({ id: p.videoId, title: p.title, sub: p.author, thumb: videoThumbnail(p.videoId) })))
+                .catch(() => []);
         const timer = setTimeout(() => {
-            (query ? searchLibrary(query, { limit: 8 }) : getSavedVideos(false, { limit: 8 }))
-                .then(r => { if (!cancelled) { setResults(r.videos); setError(null); } })
-                .catch(e => { if (!cancelled) { setResults([]); setError(String(e)); } });
+            Promise.all([find(), findPinned()])
+                .then(([found, pins]) => {
+                    if (cancelled) return;
+                    // All Videos doesn't repeat what Pinned already lists.
+                    const pinnedIds = new Set(pins.map(p => p.id));
+                    setPinned(pins);
+                    setResults(found.filter(f => !pinnedIds.has(f.id)));
+                    setError(null);
+                })
+                .catch(e => { if (!cancelled) { setPinned([]); setResults([]); setError(String(e)); } });
         }, query ? 200 : 0);
         return () => { cancelled = true; clearTimeout(timer); };
     }, [looking, text]);
 
-    const close = () => { setLooking(false); setText(''); setResults(null); setError(null); };
+    const close = () => { setLooking(false); setText(''); setResults(null); setPinned([]); setError(null); };
+    const pick = (id: string) => (looking === 'workbook' ? onAddWorkbook?.(id) : looking === 'note' ? onAddNote?.(id) : onAddVideo(id));
 
     // The suggestions float over the page (not in the panel's flow, where they'd sit below the fold): under the box, or
     // above it when there isn't room below, kept in place as the panel scrolls. Shown while the box has focus.
@@ -306,30 +354,55 @@ export function AddEntry({ onAddVideo, onNewTask, onNewFolder }: { onAddVideo: (
 
     if (!looking) {
         return (
-            <div className="flex items-center gap-2 mt-2">
+            <div className="mt-2">
+                {/* One heading for the row, so each button only says what it adds. */}
+                <div className="flex items-center gap-2 px-1 mb-1 select-none">
+                    <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-gray-500">Add</span>
+                    <span className="flex-1 h-px bg-[#272727]" />
+                </div>
+                <div className="flex items-center gap-1 flex-wrap">
                 <button
-                    onClick={() => setLooking(true)}
+                    onClick={() => setLooking('video')}
                     title="Add a video from your library to the end of this track."
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer whitespace-nowrap"
                 >
-                    <VideoIcon className="w-3.5 h-3.5" /> Add video
+                    <VideoIcon className="w-3.5 h-3.5" /> Video
                 </button>
+                {onAddNote && (
+                    <button
+                        onClick={() => setLooking('note')}
+                        title="Add one of your notes to the end of this track: A reading, a review or a write-up as a step of its own."
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                        <NotebookPen className="w-3.5 h-3.5" /> Note
+                    </button>
+                )}
+                {onAddWorkbook && (
+                    <button
+                        onClick={() => setLooking('workbook')}
+                        title="Add a workbook's notes to the end of this track, in the workbook's order: A page a step. Notes already on the track are left where they are."
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer whitespace-nowrap"
+                    >
+                        <BookOpenText className="w-3.5 h-3.5" /> Workbook
+                    </button>
+                )}
                 <button
                     onClick={onNewTask}
-                    title={'Add a step that isn\'t a video, like a reading or a problem set.\n\nIt can also be a break: a task called "Free day", "No video" or a holiday like "Fall Break" takes up a day on the schedule, so everything after it moves to the next day.'}
-                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                    title={'Add a step that isn\'t a video, like a reading or a problem set.\n\nIt can also be a break: A task called "Free day", "No video" or a holiday like "Fall Break" takes up a day on the schedule, so everything after it moves to the next day.'}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer whitespace-nowrap"
                 >
-                    <ListPlus className="w-3.5 h-3.5" /> Add task
+                    <ListPlus className="w-3.5 h-3.5" /> Task
                 </button>
                 {onNewFolder && (
                     <button
                         onClick={onNewFolder}
-                        title="Group several videos and tasks into one place: on a dated track, everything in a folder lands on the same day."
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                        title="Group several videos and tasks into one place: On a dated track, everything in a folder lands on the same day."
+                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer whitespace-nowrap"
                     >
-                        <FolderPlus className="w-3.5 h-3.5" /> Add folder
+                        <FolderPlus className="w-3.5 h-3.5" /> Folder
                     </button>
                 )}
+                </div>
             </div>
         );
     }
@@ -344,7 +417,7 @@ export function AddEntry({ onAddVideo, onNewTask, onNewFolder }: { onAddVideo: (
                     onChange={e => setText(e.target.value)}
                     onContextMenu={handlePlainContextMenu}
                     onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); close(); } }}
-                    placeholder="Look up a video in the library..."
+                    placeholder={looking === 'workbook' ? 'Look up a workbook...' : looking === 'note' ? 'Look up a note...' : 'Look up a video in the library...'}
                     className="flex-1 bg-[#0f0f0f] border border-[#333] focus:border-[var(--k-accent)] outline-none rounded-lg px-3 py-1.5 text-sm text-white placeholder-gray-600"
                 />
                 <button onClick={close} className="p-1.5 text-gray-500 hover:text-white transition-colors cursor-pointer" title="Done adding"><X className="w-4 h-4" /></button>
@@ -358,24 +431,39 @@ export function AddEntry({ onAddVideo, onNewTask, onNewFolder }: { onAddVideo: (
                 >
                     {error ? (
                         <p className="px-3 py-2 text-[11px] text-red-400 break-words">{error}</p>
-                    ) : results && results.length === 0 ? (
-                        <p className="px-3 py-2 text-[11px] text-gray-500">{text.trim() ? 'No videos match.' : 'The library has no videos yet.'}</p>
-                    ) : results && (
-                        <ul className="py-1 max-h-64 overflow-y-auto custom-scrollbar">
-                            {results.map(v => (
-                                <li key={v.id}>
-                                    <button
-                                        onClick={() => { onAddVideo(v.id); setResults(rs => rs && rs.filter(r => r.id !== v.id)); }}
-                                        className="w-full flex items-center gap-3 px-3 py-1.5 text-left hover:bg-[#1a1a1a] transition-colors cursor-pointer"
-                                    >
-                                        {v.thumbnail && <img src={v.thumbnail} alt="" className="w-12 h-7 object-cover rounded shrink-0" />}
-                                        <span className="text-sm text-gray-200 truncate">{v.title}</span>
-                                        {v.author && <span className="text-[11px] text-gray-500 truncate shrink-0 max-w-[30%]">{v.author}</span>}
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                    ) : results && results.length === 0 && pinned.length === 0 ? (
+                        <p className="px-3 py-2 text-[11px] text-gray-500">{looking === 'workbook' ? (text.trim() ? 'No workbooks match.' : 'No workbooks with notes in them yet.') : looking === 'note' ? (text.trim() ? 'No notes match.' : 'No notes yet.') : text.trim() ? 'No videos match.' : 'The library has no videos yet.'}</p>
+                    ) : results && (() => {
+                        const row = (v: Found) => (
+                            <li key={v.id}>
+                                <button
+                                    onClick={() => { pick(v.id); close(); }}
+                                    className="w-full flex items-center gap-3 px-3 py-1.5 text-left hover:bg-[#1a1a1a] transition-colors cursor-pointer"
+                                >
+                                    {v.thumb ? <img src={v.thumb} alt="" className="w-12 h-7 object-cover rounded shrink-0" />
+                                        : looking === 'workbook' ? <BookOpenText className="w-4 h-4 shrink-0 text-gray-500" />
+                                        : looking === 'note' && <NotebookPen className="w-4 h-4 shrink-0 text-gray-500" />}
+                                    <span className="text-sm text-gray-200 truncate">{v.title}</span>
+                                    {v.sub && <span className="text-[11px] text-gray-500 truncate shrink-0 max-w-[30%]">{v.sub}</span>}
+                                </button>
+                            </li>
+                        );
+                        // A label with a rule running out to the right, as the Tags dropdown's groups have.
+                        const heading = (label: string) => (
+                            <li className="flex items-center gap-2 px-3 pt-2 pb-1 select-none" aria-hidden>
+                                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#aaaaaa]">{label}</span>
+                                <span className="flex-1 h-px bg-[#383838]" />
+                            </li>
+                        );
+                        return (
+                            <ul className="py-1 max-h-64 overflow-y-auto custom-scrollbar">
+                                {pinned.length > 0 && heading('Pinned')}
+                                {pinned.map(row)}
+                                {pinned.length > 0 && results.length > 0 && heading('All Videos')}
+                                {results.map(row)}
+                            </ul>
+                        );
+                    })()}
                 </div>,
                 document.body,
             )}

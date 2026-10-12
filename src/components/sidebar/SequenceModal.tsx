@@ -283,7 +283,7 @@ export function SequenceModal({ drive: startDrive, driveLabel: startLabel, curre
             onChanged();
             await load();
             if (out.added === 0) {
-                setError(out.notInDrive > 0 ? `Nothing added: not filed under ${drive}.` : `Nothing added: already in the ${sequenceLower}.`);
+                setError(out.notInDrive > 0 ? `Nothing added: Not filed under ${drive}.` : `Nothing added: Already in the ${sequenceLower}.`);
             } else {
                 setView('list');
             }

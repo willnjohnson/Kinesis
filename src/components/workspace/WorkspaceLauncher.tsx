@@ -139,7 +139,7 @@ export function WorkspaceLauncher({ status: initial, onClose }: Props) {
 
     const actions: { id: View | "open"; title: string; hint: string; button: string; Icon: React.ElementType }[] = [
         { id: "create", title: "Create new workspace", hint: "Start with an empty library.", button: "Create", Icon: FolderPlus },
-        ...(canImport ? [{ id: "import" as const, title: "Import Kinpak", hint: "Add a .kinpak file someone shared: it becomes a new workspace, or adds to the one with the same name.", button: "Import", Icon: PackageOpen }] : []),
+        ...(canImport ? [{ id: "import" as const, title: "Import Kinpak", hint: "Add a .kinpak file someone shared: It becomes a new workspace, or adds to the one with the same name.", button: "Import", Icon: PackageOpen }] : []),
         { id: "open", title: "Open existing workspace", hint: "Add a folder that already holds a Kinesis database, such as one on an external drive.", button: "Open", Icon: FolderOpen },
     ];
 

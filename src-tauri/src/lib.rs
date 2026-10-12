@@ -5,13 +5,14 @@ mod http_server;
 
 const APP_NAME: &str = "Kinesis";
 
-const VERSION: &str = "0.5.3";
+const VERSION: &str = "0.5.4";
 
-/// The smallest the window can be dragged to (logical pixels). 800 is also the smallest size
-/// offered under Settings > Display, so every choice there still fits; below this the header
-/// and the workspace screen start to overlap themselves.
+/// The smallest the window can be dragged to (logical pixels): 800x600, the smallest of the sizes
+/// Settings > Display offers, so the window can't be made smaller by hand than it can be set to
+/// there. The layouts still fold as it narrows towards that: the horizontal bar's section buttons
+/// move into its dropdown, tab rows into More.
 const MIN_WINDOW_WIDTH: f64 = 800.0;
-const MIN_WINDOW_HEIGHT: f64 = 500.0;
+const MIN_WINDOW_HEIGHT: f64 = 600.0;
 
 /// Windows and macOS: "<Workspace name> - Kinesis v0.4.2", the workspace's own name (see
 /// db/workspace.rs) leading so several open workspaces are easy to tell apart. Linux: plain
@@ -220,6 +221,33 @@ pub fn run() {
             commands::get_link_graph,
             commands::delete_calendar_track,
             commands::add_calendar_entry,
+            commands::add_calendar_note_entry,
+            commands::list_notes,
+            commands::get_note,
+            commands::create_note,
+            commands::update_note,
+            commands::append_to_note,
+            commands::set_note_shared,
+            commands::delete_note,
+            commands::list_workbooks,
+            commands::get_workbook,
+            commands::create_workbook,
+            commands::rename_workbook,
+            commands::set_workbook_shared,
+            commands::delete_workbook,
+            commands::add_note_to_workbook,
+            commands::remove_note_from_workbook,
+            commands::reorder_workbook,
+            commands::add_calendar_workbook,
+            commands::list_logs,
+            commands::create_log,
+            commands::rename_log,
+            commands::delete_log,
+            commands::list_log_entries,
+            commands::write_log_day,
+            commands::set_log_remind,
+            commands::set_log_entry_template,
+            commands::list_logs_due,
             commands::update_calendar_entry,
             commands::remove_calendar_entry,
             commands::set_calendar_entry_order,
@@ -471,7 +499,7 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
+        .run(|_app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 // On exit, we can perform cleanup tasks here if needed;
                 // Forego this feature for now.

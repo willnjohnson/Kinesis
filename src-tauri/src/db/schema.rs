@@ -728,6 +728,12 @@ pub fn init_db(db_path: &str) -> Result<()> {
         [],
     );
 
+    // Notes, shared and personal (see db/notes.rs). Before the Calendar's tables: a track can hold a note, and its
+    // triggers name these tables.
+    super::notes::ensure_notes_schema(&conn)?;
+    // Workbooks (notes in an order, db/workbooks.rs) and Logs (db/logs.rs).
+    super::workbooks::ensure_workbooks_schema(&conn)?;
+    super::logs::ensure_logs_schema(&conn)?;
     // The Calendar's tracks, entries, terms and holiday sets (see db/calendar.rs). Kinesis-owned, created on every database.
     super::calendar::ensure_calendar_schema(&conn)?;
     // Pinned videos (see db/pins.rs).
@@ -1191,6 +1197,8 @@ pub fn init_db(db_path: &str) -> Result<()> {
     Ok(())
 }
 
+// Not called yet: it's for the cleanup on exit that lib.rs has set aside for now.
+#[allow(dead_code)]
 pub fn vacuum_db(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
     conn.execute("VACUUM", [])?;

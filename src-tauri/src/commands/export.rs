@@ -12,6 +12,10 @@ pub struct ExportSummary {
     pub glossary_terms: i64,
     pub biographies: i64,
     pub calendar_tracks: i64,
+    #[serde(default)]
+    pub notes: i64,
+    #[serde(default)]
+    pub logs: i64,
     pub folder_path: String,
 }
 
@@ -26,13 +30,17 @@ pub struct ObsidianOptions {
     pub biographies: bool,
     /// A note per Calendar track: its items as a checklist.
     pub calendar: bool,
+    /// The Notes section's notes, shared and personal alike (the vault is the reader's own copy).
+    pub notes: bool,
+    /// The Logs section's logs: a note each, its days as a table.
+    pub logs: bool,
     /// Drives to leave out and what to do with what touches them.
     pub drives: DriveScope,
 }
 
 impl Default for ObsidianOptions {
     fn default() -> Self {
-        ObsidianOptions { videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, drives: DriveScope::default() }
+        ObsidianOptions { videos: true, transcripts: true, glossary: true, biographies: true, calendar: true, notes: true, logs: true, drives: DriveScope::default() }
     }
 }
 
@@ -63,6 +71,13 @@ fn build_track_note(summary: &db::TrackSummary, links: &LinkResolver, video_link
     if dated {
         let days: Vec<&str> = track.weekdays.iter().filter_map(|d| WEEKDAYS.get((*d as usize).wrapping_sub(1)).copied()).collect();
         fm.push_str(&format!("days: [{}]\n", days.join(", ")));
+        // How those days repeat, when it isn't simply every week.
+        match (track.repeat.kind.as_str(), track.repeat.every, track.repeat.ordinal) {
+            ("interval", every, _) => fm.push_str(&format!("repeats: every {every} day{}\n", if every == 1 { "" } else { "s" })),
+            ("monthly", _, ordinal) => fm.push_str(&format!("repeats: {} of the month\n", ["first", "second", "third", "fourth", "last"][(ordinal.clamp(1, 5) - 1) as usize])),
+            (_, every, _) if every > 1 => fm.push_str(&format!("repeats: every {every} weeks\n")),
+            _ => {}
+        }
         let time = match (track.time_start, track.time_duration) {
             (Some(s), Some(d)) => format!("{}:{:02}-{}:{:02}", s / 60, s % 60, (s + d) / 60, (s + d) % 60),
             _ => "any time".into(),
@@ -251,14 +266,14 @@ fn folder_segments_for_wdbs(wdbs: &str, node_map: &HashMap<String, &db::WdbsNode
     names
 }
 
-// A Drive root (":CRYPTO") -> the name the vault shows for it: its curated alias when it has one
-// (the same preference the video folders use), otherwise the bare segment.
-fn drive_root_label(root: &str, node_map: &HashMap<String, &db::WdbsNode>) -> String {
-    let segment = root.trim_start_matches(':');
+// A Drive (":CRYPTO", ":FRENCH-CH1") -> the name the vault shows for it: its curated alias when it
+// has one (the same preference the video folders use), otherwise its path without the colon.
+fn drive_label(drive: &str, node_map: &HashMap<String, &db::WdbsNode>) -> String {
+    let body = drive.trim_start_matches(':');
     node_map
-        .get(&format!("θψ{}", segment))
+        .get(&format!("θψ{}", body.replace('-', "_")))
         .and_then(|n| n.alias.clone())
-        .unwrap_or_else(|| segment.to_string())
+        .unwrap_or_else(|| body.to_string())
 }
 
 fn parse_tags(raw: Option<&str>) -> Vec<String> {
@@ -274,6 +289,9 @@ struct LinkResolver {
     /// Keyed by the handle without "@", lowercased.
     biographies: HashMap<String, String>,
     videos: HashMap<String, String>,
+    /// A note's id to its place in the vault, "<Notes>/<name>" (by path, so a note named like a video or a term can't
+    /// be mistaken for it).
+    notes: HashMap<String, String>,
 }
 
 impl LinkResolver {
@@ -283,8 +301,9 @@ impl LinkResolver {
             LinkKind::Glossary => self.glossary.get(&key.to_ascii_lowercase()).cloned(),
             LinkKind::Bio => self.biographies.get(&key.trim_start_matches('@').to_lowercase()).cloned(),
             LinkKind::Video => self.videos.get(key).cloned(),
+            LinkKind::Note => self.notes.get(key).cloned(),
             // No note of their own in the vault: they keep just their text, like Drive links.
-            LinkKind::Drive | LinkKind::Playlist => None,
+            LinkKind::Drive | LinkKind::Playlist | LinkKind::Flashcards | LinkKind::Workbook => None,
         }
     }
 
@@ -509,6 +528,10 @@ fn run_export_with(
         vec![]
     };
 
+    // The Notes section's notes, every one of them: a note isn't dropped with a Drive it's filed under (it's the
+    // reader's writing, and what it cites that was left out reads as plain words).
+    let study_notes = if options.notes { db::list_notes(db_path).map_err(|e| e.to_string())? } else { vec![] };
+
     // What the user chose to include. A link to something that isn't exported becomes plain text
     // by itself (the resolver below only knows what is written), so nothing else is needed for those.
     if !options.videos {
@@ -594,7 +617,7 @@ fn run_export_with(
         if drives.is_empty() {
             "General".to_string()
         } else {
-            drives.iter().map(|d| drive_root_label(d, &node_map)).collect::<Vec<_>>().join(", ")
+            drives.iter().map(|d| drive_label(d, &node_map)).collect::<Vec<_>>().join(", ")
         }
     };
     let mut note_basename: HashMap<(String, String), String> = HashMap::new(); // (term, drives joined) -> note name
@@ -614,7 +637,24 @@ fn run_export_with(
             link_basename.insert(term.to_ascii_lowercase(), note_basename[&(term.clone(), primary.drives.join("|"))].clone());
         }
     }
+    // The Notes section's notes: named after their title ("Untitled" without one), numbered where two share a name.
+    let notes_folder = sanitize_path_component(&names["aliasNotes"], 60);
+    let mut study_note_names: Vec<String> = Vec::with_capacity(study_notes.len());
+    {
+        let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for n in &study_notes {
+            let base = sanitize_path_component(if n.title.trim().is_empty() { "Untitled" } else { n.title.trim() }, 80);
+            let mut name = base.clone();
+            let mut k = 2;
+            while !taken.insert(name.to_lowercase()) {
+                name = format!("{base} ({k})");
+                k += 1;
+            }
+            study_note_names.push(name);
+        }
+    }
     let resolver = LinkResolver {
+        notes: study_notes.iter().zip(&study_note_names).map(|(n, name)| (n.id.clone(), format!("{notes_folder}/{name}"))).collect(),
         glossary: link_basename,
         biographies: biographies
             .iter()
@@ -728,7 +768,7 @@ fn run_export_with(
     }
 
     on_progress(&format!("Writing {glossary_name}..."));
-    // Standard Glossary Tags can be filed under top-level Drives (see the note names above); each
+    // Standard Glossary Tags can be filed under Drives at any level (see the note names above); each
     // note lists its Drive in frontmatter, and "By <Drive>" index notes group the same rows per drive.
     let mut terms_by_drive: BTreeMap<String, Vec<String>> = BTreeMap::new(); // Drive label -> note names
     for entry in &glossary_entries {
@@ -736,7 +776,7 @@ fn run_export_with(
         let file_path = glossary_root.join(format!("{name}.md"));
         let mut fm = format!("---\ntype: glossary-term\nterm: {}\n", yaml_str(&entry.term));
         if !entry.drives.is_empty() {
-            let labels: Vec<String> = entry.drives.iter().map(|d| drive_root_label(d, &node_map)).collect();
+            let labels: Vec<String> = entry.drives.iter().map(|d| drive_label(d, &node_map)).collect();
             let quoted: Vec<String> = labels.iter().map(|l| yaml_str(l)).collect();
             fm.push_str(&format!("drives: [{}]\n", quoted.join(", ")));
             for label in labels {
@@ -783,12 +823,60 @@ fn run_export_with(
         }
     }
 
+    if !study_notes.is_empty() {
+        on_progress(&format!("Writing {}...", names["aliasNotes"]));
+        let notes_root = root.join(&notes_folder);
+        fs::create_dir_all(&notes_root).map_err(|e| format!("Failed to create {}: {}", notes_root.display(), e))?;
+        for (n, name) in study_notes.iter().zip(&study_note_names) {
+            let mut fm = format!("---\ntype: note\nshared: {}\n", n.shared);
+            if !n.drives.is_empty() {
+                let quoted: Vec<String> = n.drives.iter().map(|d| yaml_str(&drive_label(d, &node_map))).collect();
+                fm.push_str(&format!("drives: [{}]\n", quoted.join(", ")));
+            }
+            fm.push_str(&format!("created: {}\nupdated: {}\n---\n", yaml_str(&n.created_at), yaml_str(&n.updated_at)));
+            // A citation stays a quote, its source now a wiki link to the video's note (the moment after it, as text).
+            let content = format!("{fm}{}\n", resolver.wikilinks(&n.body));
+            let file_path = notes_root.join(format!("{name}.md"));
+            fs::write(&file_path, content).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
+        }
+    }
+
+    // Logs: a note per log, its days as a table, the oldest first. Each date is a wiki link by its ISO name
+    // ("[[2026-10-10]]"), which is what Obsidian's Daily Notes calls a day's note: with that plugin on, a log's day
+    // opens (or makes) that day's note, and the day's note lists the logs that mention it under its backlinks.
+    let logs = if options.logs { db::list_logs(db_path).map_err(|e| e.to_string())? } else { vec![] };
+    if !logs.is_empty() {
+        let logs_name = names["aliasLogs"].clone();
+        on_progress(&format!("Writing {logs_name}..."));
+        let logs_root = root.join(sanitize_path_component(&logs_name, 60));
+        fs::create_dir_all(&logs_root).map_err(|e| format!("Failed to create {}: {}", logs_root.display(), e))?;
+        // A table cell is one line and can't hold a bar: a line break becomes <br>, a bar is escaped.
+        let cell = |text: &str| text.trim().replace('|', "\\|").replace("\r\n", "\n").replace('\n', "<br>");
+        for log in &logs {
+            let mut entries = db::list_log_entries(db_path, &log.id).map_err(|e| e.to_string())?;
+            entries.reverse();
+            let mut content = format!("---\ntype: log\nentries: {}\n---\n# {}\n\n", entries.len(), log.name);
+            if entries.is_empty() {
+                content.push_str("Nothing written in this log yet.\n");
+            } else {
+                content.push_str("| Date | Entry | Description |\n| --- | --- | --- |\n");
+                for e in &entries {
+                    content.push_str(&format!("| [[{}]] | {} | {} |\n", e.date, cell(&e.title), cell(&e.description)));
+                }
+            }
+            let file_path = logs_root.join(format!("{}.md", sanitize_path_component(&log.name, 80)));
+            fs::write(&file_path, content).map_err(|e| format!("Failed to write {}: {}", file_path.display(), e))?;
+        }
+    }
+
     on_progress("Done.");
     Ok(ExportSummary {
         videos_exported: videos.len() as i64,
         glossary_terms: rows_by_term.len() as i64,
         biographies: biographies.len() as i64,
         calendar_tracks: tracks.len() as i64,
+        notes: study_notes.len() as i64,
+        logs: logs.len() as i64,
         folder_path: root.to_string_lossy().to_string(),
     })
 }
@@ -876,6 +964,58 @@ mod tests {
 
         fs::remove_dir_all(&work_dir).ok();
         fs::remove_dir_all(&out_dir).ok();
+    }
+
+    #[test]
+    fn notes_are_exported_with_their_citations_as_wiki_links() {
+        let dir = temp_dir("study_notes");
+        let db_path = dir.join("k.db").to_string_lossy().to_string();
+        db::init_db(&db_path).unwrap();
+        db::save_video(&db_path, "vid1abcdefg", "First Talk", "Ann", 60, "words", 1, "2026-01-01T00:00:00Z", "@ann", None).unwrap();
+        let other = db::create_note(&db_path, true, "Other", "Nothing much.", &[]).unwrap();
+        db::create_note(
+            &db_path, false, "Kinases",
+            &format!("> a quote\n>\n> — [First Talk](kinesis://video/vid1abcdefg?t=1:30)\n\nSee [the other](kinesis://note/{}).", other.id),
+            &[":CS".to_string()],
+        ).unwrap();
+
+        let summary = run_export(&db_path, &dir.join("V"), |_| {}).unwrap();
+        assert_eq!(summary.notes, 2);
+        let note = fs::read_to_string(dir.join("V").join("Notes").join("Kinases.md")).unwrap();
+        assert!(note.contains("type: note") && note.contains("shared: false") && note.contains("drives: ["), "{note}");
+        assert!(note.contains(&format!("[[{}|First Talk]] (1:30)", video_note_basename("First Talk", "vid1abcdefg"))), "{note}");
+        assert!(note.contains("[[Notes/Other|the other]]"), "{note}");
+
+        // Left out when not asked for: a link to one then reads as its words.
+        let off = run_export_with(&db_path, &dir.join("W"), &ObsidianOptions { notes: false, ..ObsidianOptions::default() }, |_| {}).unwrap();
+        assert_eq!(off.notes, 0);
+        assert!(!dir.join("W").join("Notes").exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn logs_are_exported_as_tables_with_their_days_linked() {
+        let dir = temp_dir("logs");
+        let db_path = dir.join("k.db").to_string_lossy().to_string();
+        db::init_db(&db_path).unwrap();
+        let log = db::create_log(&db_path, "Training").unwrap();
+        db::write_log_day(&db_path, &log.id, "2026-10-10", "Pull", "Rows | chin-ups\nThen core.").unwrap();
+        db::write_log_day(&db_path, &log.id, "2026-10-09", "Push", "Bench.").unwrap();
+        db::create_log(&db_path, "Garden").unwrap();
+
+        let summary = run_export(&db_path, &dir.join("V"), |_| {}).unwrap();
+        assert_eq!(summary.logs, 2);
+        let note = fs::read_to_string(dir.join("V").join("Logs").join("Training.md")).unwrap();
+        // The oldest day first, each date a link to that day's note, and a cell kept to one line.
+        let push = note.find("| [[2026-10-09]] | Push | Bench. |").unwrap_or_else(|| panic!("{note}"));
+        let pull = note.find("| [[2026-10-10]] | Pull | Rows \\| chin-ups<br>Then core. |").unwrap_or_else(|| panic!("{note}"));
+        assert!(push < pull, "{note}");
+        assert!(fs::read_to_string(dir.join("V").join("Logs").join("Garden.md")).unwrap().contains("Nothing written"));
+
+        let off = run_export_with(&db_path, &dir.join("W"), &ObsidianOptions { logs: false, ..ObsidianOptions::default() }, |_| {}).unwrap();
+        assert_eq!(off.logs, 0);
+        assert!(!dir.join("W").join("Logs").exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -993,6 +1133,7 @@ mod tests {
         db::init_db(&db_path).unwrap();
         db::save_video(&db_path, "vid1abcdefg", "First Talk", "Ann", 60, "words", 1, "2026-01-01T00:00:00Z", "@ann", None).unwrap();
         let input = db::TrackInput {
+            repeat: Default::default(),
             name: "Course".into(),
             drive: String::new(),
             advance_mode: "completion".into(),
@@ -1153,7 +1294,8 @@ mod tests {
             .unwrap();
         }
         conn.execute("INSERT INTO VideoWDBSLinks (video_id, wdbs) VALUES ('m1', 'θψFIN')", []).unwrap();
-        for (term, drives) in [("OnlyUap", ":UAP"), ("Both", ":FIN\n:UAP")] {
+        // OnlyUap is filed under a sub-Drive of the one left out: it counts as left out too.
+        for (term, drives) in [("OnlyUap", ":UAP-GERB"), ("Both", ":FIN\n:UAP")] {
             conn.execute("INSERT INTO Glossary (term, definition, drives) VALUES (?1, 'defined', ?2)", rusqlite::params![term, drives]).unwrap();
         }
         for handle in ["@uapguy", "@fingal", "@mixed"] {

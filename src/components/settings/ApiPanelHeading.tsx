@@ -8,7 +8,7 @@ export const API_GUIDES = {
     pixabay: { url: "https://pixabay.com/api/docs" },
     venice: {
         url: "https://docs.venice.ai/guides/getting-started/generating-api-key",
-        costNote: "Needs a funded Venice account: calls to its models are paid from your balance.",
+        costNote: "Needs a funded Venice account: Calls to its models are paid from your balance.",
     },
 } as const;
 

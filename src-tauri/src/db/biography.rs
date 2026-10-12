@@ -196,6 +196,21 @@ pub fn get_biography_channel_id(db_path: &str, handle: &str) -> Result<Option<(S
     }
 }
 
+/// A biography's subscriber count catching up with the channel's page (found as the biography is opened): stored when
+/// it differs, and returned then (None when it's the same, or there's no such biography). The "separate routine" the
+/// note on upsert_biography_from_video speaks of: that one writes the count once, as the biography is made.
+pub fn update_biography_subscribers(db_path: &str, handle: &str, subscribers: i64) -> Result<Option<i64>> {
+    if subscribers < 0 {
+        return Ok(None);
+    }
+    let conn = Connection::open(db_path)?;
+    let changed = conn.execute(
+        "UPDATE Biographies SET subscriber_count = ?1 WHERE LOWER(handle) = LOWER(?2) AND IFNULL(subscriber_count, -1) != ?1",
+        params![subscribers, handle.trim()],
+    )?;
+    Ok((changed > 0).then_some(subscribers))
+}
+
 /// Records a biography's channel ID, only where none was captured yet (it never changes once known).
 pub fn set_biography_channel_id(db_path: &str, handle: &str, channel_id: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
@@ -215,7 +230,7 @@ pub fn handle_case_change(handle: &str, typed: &str) -> std::result::Result<Stri
         return Err("Type the channel's handle.".into());
     }
     if !bare.eq_ignore_ascii_case(stored.trim_start_matches('@')) && bare.to_lowercase() != stored.trim_start_matches('@').to_lowercase() {
-        return Err(format!("Only the capitals can change: it has to stay {stored}."));
+        return Err(format!("Only the capitals can change: It has to stay {stored}."));
     }
     let new = if stored.starts_with('@') { format!("@{bare}") } else { bare.to_string() };
     if new == stored {

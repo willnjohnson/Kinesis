@@ -53,7 +53,7 @@ export function TrashModal({ kind, onClose, onRestored }: Props) {
         return () => window.clearInterval(timer);
     }, []);
 
-    const where = kind === 'video' ? labels.aliasLibrary : labels.aliasGlossary;
+    const where = kind === 'video' ? labels.aliasLibrary : kind === 'note' ? labels.aliasNotes : labels.aliasGlossary;
 
     const restore = async (id: number) => {
         setBusy(id);

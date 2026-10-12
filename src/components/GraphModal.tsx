@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Maximize2, Network, Search } from 'lucide-react';
 import { getLinkGraph, type GraphNodeKind, type LinkGraph } from '../api';
 import { useWorkspace } from '../hooks/useWorkspace';
+import { useFlags } from '../hooks/useFlags';
 import { Modal } from './Modal';
 import { SecondaryButton } from './ui/Button';
 
-/** Each kind's dot color: videos neutral, terms amber, people sky (the accent marks what's highlighted). */
-const KIND_COLOR: Record<GraphNodeKind, string> = { video: '#9ca3af', glossary: '#f59e0b', bio: '#38bdf8' };
+/** Each kind's dot color: videos neutral, terms amber, people sky, notes green (the accent marks what's highlighted). */
+const KIND_COLOR: Record<GraphNodeKind, string> = { video: '#9ca3af', glossary: '#f59e0b', bio: '#38bdf8', note: '#4ade80' };
 
 /** The graph as it was last left (closed), for Back/Forward to pick up from: the graph itself, where its dots were, the
  *  zoom and pan, and the filters and search. Kept for this run of the app only; Ctrl+K always loads it afresh. */
@@ -31,11 +32,12 @@ export function GraphModal({ onClose, onOpen, resume = false }: {
     resume?: boolean;
 }) {
     const { labels } = useWorkspace();
+    const { flags } = useFlags();
     // What it's picking up from, when resuming (and there's something to pick up).
     const [from] = useState(() => (resume ? saved : null));
     const [graph, setGraph] = useState<LinkGraph | null>(from?.graph ?? null);
     const [error, setError] = useState<string | null>(null);
-    const [kinds, setKinds] = useState<Record<GraphNodeKind, boolean>>(from?.kinds ?? { video: true, glossary: true, bio: true });
+    const [kinds, setKinds] = useState<Record<GraphNodeKind, boolean>>({ video: true, glossary: true, bio: true, note: true, ...from?.kinds });
     // Off to begin with: every video has a creator line, so they'd outnumber the links that were actually written (and
     // swell every creator's dot), saying only which channel each video is from.
     const [creators, setCreators] = useState(from?.creators ?? false);
@@ -342,7 +344,7 @@ export function GraphModal({ onClose, onOpen, resume = false }: {
         </label>
     );
     const hovered = hover !== null && graph ? graph.nodes[hover] : null;
-    const kindName: Record<GraphNodeKind, string> = { video: 'Video', glossary: 'Term', bio: labels.aliasBiographyItem };
+    const kindName: Record<GraphNodeKind, string> = { video: 'Video', glossary: 'Term', bio: labels.aliasBiographyItem, note: 'Note' };
 
     return (
         <Modal
@@ -360,6 +362,7 @@ export function GraphModal({ onClose, onOpen, resume = false }: {
                 {toggle('video', 'Videos')}
                 {toggle('glossary', 'Terms')}
                 {toggle('bio', labels.aliasBiography)}
+                {flags.viewVisible.notes && toggle('note', labels.aliasNotes)}
                 <span className="w-px h-4 bg-[#303030]" />
                 <label className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-300 cursor-pointer select-none" title="Also a line from every video to its creator (automatic, not a link you wrote)">
                     <input type="checkbox" checked={creators} onChange={e => setCreators(e.target.checked)} className="cursor-pointer" /> Creator lines
@@ -374,7 +377,7 @@ export function GraphModal({ onClose, onOpen, resume = false }: {
                             value={query}
                             onChange={e => setQuery(e.target.value)}
                             onKeyDown={e => { if (e.key === 'Enter') { const first = [...matches][0]; if (first !== undefined) centreOn(first); } }}
-                            placeholder="Find (Enter: go to it)"
+                            placeholder="Find (Enter: Go to it)"
                             className="w-52 bg-[#121212] border border-[#333] text-white rounded-lg pl-8 pr-3 py-1.5 text-xs focus:outline-none focus:border-red-600"
                         />
                     </div>

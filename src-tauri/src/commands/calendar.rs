@@ -153,6 +153,21 @@ pub async fn add_calendar_entry(
     blocking(move || db::add_calendar_entry(&db_path, track_id, video_id.as_deref(), label.as_deref().unwrap_or(""), &extras)).await
 }
 
+/// Adds a note (the Notes section) to the end of a track, named after it.
+#[command]
+pub async fn add_calendar_note_entry(
+    app: tauri::AppHandle,
+    track_id: i64,
+    note_id: String,
+    icon: Option<String>,
+    description: Option<String>,
+    priority: Option<i64>,
+) -> Result<i64, String> {
+    let db_path = get_db_path(&app);
+    let extras = extras(icon, description, priority);
+    blocking(move || db::add_calendar_note_entry(&db_path, track_id, &note_id, &extras)).await
+}
+
 #[command]
 pub async fn update_calendar_entry(
     app: tauri::AppHandle,

@@ -183,6 +183,8 @@ mod pending_drive_guess_tests {
 /// Deletes a video by id. The FTS-index cleanup and biography cascade-delete happen via
 /// SQLite triggers (see db/schema.rs), not here. Links to the video (and to its channel's
 /// biography, if that went with it) are removed from the text that held them, see db/links.rs.
+// The app deletes through the Trash (trash::delete_video); this plain delete is what the tests use.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn delete_video(db_path: &str, video_id: &str) -> Result<()> {
     delete_video_recorded(db_path, video_id).map(|_| ())
 }
@@ -381,6 +383,13 @@ pub struct LibraryStats {
     pub attachment_count: i64,
     /// What attachments take up in the database (after compression), each distinct file once.
     pub attachment_bytes: i64,
+    /// The Calendar's tracks (archived ones too), the Notes section's notes and workbooks (shared and personal
+    /// together), and the logs with the days written in them.
+    pub track_count: i64,
+    pub note_count: i64,
+    pub workbook_count: i64,
+    pub log_count: i64,
+    pub log_entry_count: i64,
 }
 
 pub fn get_library_stats(db_path: &str) -> Result<LibraryStats> {
@@ -421,6 +430,11 @@ pub fn get_library_stats(db_path: &str) -> Result<LibraryStats> {
         biography_count: count("SELECT COUNT(*) FROM Biographies"),
         attachment_count: count("SELECT COUNT(*) FROM VideoAttachments"),
         attachment_bytes: count("SELECT COALESCE(SUM(stored_size), 0) FROM AttachmentBlobs"),
+        track_count: count("SELECT COUNT(*) FROM CalendarTracks"),
+        note_count: count("SELECT COUNT(*) FROM Notes") + count("SELECT COUNT(*) FROM PersonalNotes"),
+        workbook_count: count("SELECT COUNT(*) FROM Workbooks") + count("SELECT COUNT(*) FROM PersonalWorkbooks"),
+        log_count: count("SELECT COUNT(*) FROM Logs"),
+        log_entry_count: count("SELECT COUNT(*) FROM LogEntries"),
     })
 }
 

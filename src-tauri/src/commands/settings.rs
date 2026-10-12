@@ -138,6 +138,11 @@ pub fn get_db_details(app: tauri::AppHandle) -> Result<DbDetails, String> {
         biography_count: stats.biography_count,
         attachment_count: stats.attachment_count,
         attachment_bytes: stats.attachment_bytes,
+        track_count: stats.track_count,
+        note_count: stats.note_count,
+        workbook_count: stats.workbook_count,
+        log_count: stats.log_count,
+        log_entry_count: stats.log_entry_count,
     })
 }
 

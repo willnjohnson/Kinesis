@@ -1,11 +1,15 @@
 import type { Facet } from '../components/SearchBar';
 
 /** Which search bar a query belongs to: each mode knows its own facets. */
-export type SearchViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
+export type SearchViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar' | 'notes' | 'logs';
 
 function facetNames(viewMode: SearchViewMode): string[] {
     // The Calendar's (lib/calendar-filter.ts).
     if (viewMode === 'calendar') return ['track', 'importance', 'status', 'kind'];
+    // The Notes section's: plain words look in titles and text, this narrows it to titles.
+    if (viewMode === 'notes') return ['title_search'];
+    // The Logs section's: plain words look in descriptions; these look at the logs' titles, or in entries or dates.
+    if (viewMode === 'logs') return ['title_search', 'entry_search', 'date_search'];
     return viewMode === 'glossary'
         ? ['term_search', 'definition_search']
         : viewMode === 'biography'

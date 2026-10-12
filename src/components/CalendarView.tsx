@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, CalendarDays, Check, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, ListPlus, ListTodo, Pencil, Pin, PinOff, Play, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react';
-import { addCalendarEntry, deleteCalendarTrack, getVideoById, listCalendarDays, listCalendarTracks, removeCalendarEntry, CALENDAR_CHANGED_EVENT, setCalendarCompletion, setCalendarProgress, setCalendarEntryLayout, addCalendarFolder, startCalendarTrackOver, undoCalendarTrackStartOver, updateCalendarEntry, setCalendarTrackArchived, calendarToday, type CalendarDayItem, type CalendarEntry, type CalendarTrack, type CalendarTrackSummary, type Video } from '../api';
+import { openCalendarNote } from '../lib/notes';
+import { Archive, ArchiveRestore, CalendarDays, Check, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, ListTodo, NotebookPen, Pencil, SignalHigh, Pin, PinOff, Play, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react';
+import { addCalendarEntry, addCalendarNoteEntry, addCalendarWorkbook, deleteCalendarTrack, getVideoById, listCalendarDays, listCalendarTracks, removeCalendarEntry, CALENDAR_CHANGED_EVENT, setCalendarCompletion, setCalendarProgress, setCalendarEntryLayout, addCalendarFolder, startCalendarTrackOver, undoCalendarTrackStartOver, updateCalendarEntry, setCalendarTrackArchived, calendarToday, type CalendarDayItem, type CalendarEntry, type CalendarTrack, type CalendarTrackSummary, type Video } from '../api';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useFlags } from '../hooks/useFlags';
 import { normalizeText } from '../lib/utils';
+import { PRIORITIES } from '../lib/calendar-icons';
 import { filtersItems, highlightTerms, isFiltering, itemFits, parseCalendarFilter, trackFits } from '../lib/calendar-filter';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
@@ -11,7 +13,8 @@ import { BottomBar } from './BottomBar';
 import { StatusOverview } from './calendar/StatusOverview';
 import { DescriptionModal } from './calendar/DescriptionModal';
 import type { NotificationContent } from './Notification';
-import { trackColor, addDays, weekStartOf, weekLabel, statusLine, HighlightContext, Marked } from './calendar/shared';
+import { trackColor, addDays, weekStartOf, weekLabel, statusLine, HighlightContext, Marked, MODE_LABEL, niceDate, repeatLabel, trackTime } from './calendar/shared';
+import { fullDate, HoverDates } from './HoverDates';
 import { MiniMonth } from './calendar/MiniMonth';
 import { WeekGrid, UpNext } from './calendar/WeekGrid';
 import { TrackDetail } from './calendar/TrackDetail';
@@ -23,6 +26,7 @@ import { InProgressIcon } from './ui/MarkIcons';
 // A per-viewer convenience, remembered in this browser (and fine to lose): which tracks are hidden. (Whether the panel is
 // open is App's: its button sits beside the search bar.)
 const HIDDEN_KEY = 'kinesis.calendar.hiddenTracks';
+const SHOW_MONTH_KEY = 'kinesis.calendar.showMonth';
 function readStored<T>(key: string, fallback: T): T {
     try {
         const raw = localStorage.getItem(key);
@@ -70,6 +74,12 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
     const [error, setError] = useState<string | null>(null);
     const [weekStart, setWeekStart] = useState(() => weekStartOf(calendarToday()));
     const [showArchived, setShowArchived] = useState(false);
+    // The small month calendar over the track list: off leaves the panel to the tracks. Remembered in this browser.
+    const [showMonth, setShowMonthState] = useState(() => readStored<boolean>(SHOW_MONTH_KEY, true));
+    const setShowMonth = (on: boolean) => {
+        setShowMonthState(on);
+        writeStored(SHOW_MONTH_KEY, on);
+    };
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [hidden, setHidden] = useState<Set<number>>(() => new Set(readStored<number[]>(HIDDEN_KEY, [])));
     const [editing, setEditing] = useState<CalendarTrack | 'new' | null>(null);
@@ -283,12 +293,23 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
         ];
     };
 
+    // The row an entry's edits are written to. A video on a track that follows its Drive's sequence has none until it's
+    // needed: adding it there makes (or finds) it.
+    const rowIdOf = async (trackId: number, entry: CalendarEntry) =>
+        entry.id > 0 || !entry.videoId ? entry.id : await addCalendarEntry(trackId, { videoId: entry.videoId });
+    const setPriority = (trackId: number, entry: CalendarEntry, priority: number) => act(async () => {
+        const id = await rowIdOf(trackId, entry);
+        // Everything an entry has, so only the priority changes.
+        await updateCalendarEntry(id, { label: entry.label, targetDate: entry.targetDate, icon: entry.icon, description: entry.description, priority });
+    })();
+
     const itemMenuItems = (item: CalendarDayItem): ContextMenuItem[] => {
         const summary = tracks.find(t => t.track.id === item.trackId);
-        // An empty folder has nothing to mark: just its track.
-        if (item.isFolder) {
-            return summary ? [{ label: `Show Track "${summary.track.name}"`, icon: ListPlus, onClick: () => selectTrack(item.trackId) }] : [];
-        }
+        // An empty folder has nothing to mark.
+        if (item.isFolder) return [];
+        // The entry itself (the week's item is that entry on one day), for editing it.
+        const entry = summary?.state.entries.find(e => (item.entryId > 0 ? e.id === item.entryId : e.videoId !== null && e.videoId === item.videoId));
+        const kind = item.noteId ? 'Note' : item.videoId ? 'Video' : 'Task';
         return [
             // Marking done stays open in a read-only workspace: it's progress, not an edit to the track.
             item.done
@@ -307,9 +328,31 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                     ? { label: 'Unpin', icon: PinOff, onClick: () => onSetPin(item.videoId!, false) }
                     : { label: 'Pin', icon: Pin, onClick: () => onSetPin(item.videoId!, true) },
             ] : []),
+            ...(item.noteId ? [{ label: 'Open Note', icon: NotebookPen, onClick: () => openCalendarNote(item.noteId!, item.workbookId) }] : []),
+            // Its priority, picked from a second level. Editing the track's own entries, so not in a read-only workspace.
+            ...(canEdit && entry ? [{
+                label: 'Change Priority',
+                icon: SignalHigh,
+                divider: true,
+                onClick: () => {},
+                submenu: [
+                    { label: 'None', checked: entry.priority === 0, onClick: () => { void setPriority(item.trackId, entry, 0); } },
+                    ...PRIORITIES.map(p => ({
+                        label: p.label,
+                        icon: ({ className }: { className?: string }) => <p.Icon className={`${className ?? ''} ${p.color}`} />,
+                        checked: entry.priority === p.level,
+                        onClick: () => { void setPriority(item.trackId, entry, p.level); },
+                    })),
+                ],
+            }] : []),
             // A task's (or video's) description, to read with its links working.
-            ...(item.description.trim() ? [{ label: 'Open Description', icon: FileText, onClick: () => setReading(item) }] : []),
-            ...(summary ? [{ label: `Show Track "${summary.track.name}"`, icon: ListPlus, onClick: () => selectTrack(item.trackId), divider: true }] : []),
+            ...(item.description.trim() ? [{ label: 'Open Description', icon: FileText, divider: !(canEdit && entry), onClick: () => setReading(item) }] : []),
+            // The same window the track's panel opens from an entry's pencil.
+            ...(canEdit && entry && summary ? [{
+                label: `Edit ${kind}`,
+                icon: Pencil,
+                onClick: () => setTaskEditor({ trackId: item.trackId, trackName: summary.track.name, entry }),
+            }] : []),
         ];
     };
 
@@ -320,12 +363,18 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                 <div className="w-80 min-w-48 shrink h-full flex flex-col">
                     <div className="shrink-0 flex items-center justify-between min-h-9 mb-4 px-1">
                         <h2 className="text-xl font-bold text-white">Tracks</h2>
-                        <label className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 cursor-pointer select-none">
-                            <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="cursor-pointer" />
-                            Archived
-                        </label>
+                        <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 cursor-pointer select-none whitespace-nowrap" title="The small month calendar over the track list. Off, the panel is all tracks.">
+                                <input type="checkbox" checked={showMonth} onChange={e => setShowMonth(e.target.checked)} className="cursor-pointer" />
+                                Show Calendar
+                            </label>
+                            <label className="flex items-center gap-1.5 text-[11px] font-semibold text-gray-500 cursor-pointer select-none">
+                                <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} className="cursor-pointer" />
+                                Archived
+                            </label>
+                        </div>
                     </div>
-                    <MiniMonth
+                    {showMonth && <MiniMonth
                         weekStart={weekStart}
                         today={today}
                         shownIds={shownIds}
@@ -333,7 +382,7 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                         trackNames={new Map(tracks.map(t => [t.track.id, t.track.name]))}
                         version={version}
                         onPickDay={day => setWeekStart(weekStartOf(day))}
-                    />
+                    />}
                     <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
                         {selected ? (
                             <TrackDetail
@@ -351,6 +400,8 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                                     else void act(() => removeCalendarEntry(entry.id))();
                                 }}
                                 onAddVideo={videoId => { void act(() => addCalendarEntry(selected.track.id, { videoId }))(); }}
+                                onAddNote={flags.viewVisible.notes ? noteId => { void act(() => addCalendarNoteEntry(selected.track.id, noteId))(); } : undefined}
+                                onAddWorkbook={flags.viewVisible.notes ? workbookId => { void act(() => addCalendarWorkbook(selected.track.id, workbookId))(); } : undefined}
                                 onTask={entry => setTaskEditor({ trackId: selected.track.id, trackName: selected.track.name, entry })}
                                 onNewFolder={() => setTaskEditor({ trackId: selected.track.id, trackName: selected.track.name, entry: null, folder: true })}
                                 onStartOver={() => setToStartOver(selected.track)}
@@ -361,33 +412,51 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                                 onDelete={() => setToDelete(selected.track)}
                             />
                         ) : listed.length === 0 ? (
-                            <div className="text-center text-gray-500 py-12 px-4 bg-[#121212] rounded-xl border border-[#272727]">
+                            <div className="min-h-full text-center text-gray-500 py-12 px-4 bg-[#121212] rounded-xl border border-[#272727]">
                                 <p className="text-sm">
                                     {tracks.length === 0
-                                        ? 'A track is a list of videos or tasks to work through: one after another, on a weekly schedule like a class, or as a repeating rotation.'
+                                        ? 'A track is a list of videos or tasks to work through: One after another, on a weekly schedule like a class, or as a repeating rotation.'
                                         : 'No tracks match your search.'}
                                 </p>
                             </div>
                         ) : (
-                            <div className="bg-[#121212] rounded-xl border border-[#272727] p-2 space-y-0.5">
+                            <div className="min-h-full bg-[#121212] rounded-xl border border-[#272727] p-2 space-y-0.5">
                                 {listed.map(summary => {
                                     const { track } = summary;
                                     const status = statusLine(summary);
                                     const isHidden = hidden.has(track.id);
+                                    const time = trackTime(track);
+                                    const dated = track.advanceMode !== 'completion';
                                     return (
-                                        <div
+                                        // Resting the pointer on it says what the row has no room for (its name and status
+                                        // in full, how it runs, where it's at, when it was made), on a card to its right.
+                                        <HoverDates
                                             key={track.id}
+                                            title={track.name}
+                                            rows={[
+                                                { label: 'Status', value: status.text },
+                                                { label: 'Kind', value: MODE_LABEL[track.advanceMode] },
+                                                ...(dated ? [{ label: 'Schedule', value: `${repeatLabel(track.repeat, track.weekdays)}${time ? `, ${time}` : ''}` }] : []),
+                                                ...(summary.state.total > 0 ? [{ label: 'Progress', value: `${summary.state.done} of ${summary.state.total} done` }] : []),
+                                                ...(track.drive ? [{ label: labels.aliasDriveName, value: track.drive }] : []),
+                                                ...(dated ? [{ label: 'Starts', value: niceDate(track.startDate) }] : []),
+                                                { label: 'Created', value: fullDate(track.createdAt) },
+                                            ]}
+                                        >{hover => (
+                                        <div
+                                            {...hover}
                                             className={`group flex items-start gap-2 rounded-lg px-2 py-2 cursor-pointer hover:bg-[#272727] transition-colors ${track.archived ? 'opacity-60' : ''}`}
                                             onClick={() => selectTrack(track.id)}
                                             onContextMenu={e => { e.preventDefault(); openTrackMenu(track, e.clientX, e.clientY); }}
                                         >
                                             <span className="mt-1.5 w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: trackColor(track.id), opacity: isHidden ? 0.35 : 1 }} />
                                             <div className="flex-1 min-w-0">
-                                                <div className={`text-sm font-semibold truncate ${isHidden ? 'text-gray-500' : 'text-gray-200'}`} title={track.name}><Marked text={track.name} of="track" /></div>
-                                                <div className={`text-[11px] truncate ${status.tone === 'overdue' ? 'text-red-400' : status.tone === 'done' ? 'text-green-400' : 'text-gray-500'}`} title={status.text}>{status.text}</div>
+                                                <div className={`text-sm font-semibold truncate ${isHidden ? 'text-gray-500' : 'text-gray-200'}`}><Marked text={track.name} of="track" /></div>
+                                                <div className={`text-[11px] truncate ${status.tone === 'overdue' ? 'text-red-400' : status.tone === 'done' ? 'text-green-400' : 'text-gray-500'}`}>{status.text}</div>
                                             </div>
                                             {!track.archived && (
                                                 <button
+                                                    onMouseEnter={hover.onMouseLeave}
                                                     onClick={e => { e.stopPropagation(); toggleHidden(track.id); }}
                                                     className={`p-1 rounded text-gray-500 hover:text-white transition-all cursor-pointer ${isHidden ? '' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
                                                     title={isHidden ? 'Show on the calendar' : 'Hide from the calendar'}
@@ -396,6 +465,7 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                                                 </button>
                                             )}
                                         </div>
+                                        )}</HoverDates>
                                     );
                                 })}
                             </div>
@@ -516,7 +586,7 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                 />
             )}
 
-            {itemMenu && <ContextMenu x={itemMenu.x} y={itemMenu.y} items={itemMenuItems(itemMenu.item)} onClose={() => setItemMenu(null)} />}
+            {itemMenu && itemMenuItems(itemMenu.item).length > 0 && <ContextMenu x={itemMenu.x} y={itemMenu.y} items={itemMenuItems(itemMenu.item)} onClose={() => setItemMenu(null)} />}
 
             {editing && (
                 <TrackModal
@@ -541,7 +611,7 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                         if (taskEditor.entry) {
                             // Everything the window edits (name, icon, description, priority), so none is dropped back to its
                             // default; the target date isn't in the window, so it keeps the one it has.
-                            await updateCalendarEntry(taskEditor.entry.id, { ...task, targetDate: taskEditor.entry.targetDate });
+                            await updateCalendarEntry(await rowIdOf(taskEditor.trackId, taskEditor.entry), { ...task, targetDate: taskEditor.entry.targetDate });
                         } else if (taskEditor.folder) {
                             await addCalendarFolder(taskEditor.trackId, task.label);
                         } else {
@@ -574,8 +644,8 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                     title="Start Over"
                     confirmLabel="Start Over"
                     message={toStartOver.advanceMode === 'completion'
-                        ? `Start "${toStartOver.name}" over? It goes back to the first item${toStartOver.loopEntries ? ', in round 1' : ''}, with nothing marked done.\n\nWhat you've done so far isn't lost: past days on the calendar still show it, and this can be undone.`
-                        : `Start "${toStartOver.name}" over from today? The first item moves to the next scheduled day${toStartOver.loopEntries ? ', in round 1' : ''}, with nothing marked done.\n\nWhat you've done so far isn't lost: past days on the calendar still show it, and this can be undone.`}
+                        ? `Start "${toStartOver.name}" over? It goes back to the first item${toStartOver.loopEntries ? ', in round 1' : ''}, with nothing marked done.\n\nWhat you've done so far isn't lost: Past days on the calendar still show it, and this can be undone.`
+                        : `Start "${toStartOver.name}" over from today? The first item moves to the next scheduled day${toStartOver.loopEntries ? ', in round 1' : ''}, with nothing marked done.\n\nWhat you've done so far isn't lost: Past days on the calendar still show it, and this can be undone.`}
                     onConfirm={() => {
                         const t = toStartOver;
                         setToStartOver(null);

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarClock, CalendarDays, CheckCheck, ChevronLeft, History, Library, Pin, PinOff } from 'lucide-react';
-import { CALENDAR_CHANGED_EVENT, calendarToday, clearPins, listCalendarDays, listCalendarTracks, listPins, listVideosWithTag, setPinned, videoThumbnail, type CalendarDayItem, type MenuVideo } from '../api';
+import { BellRing, CalendarClock, CalendarDays, CheckCheck, ChevronLeft, History, Library, NotebookText, Pin, PinOff } from 'lucide-react';
+import { CALENDAR_CHANGED_EVENT, calendarToday, clearPins, listCalendarDays, listCalendarTracks, listLogEntries, listLogs, listLogsDue, listPins, listVideosWithTag, LOGS_CHANGED_EVENT, setPinned, videoThumbnail, writeLogDay, type CalendarDayItem, type Log, type MenuVideo } from '../api';
 import { BUILT_IN_TAGS } from '../lib/glossary';
+import { entryTemplateFor } from '../lib/logs';
 import { builtInTagIcon } from '../lib/built-in-tags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { MENU_DIVIDER, MENU_PANEL, MENU_ROW } from './ContextMenu';
@@ -42,13 +43,17 @@ function VideoRow({ video, onOpen, onUnpin }: { video: MenuVideo; onOpen: () => 
     );
 }
 
+/** The submenu that isn't an Essential tag's: the logs, to write today's entry in one. */
+const LOG_SUB = '\u0000logs';
+const ENTRY_FIELD = 'w-full bg-[#121212] border border-[#333] text-white rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[var(--k-accent)] placeholder-gray-600 disabled:opacity-50';
+
 /**
  * The title bar's pin menu: the pinned videos (newest pin first), then the Essential tags (Watch Later, Favorite, ...),
  * each opening a submenu of the videos carrying it, and Clear pins at the bottom. Picking a video opens it in the sidebar
  * over whatever view is open. Pins are the reader's own (db/pins.rs), so this works in a read-only workspace too.
  * Hidden on the Workspaces screen (index.css), and waits while a dialog is open, like the bar's other buttons.
  */
-export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpenCalendar }: {
+export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpenCalendar, onOpenLog }: {
     locked: boolean;
     onOpenVideo: (videoId: string) => void;
     /** "Show all in Library" for a tag: the Library, filtered to it. */
@@ -58,6 +63,9 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
     /** The "due today" and "to do tomorrow" rows' destination (`date`: the day to show); without it (the Calendar
      *  hidden here) there are no rows. */
     onOpenCalendar?: (date?: string) => void;
+    /** Opens a log on today's row, ready to type in: where the reminders (logs with their bell on and nothing written
+     *  today) and Log Entry go. Without it (Logs hidden here) there are neither. */
+    onOpenLog?: (logId: string) => void;
 }) {
     const { labels } = useWorkspace();
     const [open, setOpen] = useState(false);
@@ -93,7 +101,34 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
             window.removeEventListener('focus', loadToday);
         };
     }, [loadToday]); // eslint-disable-line react-hooks/exhaustive-deps
-    const dueToday = onOpenCalendar && today ? today.due : 0;
+    // Logs: the ones to be reminded of (bell on, nothing written today), kept current as the Calendar's count is; and
+    // all of them, for Log Entry's submenu, read when the menu opens.
+    const [dueLogs, setDueLogs] = useState<Log[]>([]);
+    const [logs, setLogs] = useState<Log[] | null>(null);
+    const loadLogs = useCallback(() => {
+        if (!onOpenLog) return;
+        listLogsDue().then(setDueLogs).catch(() => setDueLogs([]));
+    }, [!!onOpenLog]); // eslint-disable-line react-hooks/exhaustive-deps
+    useEffect(() => {
+        if (!onOpenLog) { setDueLogs([]); return; }
+        loadLogs();
+        const every = window.setInterval(loadLogs, 60_000);
+        window.addEventListener(LOGS_CHANGED_EVENT, loadLogs);
+        window.addEventListener('focus', loadLogs);
+        return () => {
+            window.clearInterval(every);
+            window.removeEventListener(LOGS_CHANGED_EVENT, loadLogs);
+            window.removeEventListener('focus', loadLogs);
+        };
+    }, [loadLogs]); // eslint-disable-line react-hooks/exhaustive-deps
+    const unlogged = onOpenLog ? dueLogs.length : 0;
+    const calendarDue = onOpenCalendar && today ? today.due : 0;
+    // The button's count: what's due on the Calendar today, and the logs waiting for today's entry.
+    const dueToday = calendarDue + unlogged;
+    const dueWords = [
+        ...(calendarDue > 0 ? [`${calendarDue} due today`] : []),
+        ...(unlogged > 0 ? [`${unlogged} ${unlogged === 1 ? 'log' : 'logs'} without an entry today`] : []),
+    ].join(', ');
     const [confirmClear, setConfirmClear] = useState(false);
     // Continue Watching and Watched (WatchListsModal.tsx): their counts here, and which window is open.
     const continuing = useWatchList('continue');
@@ -109,7 +144,39 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
     const [subAt, setSubAt] = useState<{ right: number; top: number } | null>(null);
 
     const refresh = useCallback(() => { listPins().then(setPins).catch(() => setPins([])); }, []);
-    const close = useCallback(() => { setOpen(false); setSub(null); }, []);
+    const close = useCallback(() => { setOpen(false); setSub(null); setWriting(null); setSavedLog(null); }, []);
+    // Log Entry: the log whose today is being written in the submenu (its two cells, as they'll be saved), and the one
+    // just saved. While one is being written the submenu stays, wherever the pointer goes in the menu beside it:
+    // words half typed aren't dropped for brushing another row.
+    const [writing, setWriting] = useState<{ log: Log; top: number; title: string; description: string; loaded: boolean; saving: boolean; error: string | null } | null>(null);
+    const [savedLog, setSavedLog] = useState<string | null>(null);
+    const entryRef = useRef<HTMLInputElement>(null);
+    const descriptionRef = useRef<HTMLTextAreaElement>(null);
+    const startEntry = (log: Log) => {
+        const day = calendarToday();
+        setSavedLog(null);
+        setWriting({ log, top: sub?.top ?? 0, title: '', description: '', loaded: false, saving: false, error: null });
+        listLogEntries(log.id)
+            .then(rows => {
+                const row = rows.find(r => r.date === day);
+                setWriting(w => w && w.log.id === log.id ? { ...w, title: row?.title ?? entryTemplateFor(log.entryTemplate, day), description: row?.description ?? '', loaded: true } : w);
+                window.setTimeout(() => entryRef.current?.focus(), 0);
+            })
+            .catch(() => setWriting(w => w && w.log.id === log.id ? { ...w, loaded: true } : w));
+    };
+    const saveEntry = () => {
+        const w = writing;
+        if (!w || !w.loaded || w.saving) return;
+        setWriting({ ...w, saving: true, error: null });
+        writeLogDay(w.log.id, calendarToday(), w.title, w.description)
+            .then(() => {
+                setWriting(null);
+                setSavedLog(w.log.id);
+                listLogs().then(setLogs).catch(() => {});
+            })
+            .catch(e => setWriting(cur => cur && { ...cur, saving: false, error: (typeof e === 'string' ? e : (e as Error)?.message ?? String(e)).replace(/^Invalid parameter: /, '') }));
+    };
+    const logPanel = writing ? { top: writing.top } : sub?.tag === LOG_SUB ? sub : null;
 
     // Below the button, its right edge lined up with the button's (it sits near the window's right edge).
     useLayoutEffect(() => {
@@ -120,14 +187,15 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
 
     // A submenu opens to the menu's left (the menu is at the window's right edge), its top at its row's, kept inside the window.
     useLayoutEffect(() => {
-        if (!sub || !boxRef.current) { setSubAt(null); return; }
+        const anchor = writing ?? sub;
+        if (!anchor || !boxRef.current) { setSubAt(null); return; }
         const box = boxRef.current.getBoundingClientRect();
         const h = subRef.current?.offsetHeight ?? 0;
-        setSubAt({ right: window.innerWidth - box.left - 2, top: Math.max(6, Math.min(sub.top - 4, window.innerHeight - h - 6)) });
-    }, [sub, subVideos]);
+        setSubAt({ right: window.innerWidth - box.left - 2, top: Math.max(6, Math.min(anchor.top - 4, window.innerHeight - h - 6)) });
+    }, [sub, subVideos, logs, writing?.log.id, writing?.loaded, writing?.error]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
-        if (!sub) return;
+        if (!sub || sub.tag === LOG_SUB) return;
         let live = true;
         setSubVideos(null);
         listVideosWithTag(sub.tag).then(v => { if (live) setSubVideos(v); }).catch(() => { if (live) setSubVideos([]); });
@@ -160,6 +228,7 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
     useEffect(() => { if (locked) close(); }, [locked, close]);
 
     const openVideo = (id: string) => { close(); onOpenVideo(id); };
+    const openLog = (id: string) => { close(); onOpenLog?.(id); };
     const unpin = (id: string) => {
         setPins(prev => prev.filter(p => p.videoId !== id));
         setPinned(id, false).catch(() => {}).finally(() => { refresh(); onPinsChanged(); });
@@ -170,13 +239,13 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
             <button
                 ref={buttonRef}
                 data-pins-button
-                onClick={() => { if (open) close(); else { refresh(); loadToday(); continuing.refresh(); watched.refresh(); setOpen(true); } }}
+                onClick={() => { if (open) close(); else { refresh(); loadToday(); loadLogs(); if (onOpenLog) listLogs().then(setLogs).catch(() => setLogs([])); continuing.refresh(); watched.refresh(); setOpen(true); } }}
                 disabled={locked && !open}
                 // With something due today, its count sits before the pin (where What's New puts its unread dot), in the
                 // bar's light text rather than the accent: noticeable, not loud.
                 className={`${dueToday > 0 ? barButton.replace('w-[22px]', 'min-w-[22px] px-1.5 gap-1') : barButton} ${open ? 'bg-[#272727] text-white' : ''}`}
-                title={locked ? 'Pinned (close the open window first)' : dueToday > 0 ? `Pinned · ${dueToday} due today` : 'Pinned'}
-                aria-label={dueToday > 0 ? `Pinned, ${dueToday} due today` : 'Pinned'}
+                title={locked ? 'Pinned (close the open window first)' : dueToday > 0 ? `Pinned · ${dueWords}` : 'Pinned'}
+                aria-label={dueToday > 0 ? `Pinned, ${dueWords}` : 'Pinned'}
                 aria-expanded={open}
             >
                 {dueToday > 0 && <span className="text-[11px] font-semibold leading-none text-gray-200 tabular-nums">{dueToday > 99 ? '99+' : dueToday}</span>}
@@ -233,6 +302,28 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
                                 )}
                             </>
                         )}
+                        {/* Logs: Log Entry, whose submenu is every log (picking one goes to today's row of it). The
+                            count beside it is the logs with their bell on and nothing written today, which the submenu
+                            marks with a bell. */}
+                        {onOpenLog && (
+                            <>
+                                <div className={MENU_DIVIDER} />
+                                <button
+                                    role="menuitem"
+                                    aria-haspopup="menu"
+                                    aria-expanded={sub?.tag === LOG_SUB}
+                                    onMouseEnter={e => setSub({ tag: LOG_SUB, top: e.currentTarget.getBoundingClientRect().top })}
+                                    onClick={e => setSub({ tag: LOG_SUB, top: e.currentTarget.getBoundingClientRect().top })}
+                                    className={`${MENU_ROW} text-gray-200 ${sub?.tag === LOG_SUB ? 'bg-[#272727]' : ''}`}
+                                    title="Write today's entry in one of your logs"
+                                >
+                                    <ChevronLeft className="w-3.5 h-3.5 shrink-0 text-[#666666]" />
+                                    <span className="flex-1 truncate">Log Entry</span>
+                                    {unlogged > 0 && <span className="flex items-center gap-1 text-[11px] text-[var(--k-accent)] tabular-nums" title={`${unlogged} ${unlogged === 1 ? 'log' : 'logs'} without an entry today`}><BellRing className="w-3 h-3" />{unlogged}</span>}
+                                    <NotebookText className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" />
+                                </button>
+                            </>
+                        )}
                         <div className={MENU_DIVIDER} />
                         {BUILT_IN_TAGS.map(tag => {
                             const Icon = builtInTagIcon(tag);
@@ -284,7 +375,87 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
                         </button>
                     </div>
 
-                    {sub && (
+                    {logPanel && (
+                        <div
+                            ref={subRef}
+                            role="menu"
+                            aria-label="Log Entry"
+                            style={subAt ? { right: subAt.right, top: subAt.top } : { visibility: 'hidden', right: 0, top: 0 }}
+                            className={`fixed z-[321] ${writing ? 'w-80' : 'w-60'} ${MENU_PANEL}`}
+                            onContextMenu={e => e.preventDefault()}
+                        >
+                            {writing ? (
+                                // Today's row of one log, written here: what's there already is shown to be changed, and
+                                // Save writes the day as the sheet would (emptied of both, the row is removed).
+                                <div className="p-2">
+                                    <div className="flex items-center gap-1 mb-2">
+                                        <button type="button" onClick={() => setWriting(null)} className="p-1 rounded-md text-[#888888] hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="Back to the logs" aria-label="Back to the logs">
+                                            <ChevronLeft className="w-3.5 h-3.5" />
+                                        </button>
+                                        <span className="min-w-0 flex-1 truncate text-xs font-bold text-white">{writing.log.name}</span>
+                                        <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#888888]">Today</span>
+                                    </div>
+                                    <input
+                                        ref={entryRef}
+                                        value={writing.title}
+                                        disabled={!writing.loaded}
+                                        onChange={e => setWriting(w => w && { ...w, title: e.target.value })}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (e.ctrlKey || e.metaKey) saveEntry(); else descriptionRef.current?.focus(); } }}
+                                        maxLength={200}
+                                        placeholder={writing.loaded ? 'Entry' : 'Loading...'}
+                                        aria-label="Entry"
+                                        className={`${ENTRY_FIELD} font-semibold`}
+                                    />
+                                    <textarea
+                                        ref={descriptionRef}
+                                        value={writing.description}
+                                        disabled={!writing.loaded}
+                                        onChange={e => setWriting(w => w && { ...w, description: e.target.value })}
+                                        onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveEntry(); } }}
+                                        rows={3}
+                                        maxLength={5000}
+                                        placeholder="Description"
+                                        aria-label="Description"
+                                        className={`${ENTRY_FIELD} mt-1.5 resize-none leading-relaxed custom-scrollbar`}
+                                    />
+                                    {writing.error && <p className="mt-1.5 text-[11px] text-red-400 leading-relaxed">{writing.error}</p>}
+                                    <div className="mt-2 flex items-center gap-2">
+                                        <button type="button" onClick={() => openLog(writing.log.id)} className="text-[11px] font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer" title={`Open "${writing.log.name}" in ${labels.aliasLogs}, on today's row`}>
+                                            Open log
+                                        </button>
+                                        <span className="flex-1" />
+                                        <button
+                                            type="button"
+                                            onClick={saveEntry}
+                                            disabled={!writing.loaded || writing.saving}
+                                            title="Save today's entry (Ctrl+Enter)"
+                                            className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                                        >
+                                            Save
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="px-3 pt-1.5 pb-1 text-[10px] font-bold uppercase tracking-wider text-[#888888]">Today's entry in</div>
+                                    <div className="max-h-72 overflow-y-auto custom-scrollbar">
+                                        {logs === null ? (
+                                            <p className="px-3 py-2 text-[11px] text-[#888888]">Loading...</p>
+                                        ) : logs.length === 0 ? (
+                                            <p className="px-3 py-2 text-[11px] text-[#888888] leading-relaxed">No logs yet. Make one in {labels.aliasLogs}.</p>
+                                        ) : logs.map(l => (
+                                            <button key={l.id} role="menuitem" onClick={() => startEntry(l)} className={`${MENU_ROW} text-gray-200`}>
+                                                <span className="flex-1 truncate">{l.name}</span>
+                                                {savedLog === l.id && <span className="text-[10px] text-[#888888]">Saved</span>}
+                                                {dueLogs.some(d => d.id === l.id) && <BellRing className="w-3 h-3 shrink-0 text-[var(--k-accent)]" />}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                        </div>
+                    )}
+                    {sub && sub.tag !== LOG_SUB && !writing && (
                         <div
                             ref={subRef}
                             role="menu"

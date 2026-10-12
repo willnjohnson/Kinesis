@@ -81,7 +81,9 @@ fn handle_youtube_embed(request: Request) -> Result<(), Box<dyn std::error::Erro
 <script>
   // Between the app (Sidebar.tsx) and YouTube's player, through its iframe API (enablejsapi above):
   //  - kinesis-seek: jump to a moment (the app's [1:23] timestamps and timed links).
-  //  - kinesis-time: where the video is now (the app's "Copy link at time"), answered to whoever asked.
+  //  - kinesis-time: where the video is now and whether it's playing (the app's "Copy link at time" and "Cite
+  //    Moment"), answered to whoever asked.
+  //  - kinesis-pause / kinesis-play: hold the video and set it going again ("Cite Moment", while a thought is written).
   //  - kinesis-ended: sent up unasked when the video plays to its end (the sidebar's track chips offer Mark Done).
   //  - kinesis-progress: sent up unasked every few seconds while playing, and on a pause: where it is and how long it
   //    is (the sidebar remembers it, to offer Resume next time).
@@ -126,9 +128,11 @@ fn handle_youtube_embed(request: Request) -> Result<(), Box<dyn std::error::Erro
     var d = e.data;
     if (e.source !== window.parent || !d) return;
     if (d.type === 'kinesis-time') {{
-      e.source.postMessage({{ type: 'kinesis-time', id: d.id, seconds: current }}, e.origin);
+      e.source.postMessage({{ type: 'kinesis-time', id: d.id, seconds: current, playing: playing }}, e.origin);
       return;
     }}
+    if (d.type === 'kinesis-pause') {{ send('pauseVideo', []); return; }}
+    if (d.type === 'kinesis-play') {{ send('playVideo', []); return; }}
     if (d.type !== 'kinesis-seek') return;
     var s = d.seconds;
     if (typeof s !== 'number' || !isFinite(s) || s < 0) return;

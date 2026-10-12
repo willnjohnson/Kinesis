@@ -1,6 +1,7 @@
-//! The graph view (components/GraphModal.tsx): videos, glossary terms and people as nodes, and what connects them as
-//! edges. A link edge is an in-app link (`[text](kinesis://...)`) from one thing's text to another: a video's summary,
-//! transcript or note, a person's bio, a term's definition (the same texts Backlinks reads, db/links.rs). A creator edge
+//! The graph view (components/GraphModal.tsx): videos, glossary terms, people and notes as nodes, and what connects
+//! them as edges. A link edge is an in-app link (`[text](kinesis://...)`) from one thing's text to another: a video's
+//! summary, transcript or note, a person's bio, a term's definition, a note's own text, which is where its citations
+//! are (the same texts Backlinks reads, db/links.rs). A creator edge
 //! is a video to the person whose channel it's from. Drive and playlist links aren't drawn: a Drive is a folder, not a
 //! thing that links back.
 
@@ -15,9 +16,9 @@ use super::schema::table_exists;
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphNode {
-    /// "video", "glossary" or "bio".
+    /// "video", "glossary", "bio" or "note".
     pub kind: &'static str,
-    /// What opening it is given (a video id, a term, a handle), as an in-app link would be.
+    /// What opening it is given (a video id, a term, a handle, a note's id), as an in-app link would be.
     pub key: String,
     pub label: String,
     /// Whether it exists here (a link can point at a term or person with no entry yet, or a video not in the library).
@@ -53,7 +54,8 @@ fn kind_str(kind: LinkKind) -> Option<&'static str> {
         LinkKind::Video => Some("video"),
         LinkKind::Glossary => Some("glossary"),
         LinkKind::Bio => Some("bio"),
-        LinkKind::Drive | LinkKind::Playlist => None,
+        LinkKind::Note => Some("note"),
+        LinkKind::Drive | LinkKind::Playlist | LinkKind::Flashcards | LinkKind::Workbook => None,
     }
 }
 
@@ -132,6 +134,19 @@ pub fn link_graph(db_path: &str) -> Result<LinkGraph> {
             b.node("glossary", &term, &term, true);
         }
     }
+    // Notes, shared and personal alike (a personal one is this reader's own, and so is this view of the graph).
+    let mut notes: Vec<(String, String)> = Vec::new();
+    for table in [super::notes::SHARED_NOTES, super::notes::PERSONAL_NOTES] {
+        if !table_exists(&conn, table)? {
+            continue;
+        }
+        let mut stmt = conn.prepare(&format!("SELECT id, COALESCE(NULLIF(TRIM(title), ''), 'Untitled'), body FROM {table}"))?;
+        let rows: Vec<(String, String, String)> = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.filter_map(|r| r.ok()).collect();
+        for (id, title, body) in rows {
+            b.node("note", &id, &title, true);
+            notes.push((id, body));
+        }
+    }
     let mut videos: Vec<(String, Option<String>, Option<String>, Option<String>)> = Vec::new();
     if table_exists(&conn, "Videos")? {
         let mut stmt = conn.prepare(&format!(
@@ -193,6 +208,10 @@ pub fn link_graph(db_path: &str) -> Result<LinkGraph> {
             }
         }
     }
+    for (id, body) in &notes {
+        let n = b.index[&("note", id.clone())];
+        b.links_in(n, body);
+    }
     Ok(b.graph)
 }
 
@@ -223,6 +242,15 @@ mod tests {
         assert!(has(t, ann, "link") && has(ann, nobody, "link"));
         assert!(has(v, ann, "creator"));
         assert_eq!(g.edges.iter().filter(|e| e.kind == "link" && ((e.a == v && e.b == t) || (e.a == t && e.b == v))).count(), 1);
+
+        // A note is a node, joined to what it cites and to what links to it.
+        let note = crate::db::create_note(&p, false, "Kinases", "> a quote\n>\n> \u{2014} [First](kinesis://video/v1?t=1:30)\n\nSee [mTOR](kinesis://glossary/mtor).", &[]).unwrap();
+        crate::db::attachments::set_note(&p, "v1", &format!("In [my notes](kinesis://note/{}).", note.id)).unwrap();
+        let g = link_graph(&p).unwrap();
+        let find = |kind: &str, label: &str| g.nodes.iter().position(|n| n.kind == kind && n.label == label).unwrap();
+        let (v, t, n) = (find("video", "First"), find("glossary", "MTOR"), find("note", "Kinases"));
+        let has = |x: usize, y: usize| g.edges.iter().any(|e| ((e.a == x && e.b == y) || (e.a == y && e.b == x)) && e.kind == "link");
+        assert!(has(n, v) && has(n, t) && g.nodes[n].key == note.id);
         let _ = std::fs::remove_file(&path);
     }
 }

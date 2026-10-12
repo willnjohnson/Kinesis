@@ -57,9 +57,13 @@ const K_BLOB: &str = "attachment_blob";
 const K_ATTACHMENT: &str = "attachment";
 /// A whole Calendar track (db/calendar.rs's TrackPack).
 const K_CALENDAR: &str = "calendar_track";
+/// A shared note (the Notes section, db/notes.rs). Personal notes are never written.
+const K_STUDY_NOTE: &str = "study_note";
+/// A shared workbook (db/workbooks.rs): its name and its notes' ids, in order. It goes with the shared notes.
+const K_WORKBOOK: &str = "workbook";
 
 fn is_local_kind(kind: &str) -> bool {
-    matches!(kind, K_LABEL | K_HISTORY | K_NOTE | K_BLOB | K_ATTACHMENT | K_CALENDAR)
+    matches!(kind, K_LABEL | K_HISTORY | K_NOTE | K_BLOB | K_ATTACHMENT | K_CALENDAR | K_STUDY_NOTE | K_WORKBOOK)
 }
 
 fn yes() -> bool {
@@ -97,6 +101,9 @@ pub struct ExportOptions {
     /// course without your own progress.
     #[serde(default = "yes")]
     pub calendar_progress: bool,
+    /// The shared notes of the Notes section (never the personal ones).
+    #[serde(default = "yes")]
+    pub study_notes: bool,
     /// Drives to leave out, and what to do with what touches them (see drive_scope.rs).
     #[serde(default)]
     pub drives: DriveScope,
@@ -303,6 +310,10 @@ fn write_pack(
     if opts.attachments {
         header.counts.insert(K_ATTACHMENT.into(), count_rows_kept(&conn, "VideoAttachments", scope.as_ref()));
     }
+    if opts.study_notes {
+        header.counts.insert(K_STUDY_NOTE.into(), count_rows(&conn, db::SHARED_NOTES));
+        header.counts.insert(K_WORKBOOK.into(), count_rows(&conn, db::SHARED_WORKBOOKS));
+    }
     // The Calendar's tracks, read up front (there are few, and the header counts them). A track in a left-out Drive is left
     // out with it; its entries keep their videos' ids either way (the importer turns any video it doesn't have into a task).
     let tracks: Vec<db::TrackPack> = if opts.calendar {
@@ -418,6 +429,54 @@ fn write_pack(
 
     if opts.attachments && sqlite::table_exists(&conn, "VideoAttachments") && sqlite::table_exists(&conn, "AttachmentBlobs") {
         export_attachments(&conn, &mut out, chunk_bytes, scope.as_ref(), progress)?;
+    }
+
+    // Shared notes, before the tracks (a track can hold a note). With Drives left out, a note loses those Drives and its
+    // links into them, as a glossary entry does, but stays: it's one text, not something filed only there.
+    if opts.study_notes && sqlite::table_exists(&conn, db::SHARED_NOTES) {
+        progress("Exporting notes…");
+        let mut stmt = conn
+            .prepare(&format!("SELECT id, title, body, drives, created_at, updated_at FROM {} ORDER BY id", db::SHARED_NOTES))
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, String, String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (id, title, body, drives, created_at, updated_at) in rows {
+            let mut drives = db::decode_drives(&drives);
+            let body = match &scope {
+                Some(scope) => {
+                    drives.retain(|d| scope.category_kept(d));
+                    scope.clean_note(&body)
+                }
+                None => body,
+            };
+            out.item(K_STUDY_NOTE, &id, json!({ "title": title, "body": body, "drives": drives, "created_at": created_at, "updated_at": updated_at }))?;
+        }
+    }
+
+    // Shared workbooks, after the notes they put in order (a shared one holds shared notes only, so every note it
+    // names has just been written).
+    if opts.study_notes && sqlite::table_exists(&conn, db::SHARED_WORKBOOKS) {
+        let mut stmt = conn
+            .prepare(&format!("SELECT id, title, created_at, updated_at FROM {} ORDER BY id", db::SHARED_WORKBOOKS))
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, String, String)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .map_err(|e| e.to_string())?
+            .filter_map(|r| r.ok())
+            .collect();
+        for (id, title, created_at, updated_at) in rows {
+            let mut notes = conn
+                .prepare(&format!(
+                    "SELECT w.note_id FROM WorkbookNotes w WHERE w.workbook_id = ?1 AND EXISTS (SELECT 1 FROM {} n WHERE n.id = w.note_id) ORDER BY w.position, w.note_id",
+                    db::SHARED_NOTES
+                ))
+                .map_err(|e| e.to_string())?;
+            let note_ids: Vec<String> = notes.query_map(params![id], |r| r.get(0)).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+            out.item(K_WORKBOOK, &id, json!({ "title": title, "note_ids": note_ids, "created_at": created_at, "updated_at": updated_at }))?;
+        }
     }
 
     // After the videos, so an importer has them when it reaches the tracks that use them.
@@ -659,6 +718,77 @@ impl LocalApplier {
                     )
                     .map_err(e)?;
                 Ok(if changed > 0 { Local::Applied } else { Local::Skipped })
+            }
+            K_STUDY_NOTE => {
+                // A note already here (by id, shared or personal) is the reader's own copy: never replaced.
+                let exists = conn
+                    .query_row(
+                        &format!("SELECT 1 FROM {} WHERE id = ?1 UNION ALL SELECT 1 FROM {} WHERE id = ?1", db::SHARED_NOTES, db::PERSONAL_NOTES),
+                        params![item.key],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(e)?
+                    .is_some();
+                if exists || item.key.trim().is_empty() {
+                    return Ok(Local::Skipped);
+                }
+                let text = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let listed: Vec<String> = d
+                    .get("drives")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+                    .unwrap_or_default();
+                // A Drive this version can't read is let go rather than losing the note.
+                let drives: Vec<String> = listed.into_iter().filter(|d| db::is_drive_path(d)).collect();
+                let created = text("created_at");
+                let updated = text("updated_at");
+                conn.execute(
+                    &format!("INSERT INTO {} (id, title, body, drives, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)", db::SHARED_NOTES),
+                    params![
+                        item.key,
+                        text("title").split_whitespace().collect::<Vec<_>>().join(" "),
+                        text("body"),
+                        db::encode_drives(&drives),
+                        if created.is_empty() { updated.clone() } else { created },
+                        updated
+                    ],
+                )
+                .map_err(e)?;
+                Ok(Local::Applied)
+            }
+            K_WORKBOOK => {
+                // A workbook already here (by id, shared or personal) is the reader's own: never replaced.
+                let exists = conn
+                    .query_row(
+                        &format!("SELECT 1 FROM {} WHERE id = ?1 UNION ALL SELECT 1 FROM {} WHERE id = ?1", db::SHARED_WORKBOOKS, db::PERSONAL_WORKBOOKS),
+                        params![item.key],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map_err(e)?
+                    .is_some();
+                let text = |k: &str| d.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+                let title = text("title").split_whitespace().collect::<Vec<_>>().join(" ");
+                if exists || item.key.trim().is_empty() || title.is_empty() {
+                    return Ok(Local::Skipped);
+                }
+                let (created, updated) = (text("created_at"), text("updated_at"));
+                conn.execute(
+                    &format!("INSERT INTO {} (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4)", db::SHARED_WORKBOOKS),
+                    params![item.key, title, if created.is_empty() { updated.clone() } else { created }, updated],
+                )
+                .map_err(e)?;
+                // Its notes' places, whether or not each note is here (one that isn't is simply not listed).
+                let note_ids = d.get("note_ids").and_then(Value::as_array).cloned().unwrap_or_default();
+                for (i, note_id) in note_ids.iter().filter_map(Value::as_str).enumerate() {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO WorkbookNotes (workbook_id, note_id, position) VALUES (?1, ?2, ?3)",
+                        params![item.key, note_id, i as i64 + 1],
+                    )
+                    .map_err(e)?;
+                }
+                Ok(Local::Applied)
             }
             K_BLOB => self.blob_chunk(conn, d),
             K_CALENDAR => {
@@ -998,8 +1128,59 @@ mod tests {
             attachments: true,
             calendar: true,
             calendar_progress: true,
+            study_notes: true,
             drives: DriveScope::default(),
         }
+    }
+
+    #[test]
+    fn shared_notes_travel_and_personal_ones_never_do() {
+        let src = temp_db("notes_src");
+        seed(&src);
+        let shared = db::create_note(&src, true, "Das Perfekt", "> words\n> [Title](kinesis://video/vid1?t=12:34)", &[":UAP".to_string()]).unwrap();
+        let personal = db::create_note(&src, false, "Private thoughts", "mine", &[]).unwrap();
+        let t = db::create_calendar_track(&src, &db::TrackInput {
+            repeat: Default::default(),
+            name: "Course".into(), drive: String::new(), advance_mode: "completion".into(), loop_entries: false,
+            source_drive_sequence: false, weekdays: vec![], start_date: Some("2026-01-05".into()), time_start: None, time_duration: None,
+        })
+        .unwrap();
+        db::add_calendar_note_entry(&src, t, &shared.id, &db::EntryExtras::default()).unwrap();
+        db::add_calendar_note_entry(&src, t, &personal.id, &db::EntryExtras::default()).unwrap();
+        let book = db::create_workbook(&src, true, "Course notes").unwrap();
+        db::add_note_to_workbook(&src, &book.id, &shared.id).unwrap();
+        let own = db::create_workbook(&src, false, "Scratch").unwrap();
+        db::add_note_to_workbook(&src, &own.id, &personal.id).unwrap();
+
+        let dir = temp_dir("notes");
+        let out = dir.join("notes.kinpak");
+        export_pack(&src, &out, "Kinesis", "Kinesis", &all(), |_| {}).unwrap();
+        let raw = {
+            use std::io::Read;
+            let mut s = String::new();
+            flate2::read::GzDecoder::new(std::fs::File::open(&out).unwrap()).read_to_string(&mut s).unwrap();
+            s
+        };
+        assert!(raw.contains("Das Perfekt") && !raw.contains("mine\""), "the personal note's text never goes in");
+
+        let dst = temp_db("notes_dst");
+        import_pack(&dst, &out, import_all(), |_| {}).unwrap();
+        let notes = db::list_notes(&dst).unwrap();
+        assert_eq!(notes.len(), 1);
+        // The shared workbook came with its shared note, in place; the personal workbook stayed behind.
+        let books = db::list_workbooks(&dst).unwrap();
+        assert_eq!(books.len(), 1);
+        assert_eq!((books[0].title.as_str(), books[0].shared, books[0].note_ids.clone()), ("Course notes", true, vec![shared.id.clone()]));
+        assert_eq!((notes[0].id.as_str(), notes[0].title.as_str(), notes[0].shared), (shared.id.as_str(), "Das Perfekt", true));
+        assert_eq!(notes[0].body, shared.body);
+        // On the track: the shared note is itself; the personal one, a task by its name.
+        let entries = db::list_calendar_tracks(&dst, false, db::local_today()).unwrap().remove(0).state.entries;
+        assert_eq!(entries[0].note_id.as_deref(), Some(shared.id.as_str()));
+        assert_eq!((entries[1].note_id.as_deref(), entries[1].title.as_str()), (None, "Private thoughts"));
+        // A note already here is the reader's own: imported again, it isn't replaced.
+        db::update_note(&dst, &shared.id, "Edited here", "", &[]).unwrap();
+        import_pack(&dst, &out, import_all(), |_| {}).unwrap();
+        assert_eq!(db::get_note(&dst, &shared.id).unwrap().unwrap().title, "Edited here");
     }
 
     #[test]
@@ -1008,6 +1189,7 @@ mod tests {
         let src = temp_db("cal_src");
         seed(&src);
         let course = |name: &str| db::TrackInput {
+            repeat: Default::default(),
             name: name.into(),
             drive: String::new(),
             advance_mode: "completion".into(),

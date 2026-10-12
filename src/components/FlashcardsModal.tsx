@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import { ArrowLeft, ArrowRight, Check, GalleryVerticalEnd, RotateCcw, Shuffle, X } from 'lucide-react';
 import { SecondaryButton } from './ui/Button';
 import { Select } from './ui/Select';
 import { Segmented } from './ui/Segmented';
-import type { GlossaryTerm } from '../api';
+import { getGlossaryTerms, type GlossaryTerm } from '../api';
+import { ALL_TERMS, studyDecks, studyTerms } from '../lib/glossary';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { Modal } from './Modal';
 import { MarkdownLink } from './MarkdownLink';
 import { remarkHighlight } from '../lib/remark-highlight';
+import { remarkCallouts } from '../lib/remark-callouts';
 import { remarkTimestamps } from '../lib/remark-timestamps';
 import { markdownUrlTransform } from '../lib/internal-links';
 import { prefersReducedMotion } from '../lib/transitions';
@@ -106,7 +109,8 @@ function Face({ side, entry, back }: { side: Front; entry: GlossaryTerm; back: b
                         works as a link (it doesn't flip the card). */}
                     <div className="my-auto w-full leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-code:text-red-400" onClick={e => { if ((e.target as Element).closest('a, button')) e.stopPropagation(); }}>
                         <ReactMarkdown
-                            remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }]]}
+                            remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, [remarkTimestamps, { chips: false }]]}
+                            rehypePlugins={CODE_HIGHLIGHT}
                             urlTransform={markdownUrlTransform}
                             components={{ a: MarkdownLink }}
                         >
@@ -133,9 +137,13 @@ function Face({ side, entry, back }: { side: Front; entry: GlossaryTerm; back: b
  *  cards, so a different deck never takes another's place. */
 let saved: { deck: string; front: Front; show: Show; order: number[]; at: number } | null = null;
 
-export function FlashcardsModal({ entries, deckName, resume = false, onClose }: {
+export function FlashcardsModal({ entries, deckName, drive, onPickDrive, resume = false, onClose }: {
     entries: GlossaryTerm[];
     deckName: string;
+    /** The Drive this deck is (ALL_TERMS for every term), and what picking another in Deck does: the window is opened
+     *  again on that Drive's terms, without going back to the Glossary to choose it. */
+    drive?: string;
+    onPickDrive?: (drive: string) => void;
     /** Opened by Back/Forward: as it was left (side, filter, order, card), not from the first card. */
     resume?: boolean;
     onClose: () => void;
@@ -154,6 +162,17 @@ export function FlashcardsModal({ entries, deckName, resume = false, onClose }: 
         });
     };
     const markOf = (e: GlossaryTerm): Mark | undefined => marks.get(cardKey(e));
+
+    // The decks there are to switch to: every term, and each Drive that has terms (Quick Tags aren't cards).
+    const [decks, setDecks] = useState<{ drive: string; count: number }[]>([]);
+    useEffect(() => {
+        if (!onPickDrive) return;
+        let live = true;
+        getGlossaryTerms()
+            .then(terms => { if (live) setDecks([{ drive: ALL_TERMS, count: studyTerms(terms, ALL_TERMS).length }, ...studyDecks(terms)]); })
+            .catch(() => {});
+        return () => { live = false; };
+    }, [onPickDrive]);
 
     const [front, setFront] = useState<Front>(from?.front ?? 'term');
     const [show, setShow] = useState<Show>(from?.show ?? 'all');
@@ -234,6 +253,15 @@ export function FlashcardsModal({ entries, deckName, resume = false, onClose }: 
         <Modal onClose={onClose} icon={GalleryVerticalEnd} title="Flashcards" subtitle={deckName} size="lg" bodyClassName="p-6 space-y-5" closeOnNavigate>
             <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-3 flex-wrap">
+                    {onPickDrive && decks.length > 1 && (
+                        <label className="flex items-center gap-2">
+                            <span className="text-[11px] text-gray-500">Deck:</span>
+                            <Select value={drive ?? ''} onValueChange={v => { if (v && v !== drive) onPickDrive(v); }} blurOnChange aria-label="Which Drive's terms to study" className="max-w-[14rem]">
+                                {drive === undefined || !decks.some(d => d.drive === drive) ? <option value={drive ?? ''}>{deckName}</option> : null}
+                                {decks.map(d => <option key={d.drive} value={d.drive}>{d.drive === ALL_TERMS ? 'All Terms' : d.drive} ({d.count})</option>)}
+                            </Select>
+                        </label>
+                    )}
                     <label className="flex items-center gap-2">
                         <span className="text-[11px] text-gray-500">Show:</span>
                         {/* Lets go of focus once picked, so the arrow keys go back to moving through cards. */}

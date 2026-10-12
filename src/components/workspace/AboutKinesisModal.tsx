@@ -1,8 +1,10 @@
 import { useEffect, useState, type ElementType } from "react";
-import { ArrowLeft, ArrowRight, BookA, BookMarked, CalendarDays, FolderTree, Info, Layers, PanelRight, Search, Sparkles, UserSearch } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookA, BookMarked, CalendarDays, FolderTree, Info, Layers, NotebookPen, NotebookText, PanelRight, Search, Sparkles, UserSearch } from "lucide-react";
 import { Modal } from "../Modal";
 import { BRAND } from "../../branding";
 import { SecondaryButton } from '../ui/Button';
+import { useWorkspace } from "../../hooks/useWorkspace";
+import type { WorkspaceLabels } from "../../lib/workspace";
 
 /** One page of the walkthrough: a part of the app, what it's for, and how it's used. */
 interface Page {
@@ -12,34 +14,44 @@ interface Page {
     how: string[];
 }
 
-const PARTS: Page[] = [
+/** The parts of the app, under the names this workspace gives them (`l`: its labels; the app's own names on the
+ *  Workspaces screen, where no workspace is open). */
+const parts = (l: WorkspaceLabels): Page[] => [
     {
-        name: "Search", Icon: Search, what: "Find videos on YouTube.",
+        name: l.aliasSearch, Icon: Search, what: "Find videos on YouTube.",
         how: ["Paste a video, playlist or channel link, or type a @handle.", "Save the videos you want to keep."],
     },
     {
-        name: "Library", Icon: BookMarked, what: "Every video you've saved, in one place.",
+        name: l.aliasLibrary, Icon: BookMarked, what: "Every video you've saved, in one place.",
         how: ["Filter by text, #tag, ^term or @handle.", "Transcripts are searched too."],
     },
     {
-        name: "Drive", Icon: FolderTree, what: "Folders for your videos, written as paths like :CS-DSA.",
-        how: ["Browse and sort them in the Drive panel.", "Give a Drive's videos an order to watch in."],
+        name: l.aliasDriveName, Icon: FolderTree, what: "Folders for your videos, written as paths like :CS-DSA.",
+        how: [`Browse and sort them in the ${l.aliasDriveName} panel.`, "Give a folder's videos an order to watch in."],
     },
     {
         name: "Sidebar", Icon: PanelRight, what: "Opens when you pick a video.",
         how: ["Watch it and read its transcript.", "Make an AI summary.", "Add tags, notes and attachments."],
     },
     {
-        name: "Glossary", Icon: BookA, what: "Your vocabulary.",
+        name: l.aliasGlossary, Icon: BookA, what: "Your vocabulary.",
         how: ["A Tag is a quick label for videos.", "A Term is a tag with a definition.", "Type ^ in any note to link a Term."],
     },
     {
-        name: "Biography", Icon: UserSearch, what: "The people and channels behind your videos.",
+        name: l.aliasBiography, Icon: UserSearch, what: "The people and channels behind your videos.",
         how: ["Type @ in any note to link one.", "See every note that mentions them."],
     },
     {
-        name: "Calendar", Icon: CalendarDays, what: "Plan with tracks: lists of videos and tasks to work through.",
+        name: l.aliasCalendar, Icon: CalendarDays, what: "Plan with tracks: Lists of videos, notes and tasks to work through.",
         how: ["Go one by one, on a weekly schedule, or as a repeating rotation.", "Check items off as you go.", "Export them to Google, Apple or Outlook."],
+    },
+    {
+        name: l.aliasNotes, Icon: NotebookPen, what: "Pages of your own writing that cite the videos they draw on.",
+        how: ["Cite a video, a moment in it or a passage of its transcript.", "Start from a template, and add Q: / A: lines to quiz yourself.", "Put notes in order as a Workbook, to read a page at a time."],
+    },
+    {
+        name: l.aliasLogs, Icon: NotebookText, what: "A running record of what you did, a row a day.",
+        how: ["Start one for anything: training, reading, a project.", "The days are already laid out: Type an entry and a description.", "Ring its bell to be reminded on a day you haven't written."],
     },
     {
         name: "Workspaces", Icon: Layers, what: "Separate libraries, each in its own folder.",
@@ -48,11 +60,12 @@ const PARTS: Page[] = [
 ];
 
 /** The usual way through the app, shown on the first page. */
-const FLOW: [string, string][] = [
-    ["Find", "videos in Search"],
-    ["Organize", "them in your Library and Drives"],
+const flow = (l: WorkspaceLabels): [string, string][] => [
+    ["Find", `videos in ${l.aliasSearch}`],
+    ["Organize", `them in your ${l.aliasLibrary} and ${l.aliasDriveName}s`],
     ["Learn", "from them in the Sidebar"],
-    ["Plan", "them into tracks on the Calendar"],
+    ["Plan", `them into tracks on the ${l.aliasCalendar}`],
+    ["Write", `what you learned in ${l.aliasNotes}`],
 ];
 
 /**
@@ -65,6 +78,10 @@ export function AboutKinesisModal({ onClose, inApp = false }: {
     /** Opened from inside a workspace (Ctrl+K), not the Workspaces screen: the last page doesn't send you to pick one. */
     inApp?: boolean;
 }) {
+    // The sections under this workspace's names for them (opened from the Workspaces screen, the app's own).
+    const { labels } = useWorkspace();
+    const PARTS = parts(labels);
+    const FLOW = flow(labels);
     const total = PARTS.length + 2;
     const [page, setPage] = useState(0);
     const last = page === total - 1;
@@ -174,7 +191,7 @@ export function AboutKinesisModal({ onClose, inApp = false }: {
                         </p>
                         <p className="text-sm text-gray-400 leading-relaxed mt-5">
                             Tip: press <kbd className="px-1 rounded border border-[#444444] text-gray-300">Ctrl</kbd> + <kbd className="px-1 rounded border border-[#444444] text-gray-300">K</kbd> to
-                            jump to any part of the app, a video, a term or a person.
+                            jump to any part of the app, a video, a note, a term or a person.
                         </p>
                     </>
                 )}

@@ -43,7 +43,14 @@ fn read_player(data: &Value) -> Found {
     }
 }
 
-/// What opening a video found: `status` is "ok", "orphaned" or "unknown"; a renamed video's old and new titles.
+/// The view count in the player endpoint's answer (it comes with the title, as digits in text), when there is one.
+fn read_views(data: &Value) -> Option<i64> {
+    let views = crate::types::parse_view_count(data["videoDetails"]["viewCount"].as_str()?);
+    (views > 0).then_some(views)
+}
+
+/// What opening a video found: `status` is "ok", "orphaned" or "unknown"; a renamed video's old and new titles; and
+/// its view count, when that had changed (already stored).
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoIdentityCheck {
@@ -51,11 +58,12 @@ pub struct VideoIdentityCheck {
     pub old_title: Option<String>,
     pub new_title: Option<String>,
     pub reason: Option<String>,
+    pub view_count: Option<String>,
 }
 
 /// Asks YouTube about a saved video and catches it up: a new title is stored (the old one is returned, for the sidebar
-/// to say so), a video that's gone is marked orphaned (its title is left as it was), and one that answers again stops
-/// being orphaned.
+/// to say so), its view count is stored when it has moved (which it mostly has: nothing is said of it), a video that's
+/// gone is marked orphaned (its title is left as it was), and one that answers again stops being orphaned.
 #[command]
 pub async fn check_video_identity(app: tauri::AppHandle, video_id: String) -> Result<VideoIdentityCheck, String> {
     let db_path = get_db_path(&app);
@@ -63,12 +71,24 @@ pub async fn check_video_identity(app: tauri::AppHandle, video_id: String) -> Re
     match read_player(&data) {
         Found::Title(title) => {
             let (path, id, t) = (db_path.clone(), video_id.clone(), title.clone());
-            let old = blocking(move || {
+            let views = read_views(&data);
+            let (old, new_views) = blocking(move || {
                 db::set_orphaned(&path, &id, false, "")?;
-                db::update_video_title(&path, &id, &t)
+                let old = db::update_video_title(&path, &id, &t)?;
+                let new_views = match views {
+                    Some(v) => db::update_video_view_count(&path, &id, v)?,
+                    None => None,
+                };
+                Ok((old, new_views))
             })
             .await?;
-            Ok(VideoIdentityCheck { status: "ok".into(), new_title: old.as_ref().map(|_| title), old_title: old, reason: None })
+            Ok(VideoIdentityCheck {
+                status: "ok".into(),
+                new_title: old.as_ref().map(|_| title),
+                old_title: old,
+                reason: None,
+                view_count: new_views.map(|v| v.to_string()),
+            })
         }
         Found::Gone(reason) => {
             let r = reason.clone();
@@ -151,5 +171,15 @@ mod tests {
         let bot_check = json!({ "playabilityStatus": { "status": "LOGIN_REQUIRED", "reason": "Sign in to confirm you're not a bot" } });
         assert_eq!(read_player(&bot_check), Found::Unknown);
         assert_eq!(read_player(&json!({})), Found::Unknown);
+    }
+
+    #[test]
+    fn the_view_count_is_read_where_the_answer_has_one() {
+        let live = json!({ "videoDetails": { "title": "Never Gonna Give You Up", "viewCount": "1700000001" } });
+        assert_eq!(read_views(&live), Some(1_700_000_001));
+        // No count, or none that reads as a number: nothing to store.
+        assert_eq!(read_views(&json!({ "videoDetails": { "title": "x" } })), None);
+        assert_eq!(read_views(&json!({ "videoDetails": { "viewCount": "" } })), None);
+        assert_eq!(read_views(&json!({ "playabilityStatus": { "status": "LOGIN_REQUIRED" } })), None);
     }
 }

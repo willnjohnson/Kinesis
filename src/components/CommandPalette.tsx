@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ElementType } from 'react';
-import { BookA, FileText, HardDrive, Search, Trash2, UserSearch, Video as VideoIcon } from 'lucide-react';
-import { decodeWdbs, getBiographies, getGlossaryTerms, getVideoById, getWdbsTree, searchLibrary, type BiographyEntry, type Video, type WdbsNode } from '../api';
+import { BookA, FileText, HardDrive, NotebookPen, Search, Trash2, UserSearch, Video as VideoIcon } from 'lucide-react';
+import { decodeWdbs, getBiographies, getGlossaryTerms, getVideoById, getWdbsTree, listNotes, searchLibrary, type BiographyEntry, type Note, type Video, type WdbsNode } from '../api';
+import { openInternalLink } from '../lib/internal-links';
+import { noteDisplayTitle, noteSnippet } from '../lib/notes';
 import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { driveSegmentLabel, normalizeText } from '../lib/utils';
@@ -46,7 +48,7 @@ interface Item {
 const MAX_WIDTH = 640;
 
 // How many of each kind to list, so no one kind crowds the rest out.
-const LIMITS = { commands: 10, drives: 5, terms: 5, people: 5, videos: 8, recents: 6 };
+const LIMITS = { commands: 10, drives: 5, terms: 5, people: 5, notes: 5, videos: 8, recents: 6 };
 
 function flattenDrives(nodes: WdbsNode[], out: WdbsNode[] = []): WdbsNode[] {
     for (const n of nodes) {
@@ -78,10 +80,10 @@ function best<T>(items: T[], tokens: string[], text: (item: T) => [string, strin
 }
 
 /**
- * Ctrl/Cmd+K: one box to jump anywhere — a view, a setting, a Drive, a glossary term, a person, or a
+ * Ctrl/Cmd+K: one box to jump anywhere — a view, a setting, a Drive, a glossary term, a person, a note, or a
  * saved video — or to run a quick action. Type to narrow it; ↑↓ to choose, Enter to go, Esc to close.
- * Drives, terms and people are matched here from lists loaded when it opens; videos are searched by
- * the backend as you type (there can be thousands).
+ * Drives, terms, people and notes are matched here from lists loaded when it opens (a note by its title first,
+ * then by what it says); videos are searched by the backend as you type (there can be thousands).
  */
 export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDrive, onOpenTerm, onOpenBio }: Props) {
     const { flags } = useFlags();
@@ -91,6 +93,7 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
     const [drives, setDrives] = useState<WdbsNode[]>([]);
     const [terms, setTerms] = useState<string[]>([]);
     const [people, setPeople] = useState<BiographyEntry[]>([]);
+    const [notes, setNotes] = useState<Note[]>([]);
     const [videos, setVideos] = useState<Video[]>([]);
     // What was opened lately, listed first while nothing is typed.
     const [recents, setRecents] = useState<Recent[]>([]);
@@ -118,9 +121,11 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
             }).catch(() => {});
         }
         if (flags.showBiography) getBiographies().then(b => { if (!cancelled) setPeople(b.filter(p => p.handle.trim() !== '')); }).catch(() => {});
+        if (flags.viewVisible.notes) listNotes().then(n => { if (!cancelled) setNotes(n); }).catch(() => {});
+        else setNotes([]);
         setTimeout(() => inputRef.current?.focus(), 0);
         return () => { cancelled = true; };
-    }, [open, flags.showDrive, flags.showGlossary, flags.showBiography]);
+    }, [open, flags.showDrive, flags.showGlossary, flags.showBiography, flags.viewVisible.notes]);
 
     useEffect(() => {
         if (!open) return;
@@ -205,6 +210,13 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
                 sub: p.displayName.trim() ? p.handle : undefined, run: () => onOpenBio(p.handle.replace(/^@/, '')),
             });
         }
+        // A note's title counts for more than its text (score() rates the first of the pair higher).
+        for (const n of best(notes, tokens, n => [noteDisplayTitle(n), n.body], LIMITS.notes)) {
+            out.push({
+                key: `note:${n.id}`, group: labels.aliasNotes, label: noteDisplayTitle(n), icon: NotebookPen,
+                sub: noteSnippet(n) || undefined, run: () => openInternalLink('note', n.id),
+            });
+        }
         for (const v of videos) {
             out.push({
                 key: `video:${v.id}`, group: 'Videos', label: v.title, icon: v.thumbnail ? VideoIcon : FileText,
@@ -212,7 +224,7 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
             });
         }
         return out;
-    }, [tokens, commands, drives, terms, people, videos, recents, flags, labels, onOpenDrive, onOpenTerm, onOpenBio, onOpenVideo]);
+    }, [tokens, commands, drives, terms, people, notes, videos, recents, flags, labels, onOpenDrive, onOpenTerm, onOpenBio, onOpenVideo]);
 
     // Keep the highlighted row on screen (and inside the list) as the list changes.
     useEffect(() => {
@@ -255,7 +267,7 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
                         ref={inputRef}
                         value={query}
                         onChange={e => { setQuery(e.target.value); setSelected(0); }}
-                        placeholder={`Search sections, ${labels.aliasDriveName.toLowerCase()}s, terms, people, videos…`}
+                        placeholder={`Search sections, ${labels.aliasDriveName.toLowerCase()}s, terms, people, notes, videos…`}
                         className="flex-1 min-w-0 h-full bg-transparent text-[16px] text-white placeholder-gray-600 outline-none"
                         spellCheck={false}
                     />

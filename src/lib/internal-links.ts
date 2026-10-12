@@ -11,8 +11,8 @@ import { formatClock, parseClock } from './remark-timestamps';
  */
 
 /** 'playlist' is a Drive's playlist (its sequence, in the code), keyed by the Drive's display path (":CS-DSA"): it opens whatever video is first in it
- *  at the time, so reordering never breaks the link. */
-export type LinkKind = 'glossary' | 'bio' | 'video' | 'drive' | 'playlist';
+ *  at the time, so reordering never breaks the link. 'note' is a note of the Notes section, keyed by its id. */
+export type LinkKind = 'glossary' | 'bio' | 'video' | 'drive' | 'playlist' | 'note' | 'flashcards' | 'workbook';
 
 export const LINK_SCHEME = 'kinesis://';
 
@@ -23,6 +23,11 @@ export function linkKindLabel(kind: LinkKind, labels: WorkspaceLabels): string {
         case 'bio': return labels.aliasBiography;
         case 'drive': return labels.aliasDriveName;
         case 'playlist': return labels.aliasSequence;
+        case 'note': return labels.aliasNotes;
+        // The Glossary's flashcards for a Drive (keyed by its display path; lib/glossary.ts's ALL_TERMS for every term).
+        case 'flashcards': return 'Flashcards';
+        // A workbook (the Notes section's: notes in an order), keyed by its id.
+        case 'workbook': return 'Workbook';
         default: return 'Video';
     }
 }
@@ -51,7 +56,7 @@ export function buildVideoLink(text: string, videoId: string, at?: number): stri
 }
 
 export function parseInternalHref(href: string | undefined | null): { kind: LinkKind; key: string; at?: number } | null {
-    const m = /^kinesis:\/\/(glossary|bio|video|drive|playlist)\/(.+?)(?:\?t=([0-9:]+))?$/.exec(href ?? '');
+    const m = /^kinesis:\/\/(glossary|bio|video|drive|playlist|note|flashcards|workbook)\/(.+?)(?:\?t=([0-9:]+))?$/.exec(href ?? '');
     if (!m) return null;
     const at = m[3] !== undefined ? parseClock(m[3]) : null;
     // Only a video starts somewhere (anything else with a time isn't a link, as in db/links.rs). On a video, a time
@@ -127,6 +132,8 @@ export interface LinkPickerRequest {
     /** The selection when the shortcut was pressed. */
     start: number;
     end: number;
+    /** The tab to open on, when the request is for one kind of link (the note editor's Flashcards item). */
+    tab?: LinkKind;
 }
 
 /** Called by the editor shortcut (lib/markdown-editor.ts); the single LinkPicker in App answers it. */

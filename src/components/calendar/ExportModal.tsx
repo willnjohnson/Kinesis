@@ -4,6 +4,7 @@ import { exportCalendarIcs, type CalendarTrack } from '../../api';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { workspaceFileStem } from '../../lib/workspace';
 import { Modal } from '../Modal';
+import { DateInput } from '../ui/DateInput';
 import { SecondaryButton } from '../ui/Button';
 import { trackColor, parseDay, isoDay, niceDate, trackTime } from './shared';
 
@@ -90,22 +91,20 @@ export function ExportModal({ tracks, preselected, weekStart, onClose, onExporte
             <div className="grid grid-cols-2 gap-3">
                 <div>
                     <label className={field}>From</label>
-                    <input
-                        type="date"
+                    <DateInput
                         value={from}
                         // Moving From past To takes To along, so the period never runs backwards.
-                        onChange={e => { const v = e.target.value; if (!v) return; setFrom(v); if (to < v) setTo(v); }}
+                        onValueChange={v => { if (!v) return; setFrom(v); if (to < v) setTo(v); }}
                         className="w-full bg-[#121212] border border-[#333] text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-600 [color-scheme:dark]"
                     />
                 </div>
                 <div>
                     <label className={field}>To</label>
-                    <input
-                        type="date"
+                    <DateInput
                         value={to}
                         min={from}
                         max={latest}
-                        onChange={e => e.target.value && setTo(e.target.value)}
+                        onValueChange={v => { if (v) setTo(v); }}
                         className={`w-full bg-[#121212] border text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-600 [color-scheme:dark] ${backwards || tooLong ? 'border-red-500/60' : 'border-[#333]'}`}
                     />
                 </div>
@@ -114,7 +113,7 @@ export function ExportModal({ tracks, preselected, weekStart, onClose, onExporte
             {tooLong && <p className="text-[11px] text-red-400 -mt-3">Pick a period of up to two years.</p>}
             <p className="text-[11px] text-gray-500 leading-relaxed">
                 {niceDate(from)} to {niceDate(to)}, both days included. Each scheduled item becomes an event: timed for a track with a set time, all day otherwise.
-                It's a copy as of now: export again after changing a track, and re-importing updates the events instead of doubling them.
+                It's a copy as of now: Export again after changing a track, and re-importing updates the events instead of doubling them.
             </p>
             {error && <div className="text-xs text-red-400 bg-red-900/20 border border-red-500/30 rounded-lg px-3 py-2">{error}</div>}
         </Modal>

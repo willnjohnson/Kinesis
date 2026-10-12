@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ElementType, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
+import { Check, ChevronRight } from 'lucide-react';
 import { SnippetCard } from './GlossaryPreview';
 import { inlineMarkdown } from '../lib/preview-markdown';
 
@@ -16,6 +17,11 @@ export interface ContextMenuItem {
     hint?: string;
     /** While the pointer rests on the item, a card beside the menu shows what this returns (markdown; null for nothing). */
     peek?: { title: string; load: () => Promise<string | null> };
+    /** A second level: resting on the item (or clicking it) opens these beside the menu, and one of them is what's picked
+     *  (the item's own onClick isn't called). The Calendar's Change Priority. */
+    submenu?: ContextMenuItem[];
+    /** A check at the right end: the one of a submenu's choices that's in effect now. */
+    checked?: boolean;
 }
 
 /** The look every menu shares (taken from the markdown editor's, MarkdownContextMenu.tsx): the panel, a row, and the line
@@ -64,6 +70,15 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
             setPeek(null);
         }, 250);
     };
+    // The item whose submenu is open, and where: level with its row, to the menu's right, or its left when the window
+    // has no room there.
+    const [sub, setSub] = useState<{ label: string; top: number; left: boolean } | null>(null);
+    const openSub = (item: ContextMenuItem, row: HTMLElement) => {
+        const menu = box.current?.getBoundingClientRect();
+        const r = row.getBoundingClientRect();
+        if (!menu) return;
+        setSub({ label: item.label, top: r.top - menu.top - 4, left: menu.right + 200 > window.innerWidth });
+    };
 
     return createPortal(
         <div
@@ -83,15 +98,45 @@ export function ContextMenu({ x, y, items, onClose }: { x: number; y: number; it
                     <button
                         role="menuitem"
                         disabled={item.disabled}
-                        onMouseEnter={(e) => startPeek(item, e.currentTarget)}
+                        aria-haspopup={item.submenu ? 'menu' : undefined}
+                        aria-expanded={item.submenu ? sub?.label === item.label : undefined}
+                        onMouseEnter={(e) => { startPeek(item, e.currentTarget); if (item.submenu) openSub(item, e.currentTarget); else setSub(null); }}
                         onMouseLeave={endPeekSoon}
-                        onClick={(e) => { e.stopPropagation(); onClose(); item.onClick(); }}
-                        className={`${MENU_ROW} ${item.danger ? 'text-red-400' : 'text-gray-200'}`}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            if (item.submenu) { openSub(item, e.currentTarget); return; }
+                            onClose();
+                            item.onClick();
+                        }}
+                        className={`${MENU_ROW} ${item.danger ? 'text-red-400' : 'text-gray-200'} ${item.submenu && sub?.label === item.label ? 'bg-[#272727]' : ''}`}
                     >
                         {item.icon && <item.icon className={`w-3.5 h-3.5 shrink-0 ${item.danger || item.disabled ? '' : 'text-[#aaaaaa]'}`} />}
                         <span className="flex-1 truncate">{item.label}</span>
                         {item.hint && <span className="text-[10px] text-[#666666]">{item.hint}</span>}
+                        {item.checked && <Check className="w-3.5 h-3.5 shrink-0 text-[var(--k-accent)]" />}
+                        {item.submenu && <ChevronRight className="w-3.5 h-3.5 shrink-0 text-[#666666]" />}
                     </button>
+                    {item.submenu && sub?.label === item.label && (
+                        <div
+                            role="menu"
+                            style={{ top: sub.top, ...(sub.left ? { right: '100%' } : { left: '100%' }) }}
+                            className={`absolute w-44 ${sub.left ? 'mr-1' : 'ml-1'} ${MENU_PANEL}`}
+                        >
+                            {item.submenu.map(choice => (
+                                <button
+                                    key={choice.label}
+                                    role="menuitem"
+                                    disabled={choice.disabled}
+                                    onClick={(e) => { e.stopPropagation(); onClose(); choice.onClick(); }}
+                                    className={`${MENU_ROW} ${choice.danger ? 'text-red-400' : 'text-gray-200'}`}
+                                >
+                                    {choice.icon && <choice.icon className="w-3.5 h-3.5 shrink-0" />}
+                                    <span className="flex-1 truncate">{choice.label}</span>
+                                    {choice.checked && <Check className="w-3.5 h-3.5 shrink-0 text-[var(--k-accent)]" />}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             ))}
             {peek && <SnippetCard anchor={peek.rect} side="right" tone="menu" title={peek.title} markdown={peek.markdown} copyText={peek.full} onMouseEnter={keepPeek} onMouseLeave={endPeekSoon} />}

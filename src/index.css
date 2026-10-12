@@ -136,6 +136,38 @@ input, textarea, [contenteditable=""], [contenteditable="true"] {
    near-duplicate variable — see BiographyView.tsx. */
 .bg-\[\#1b1b1b\] { background-color: var(--k-bg-1a1a1a) !important; }
 .hover\:bg-\[\#262626\]:hover { background-color: var(--k-hover-bg-272727) !important; }
+/* More shades a step or two from a covered one (the Notes, Logs and Calendar sections' cards, table heads and fields,
+   among others), sharing its token the same way. Without a rule here a class keeps its dark value in every theme: a
+   black card, or near-white words, on a light one. */
+.bg-\[\#101010\] { background-color: var(--k-bg) !important; }
+.bg-\[\#151515\], .bg-\[\#161616\] { background-color: var(--k-bg-141414) !important; }
+.bg-\[\#181818\] { background-color: var(--k-bg-1a1a1a) !important; }
+.bg-\[\#1e1e1e\], .bg-\[\#1f1f1f\] { background-color: var(--k-bg-202020) !important; }
+.bg-\[\#383838\], .bg-\[\#3a3a3a\] { background-color: var(--k-bg-333333) !important; }
+.bg-\[\#444444\] { background-color: var(--k-bg-444444) !important; }
+.focus\:bg-\[\#1c1c1c\]:focus { background-color: var(--k-bg-1a1a1a) !important; }
+.hover\:bg-\[\#161616\]:hover, .hover\:bg-\[\#181818\]:hover, .hover\:bg-\[\#1a1a1a\]:hover, .hover\:bg-\[\#1e1e1e\]:hover,
+.hover\:bg-\[\#1f1f1f\]:hover, .hover\:bg-\[\#222222\]:hover { background-color: var(--k-hover-bg-202020) !important; }
+.hover\:bg-\[\#555\]:hover, .hover\:bg-\[\#666666\]:hover { background-color: var(--k-hover-bg-444) !important; }
+/* A disabled button stays as it is under the pointer. */
+.disabled\:hover\:bg-\[\#222\]:disabled:hover, .disabled\:hover\:bg-\[\#222222\]:disabled:hover { background-color: var(--k-bg-222222) !important; }
+.disabled\:hover\:bg-\[\#272727\]:disabled:hover { background-color: var(--k-bg-272727) !important; }
+.disabled\:hover\:border-\[\#333\]:disabled:hover { border-color: var(--k-border-333) !important; }
+.disabled\:hover\:text-\[\#aaaaaa\]:disabled:hover { color: var(--k-text-aaaaaa) !important; }
+.text-gray-100 { color: var(--k-text-white) !important; }
+.text-\[\#ccc\], .text-\[\#cccccc\], .text-\[\#bbbbbb\] { color: var(--k-text-gray-300) !important; }
+.border-\[\#1f1f1f\], .border-\[\#232323\] { border-color: var(--k-bg-222222) !important; }
+.border-\[\#262626\] { border-color: var(--k-bg-272727) !important; }
+.border-\[\#2a2a2a\] { border-color: var(--k-bg-2a2a2a) !important; }
+.border-\[\#2c2c2c\], .border-\[\#2f2f2f\] { border-color: var(--k-border-303030) !important; }
+.border-\[\#555\] { border-color: var(--k-border-505050) !important; }
+.focus\:border-\[\#555\]:focus, .focus\:border-\[\#555555\]:focus { border-color: var(--k-border-505050) !important; }
+.hover\:border-\[\#666\]:hover { border-color: var(--k-hover-border-555555) !important; }
+/* The lines between a list's or a table's rows and columns (Tailwind's divide-*, a border on each child). */
+.divide-\[\#1e1e1e\] > *, .divide-\[\#222\] > *, .divide-\[\#232323\] > *, .divide-\[\#252525\] > * { border-color: var(--k-bg-222222) !important; }
+.divide-\[\#272727\] > * { border-color: var(--k-bg-272727) !important; }
+.divide-\[\#2a2a2a\] > * { border-color: var(--k-bg-2a2a2a) !important; }
+.divide-\[\#303030\] > * { border-color: var(--k-border-303030) !important; }
 
 /* Text colors */
 .text-white { color: var(--k-text-white) !important; }
@@ -350,16 +382,18 @@ input, textarea, [contenteditable=""], [contenteditable="true"] {
 :root:not(.dark) .bg-white.text-black { background-color: #ffffff !important; color: #000000 !important; border: 1px solid #cccccc !important; }
 :root:not(.dark) .bg-white.text-black:hover { background-color: #f5f5f5 !important; border-color: #aaaaaa !important; }
 
+/* From the theme's own surfaces, so a tinted light theme (Gruvbox Light's manila) has fields of its tint, not
+   gray-white ones. Phos's values for these are the grays that were written here before. */
 :root:not(.dark) input,
 :root:not(.dark) select {
-    background-color: #f5f5f5 !important;
-    color: #0f0f0f !important;
-    border-color: #cccccc !important;
+    background-color: var(--k-bg-121212) !important;
+    color: var(--k-text-white) !important;
+    border-color: var(--k-border-333) !important;
 }
 
 :root:not(.dark) code {
-    background-color: #f0f0f0 !important;
-    color: #333333 !important;
+    background-color: var(--k-bg-141414) !important;
+    color: var(--k-text-gray-200) !important;
 }
 
 /* Warp Drive color decoration, light-scheme shades — darker/more muted than the dark-scheme
@@ -426,6 +460,41 @@ mark {
 :root:not(.dark) .prose h3 { color: #333333 !important; }
 :root:not(.dark) .prose strong { color: #111111 !important; }
 :root:not(.dark) .prose code { color: #333333 !important; }
+/* A block of code (``` fenced): a panel of the theme's own, a step off the page, with its code in the plain text
+   color. The accent that marks a word of `inline code` in a sentence is too much across whole lines of a program, and
+   inline code's own background would paint a second box around every line. */
+.prose pre {
+    background-color: var(--k-bg-141414) !important;
+    border: 1px solid var(--k-border-303030);
+    border-radius: 0.5rem;
+    color: var(--k-text-gray-200) !important;
+}
+.prose pre code, :root:not(.dark) .prose pre code {
+    color: inherit !important;
+    background-color: transparent !important;
+    padding: 0 !important;
+    font-weight: 400 !important;
+}
+/* The parts of a block that names its language (lib/code-highlight.ts marks them with highlight.js's classes), in the
+   active theme's code colors (lib/themes.ts sets --k-code-*; the values here are Erebos's, for before a theme is
+   applied). What has no rule here (punctuation, a plain name) stays the block's text color. */
+:root {
+    --k-code-keyword: #ff7b72; --k-code-string: #a5d6ff; --k-code-number: #79c0ff; --k-code-comment: #8b949e;
+    --k-code-function: #d2a8ff; --k-code-type: #ffa657; --k-code-builtin: #79c0ff; --k-code-meta: #8b949e;
+}
+.hljs-keyword, .hljs-selector-tag, .hljs-tag .hljs-name, .hljs-name, .hljs-doctag, .hljs-operator { color: var(--k-code-keyword); }
+.hljs-string, .hljs-regexp, .hljs-char.escape_, .hljs-template-tag, .hljs-addition { color: var(--k-code-string); }
+.hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet, .hljs-link { color: var(--k-code-number); }
+.hljs-comment, .hljs-quote { color: var(--k-code-comment); font-style: italic; }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: var(--k-code-function); }
+.hljs-type, .hljs-attr, .hljs-attribute, .hljs-selector-attr, .hljs-selector-pseudo, .hljs-template-variable { color: var(--k-code-type); }
+.hljs-built_in, .hljs-variable.language_, .hljs-variable.constant_ { color: var(--k-code-builtin); }
+.hljs-meta, .hljs-meta .hljs-keyword { color: var(--k-code-meta); }
+/* A string inside a preprocessor line (#include <iostream>) is still a string. */
+.hljs-meta .hljs-string { color: var(--k-code-string); }
+.hljs-deletion { color: var(--k-danger-text); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
 /* (The quote bar and the table header/borders take their colours from the theme, in the accent block below.) */
 :root:not(.dark) .prose blockquote { color: #555 !important; font-style: italic !important; }
 :root:not(.dark) .prose blockquote p { color: #555 !important; }
@@ -469,6 +538,79 @@ mark {
     padding: 0.25rem 1rem !important;
     font-style: italic;
 }
+/* Callouts (lib/remark-callouts.ts: a quote that starts with [!NOTE], [!TIP], [!IMPORTANT], [!WARNING] or [!CAUTION]):
+   the quote's shape in the kind's own color, upright, with its name as a title. The colors are fixed, like the Drive
+   decoration's, and read on dark and light themes alike. */
+.prose blockquote.k-callout {
+    --k-callout: #3b82f6;
+    border-left-color: var(--k-callout) !important;
+    background-color: color-mix(in srgb, var(--k-callout) 10%, transparent);
+    padding: 0.6rem 1rem !important;
+    font-style: normal;
+    font-weight: inherit;
+    quotes: none;
+}
+.prose blockquote.k-callout p::before, .prose blockquote.k-callout p::after { content: none !important; }
+.prose blockquote.k-callout > :last-child { margin-bottom: 0 !important; }
+.prose blockquote.k-callout .k-callout-title {
+    color: var(--k-callout);
+    font-weight: 700;
+    font-size: 0.8em;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 0.15rem;
+    display: flex;
+    align-items: center;
+    gap: 0.4em;
+}
+/* Each kind's icon before its name, so a kind isn't told by color alone: drawn here (a mask filled with the kind's
+   color) rather than by each Markdown view, since every view shows callouts. The shapes are the icon set's own (lucide:
+   info, lightbulb, message-square-warning, triangle-alert, octagon-alert). */
+.prose blockquote.k-callout .k-callout-title::before {
+    content: "" !important;
+    flex: none;
+    width: 1.35em;
+    height: 1.35em;
+    background-color: var(--k-callout);
+    -webkit-mask: var(--k-callout-icon) center / contain no-repeat;
+    mask: var(--k-callout-icon) center / contain no-repeat;
+}
+.prose blockquote.k-callout { --k-callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='10'/%3E%3Cpath d='M12 16v-4'/%3E%3Cpath d='M12 8h.01'/%3E%3C/svg%3E"); }
+.prose blockquote.k-callout-tip { --k-callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5'/%3E%3Cpath d='M9 18h6'/%3E%3Cpath d='M10 22h4'/%3E%3C/svg%3E"); }
+.prose blockquote.k-callout-important { --k-callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z'/%3E%3Cpath d='M12 15h.01'/%3E%3Cpath d='M12 7v4'/%3E%3C/svg%3E"); }
+.prose blockquote.k-callout-warning { --k-callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3'/%3E%3Cpath d='M12 9v4'/%3E%3Cpath d='M12 17h.01'/%3E%3C/svg%3E"); }
+.prose blockquote.k-callout-caution { --k-callout-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 16h.01'/%3E%3Cpath d='M12 8v4'/%3E%3Cpath d='M15.312 2a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586l-4.688-4.688A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2z'/%3E%3C/svg%3E"); }
+.prose blockquote.k-callout .k-callout-title + p { margin-top: 0 !important; }
+/* A callout that folds (the Notes section's, written `> [!NOTE]-` or `+`; NotesView's FoldingCallout), told from one
+   that doesn't: a box with a line of its color all round and every corner round, where that one has a thick bar down
+   its left; and its title a strip across the top, a shade stronger than what's under it, that lights when pointed
+   at, since it's what's clicked. */
+.prose blockquote.k-callout.k-callout-fold {
+    border: 1px solid color-mix(in srgb, var(--k-callout) 45%, transparent) !important;
+    border-radius: 0.5rem;
+    padding: 0 !important;
+    overflow: hidden;
+    background-color: color-mix(in srgb, var(--k-callout) 5%, transparent);
+}
+.prose blockquote.k-callout.k-callout-fold > .k-callout-title {
+    margin: 0;
+    padding: 0.45rem 0.75rem;
+    background-color: color-mix(in srgb, var(--k-callout) 16%, transparent);
+    transition: background-color 0.15s;
+}
+.prose blockquote.k-callout.k-callout-fold > .k-callout-title:hover { background-color: color-mix(in srgb, var(--k-callout) 26%, transparent); }
+.prose blockquote.k-callout.k-callout-fold > .k-callout-fold-body {
+    padding: 0.6rem 0.9rem;
+    border-top: 1px solid color-mix(in srgb, var(--k-callout) 30%, transparent);
+}
+.prose blockquote.k-callout.k-callout-fold > .k-callout-fold-body > :first-child { margin-top: 0 !important; }
+.prose blockquote.k-callout.k-callout-fold > .k-callout-fold-body > :last-child { margin-bottom: 0 !important; }
+.prose blockquote.k-callout-tip { --k-callout: #22c55e; }
+.prose blockquote.k-callout-important { --k-callout: #a855f7; }
+.prose blockquote.k-callout-warning { --k-callout: #eab308; }
+.prose blockquote.k-callout-caution { --k-callout: #ef4444; }
+:root:not(.dark) .prose blockquote.k-callout, :root:not(.dark) .prose blockquote.k-callout p { font-style: normal !important; }
+
 .prose hr {
     border: 0 !important;
     height: 2px;
@@ -516,7 +658,13 @@ mark {
    extra square outline over the top of that). Zero specificity still beats the browser's own
    unlayered-but-lowest-priority default for everything with no such opt-out at all. */
 @layer utilities {
+    /* Only the fields that are typed in get the ring. Tab moves between those and nothing else (lib/tab-fields.ts),
+       so a button, a tab or a row is never reached by keyboard: a ring on one would only be the leftover of a click,
+       lit up by the next key pressed (a section's tab outlined after Tab, say). */
     :where(:focus-visible) {
+        outline: none;
+    }
+    :where(input:focus-visible, textarea:focus-visible, select:focus-visible, [contenteditable]:focus-visible, [data-tab-field]:focus-visible) {
         outline: 2px solid var(--k-accent);
         outline-offset: 2px;
     }

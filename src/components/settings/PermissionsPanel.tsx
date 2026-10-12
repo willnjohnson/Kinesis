@@ -27,7 +27,7 @@ const permissionsFor = (sequenceLabel: string): Partial<Record<FlagKey, { label:
     allowDeletionLibrary: { label: "Deleting Videos", hint: "Remove a video from the Library." },
     allowSummarizeAll: { label: "Bulk Summarize", hint: "Generate an AI summary for every video in the Library at once." },
     editAttachments: { label: "Attachments & Links", hint: "Add or remove a video's attachments and web links." },
-    allowEditTermsAndTags: { label: "Terms & Tags", hint: "Add or remove a video's Terms and Tags. The Essential tags (Watch Later, Favorite...) stay open either way: they're each reader's own." },
+    allowEditTermsAndTags: { label: "Terms & Tags", hint: "Add or remove a video's Terms and Tags. The Essential tags (Watch Later, Favorite...) stay open either way: They're each reader's own." },
     allowEditSummary: { label: "AI Summaries", hint: "Edit a video's AI-generated summary." },
     allowEditTranscript: { label: "Transcripts", hint: "Edit a video's transcript." },
     allowEditTranscriptOnNA: { label: "Cleared Transcripts", hint: "Edit a transcript that was cleared to N/A after summarizing." },
@@ -37,6 +37,7 @@ const permissionsFor = (sequenceLabel: string): Partial<Record<FlagKey, { label:
     allowEditVideosInSequenceList: { label: `${sequenceLabel} Building`, hint: `Add Videos, Add to the End, and Clear ${sequenceLabel}.` },
     allowModificationGlossary: { label: "Glossary", hint: "Add, edit, or delete Terms and Tags in the Glossary itself." },
     allowEditBio: { label: "Biographies", hint: "Edit a creator's biography." },
+    allowEditSharedNotes: { label: "Shared Notes", hint: "Write, edit, or delete shared notes, and make a note shared. Personal notes stay open either way: They're each reader's own." },
 });
 
 // Not permissions: switches for "are you sure?" questions. Read-only doesn't turn them off (that would mean "don't
@@ -74,6 +75,12 @@ const CONFIRM_ROWS = [
         ),
     },
 ] as const;
+// Not a permission either, nor a safety net: whether a channel renamed on YouTube asks about an alias. Off unless
+// turned on, and a plain switch (nothing is lost by it: the alias can be set by hand in Edit Bio).
+const NO_ALIAS_KEY = "doNotAskToAlias";
+// Not a permission either: whether a saved video renamed on YouTube shows a "Video Title Renamed" modal.
+// Off (default) shows the modal. On silently accepts the new title without notifying.
+const NO_NOTIFY_TITLE_CHANGE_KEY = "doNotNotifyVideoTitleChange";
 type ConfirmKey = typeof CONFIRM_ROWS[number]["key"];
 const CONFIRM_KEYS = CONFIRM_ROWS.map(r => r.key);
 
@@ -95,7 +102,7 @@ export function PermissionsPanel() {
     // Asked before turning one of the "Confirm Before ..." switches off (a second confirmation): which one, if any.
     const [confirmingOff, setConfirmingOff] = useState<ConfirmKey | null>(null);
 
-    const allKeys = ['workspaceReadOnly', ...CONFIRM_KEYS, ...rows.map(r => r.key)];
+    const allKeys = ['workspaceReadOnly', ...CONFIRM_KEYS, NO_ALIAS_KEY, NO_NOTIFY_TITLE_CHANGE_KEY, ...rows.map(r => r.key)];
 
     const load = () => {
         getSettings(allKeys)
@@ -202,6 +209,50 @@ export function PermissionsPanel() {
                             </label>
                         );
                     })}
+                    {(() => {
+                        const locked = isLocked(NO_ALIAS_KEY);
+                        const disabled = locked || readOnly || savingKey === NO_ALIAS_KEY;
+                        return (
+                            <label
+                                className={`flex items-start gap-3 px-4 py-3 bg-[#121212] transition-colors ${disabled ? 'opacity-50' : 'hover:bg-[#161616] cursor-pointer'}`}
+                                title={locked ? LOCKED_TITLE : readOnly ? 'A read-only workspace never asks: A renamed channel just takes its new name' : undefined}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={values[NO_ALIAS_KEY]}
+                                    disabled={disabled}
+                                    onChange={e => set(NO_ALIAS_KEY, e.target.checked)}
+                                    className="mt-0.5 shrink-0"
+                                />
+                                <span>
+                                    <span className="block text-xs font-bold text-white">Do Not Ask to Alias</span>
+                                    <span className="block text-[11px] text-[#888888] mt-0.5">When a channel is renamed on YouTube, take its new name and say so, without asking whether to keep the old name as its alias. An alias it already has is left alone.</span>
+                                </span>
+                            </label>
+                        );
+                    })()}
+                    {(() => {
+                        const locked = isLocked(NO_NOTIFY_TITLE_CHANGE_KEY);
+                        const disabled = locked || readOnly || savingKey === NO_NOTIFY_TITLE_CHANGE_KEY;
+                        return (
+                            <label
+                                className={`flex items-start gap-3 px-4 py-3 bg-[#121212] transition-colors ${disabled ? 'opacity-50' : 'hover:bg-[#161616] cursor-pointer'}`}
+                                title={locked ? LOCKED_TITLE : readOnly ? 'Read-only does not change this: it only hides the notification, the title still updates' : undefined}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={values[NO_NOTIFY_TITLE_CHANGE_KEY]}
+                                    disabled={disabled}
+                                    onChange={e => set(NO_NOTIFY_TITLE_CHANGE_KEY, e.target.checked)}
+                                    className="mt-0.5 shrink-0"
+                                />
+                                <span>
+                                    <span className="block text-xs font-bold text-white">Do Not Notify of Video Title Change</span>
+                                    <span className="block text-[11px] text-[#888888] mt-0.5">When a saved video's title has changed on YouTube, silently accept the new title without showing the "Video Title Renamed" modal.</span>
+                                </span>
+                            </label>
+                        );
+                    })()}
                 </div>
             </div>
 

@@ -32,11 +32,27 @@ export interface ThemeColors {
     warning: string;        // caution/hint indicators (shortcut hints, bookmarked markers, ...)
 }
 
+// The colors of code in a fenced block (lib/code-highlight.ts marks its parts; index.css's `.hljs-*` rules read these
+// as --k-code-*). A built-in theme has its palette's own syntax colors, so a block reads as that theme does in an
+// editor. An imported theme may give them (a `syntax` object in its JSON, any of these keys); what it leaves out is
+// taken from its ThemeColors (deriveSyntax).
+export interface SyntaxColors {
+    keyword: string;        // if, return, class, and a tag's name in markup
+    string: string;
+    number: string;         // numbers, and true / false / null
+    comment: string;
+    function: string;       // a function's or a class's name where it's defined
+    type: string;           // int, string, a class used as a type
+    builtin: string;        // what the language provides: print, std, console
+    meta: string;           // #include, decorators, a doctype
+}
+
 export interface Theme {
     name: string;           // stable id, stored in the `theme` setting and as the React key
     label: string;          // shown in the picker
     scheme: 'dark' | 'light'; // drives `color-scheme` for native scrollbars/form controls
     colors: ThemeColors;    // always present — used for the picker's swatch preview even for dark/light
+    syntax?: Partial<SyntaxColors>; // code colors; see SyntaxColors
     builtin?: boolean;      // hides the delete affordance in ThemeTab
 }
 
@@ -232,6 +248,23 @@ const TOKYO_NIGHT: ThemeColors = {
     border: '#414868', borderStrong: '#565f89', text: '#c0caf5', textMuted: '#b1b8d9',
     accent: '#7aa2f7', accentHover: '#bb9af7', danger: '#f7768e', success: '#9ece6a', warning: '#e0af68',
 };
+// Two light palettes for long reading. Gruvbox's own light variant (github.com/morhetz/gruvbox): its warm, manila
+// bg0/bg0_s/bg1/bg2/bg3 as the surfaces, fg1 as the text, and the "faded" colors it gives light backgrounds (orange as
+// the accent: dark enough for the white text that sits on an accent). `textMuted` is its fg2, not the lighter fg3/fg4,
+// which fall short of 4.5:1 on `surfaceRaised` (see the note above).
+const GRUVBOX_LIGHT: ThemeColors = {
+    bg: '#fbf1c7', surface: '#f2e5bc', surfaceAlt: '#ebdbb2', surfaceRaised: '#d5c4a1',
+    border: '#d5c4a1', borderStrong: '#bdae93', text: '#3c3836', textMuted: '#504945',
+    accent: '#af3a03', accentHover: '#d65d0e', danger: '#9d0006', success: '#79740e', warning: '#b57614',
+};
+// Catppuccin's light flavor, Latte (catppuccin.com/palette): a cool, soft gray-blue page. Base/Mantle/Crust/Surface 0
+// as the surfaces, Text, Mauve and Blue as the accents, Red/Green/Yellow. `textMuted` sits between its Text and
+// Subtext 1, which alone falls short of 4.5:1 on `surfaceRaised`.
+const CATPPUCCIN_LATTE: ThemeColors = {
+    bg: '#eff1f5', surface: '#e6e9ef', surfaceAlt: '#dce0e8', surfaceRaised: '#ccd0da',
+    border: '#ccd0da', borderStrong: '#acb0be', text: '#4c4f69', textMuted: '#54576f',
+    accent: '#8839ef', accentHover: '#1e66f5', danger: '#d20f39', success: '#40a02b', warning: '#df8e1d',
+};
 // Pulled from github.com/Foreglow/foreglow-theme's README color table — the base "Foreglow"
 // variant specifically (the repo also ships Afterglow/Alpenglow/Airglow, which aren't included
 // here), using its own Background/Bg Alt/Current Line/Selection/Border/Foreground/Foreground Dim/
@@ -241,6 +274,42 @@ const FOREGLOW: ThemeColors = {
     border: '#322C44', borderStrong: '#736699', text: '#E8E3F2', textMuted: '#A49BBF',
     accent: '#F471C8', accentHover: '#CB81E4', danger: '#E46772', success: '#6BC7A8', warning: '#F2A65A',
 };
+
+// Each built-in theme's code colors, from the palette's own syntax theme (the same caveat as the palettes above:
+// transcribed, not fetched). Erebos and Phos are the app's own themes and have no editor theme behind them: theirs are
+// a plain dark and a plain light set in the manner of GitHub's. Foreglow's are its palette's own colors given roles
+// (its README lists a palette, not a syntax theme).
+const SYNTAX: Record<string, SyntaxColors> = {
+    dark: { keyword: '#ff7b72', string: '#a5d6ff', number: '#79c0ff', comment: '#8b949e', function: '#d2a8ff', type: '#ffa657', builtin: '#79c0ff', meta: '#8b949e' },
+    light: { keyword: '#cf222e', string: '#0a3069', number: '#0550ae', comment: '#6e7781', function: '#8250df', type: '#953800', builtin: '#0550ae', meta: '#6e7781' },
+    dracula: { keyword: '#ff79c6', string: '#f1fa8c', number: '#bd93f9', comment: '#6272a4', function: '#50fa7b', type: '#8be9fd', builtin: '#8be9fd', meta: '#ffb86c' },
+    nord: { keyword: '#81a1c1', string: '#a3be8c', number: '#b48ead', comment: '#616e88', function: '#88c0d0', type: '#8fbcbb', builtin: '#88c0d0', meta: '#5e81ac' },
+    solarized: { keyword: '#859900', string: '#2aa198', number: '#d33682', comment: '#586e75', function: '#268bd2', type: '#b58900', builtin: '#268bd2', meta: '#cb4b16' },
+    monokai: { keyword: '#f92672', string: '#e6db74', number: '#ae81ff', comment: '#75715e', function: '#a6e22e', type: '#66d9ef', builtin: '#66d9ef', meta: '#fd971f' },
+    gruvbox: { keyword: '#fb4934', string: '#b8bb26', number: '#d3869b', comment: '#928374', function: '#83a598', type: '#fabd2f', builtin: '#fe8019', meta: '#8ec07c' },
+    'gruvbox-light': { keyword: '#9d0006', string: '#79740e', number: '#8f3f71', comment: '#928374', function: '#076678', type: '#b57614', builtin: '#af3a03', meta: '#427b58' },
+    'one-dark': { keyword: '#c678dd', string: '#98c379', number: '#d19a66', comment: '#5c6370', function: '#61afef', type: '#e5c07b', builtin: '#56b6c2', meta: '#61afef' },
+    'tokyo-night': { keyword: '#bb9af7', string: '#9ece6a', number: '#ff9e64', comment: '#565f89', function: '#7aa2f7', type: '#2ac3de', builtin: '#7dcfff', meta: '#89ddff' },
+    'catppuccin-latte': { keyword: '#8839ef', string: '#40a02b', number: '#fe640b', comment: '#7c7f93', function: '#1e66f5', type: '#df8e1d', builtin: '#d20f39', meta: '#179299' },
+    foreglow: { keyword: '#F471C8', string: '#6BC7A8', number: '#F2A65A', comment: '#736699', function: '#CB81E4', type: '#F2A65A', builtin: '#CB81E4', meta: '#A49BBF' },
+};
+
+/** Code colors for a theme that gives none of its own (an imported one): its accent for keywords, its success color
+ *  for strings, its warning color for numbers and types, and its muted text for comments. */
+function deriveSyntax(colors: ThemeColors): SyntaxColors {
+    return {
+        keyword: colors.accent, string: colors.success, number: colors.warning, comment: colors.textMuted,
+        function: colors.accentHover, type: colors.warning, builtin: colors.accentHover, meta: colors.textMuted,
+    };
+}
+
+const SYNTAX_KEYS: (keyof SyntaxColors)[] = ['keyword', 'string', 'number', 'comment', 'function', 'type', 'builtin', 'meta'];
+
+/** A theme's code colors, all eight: the built-in theme's own, or an imported theme's (what it gives, the rest from
+ *  its palette). What applyTheme sets, and what the theme template a reader copies shows. */
+export function syntaxOf(theme: Theme): SyntaxColors {
+    return { ...deriveSyntax(theme.colors), ...(theme.builtin ? SYNTAX[theme.name] : theme.syntax) };
+}
 
 export const BUILTIN_THEMES: Theme[] = [
     { name: 'dark', label: 'Erebos', scheme: 'dark', builtin: true, colors: {
@@ -262,8 +331,10 @@ export const BUILTIN_THEMES: Theme[] = [
     { name: 'solarized', label: 'Solarized', scheme: 'dark', builtin: true, colors: SOLARIZED_DARK },
     { name: 'monokai', label: 'Monokai', scheme: 'dark', builtin: true, colors: MONOKAI },
     { name: 'gruvbox', label: 'Gruvbox', scheme: 'dark', builtin: true, colors: GRUVBOX },
+    { name: 'gruvbox-light', label: 'Gruvbox Light', scheme: 'light', builtin: true, colors: GRUVBOX_LIGHT },
     { name: 'one-dark', label: 'One Dark', scheme: 'dark', builtin: true, colors: ONE_DARK },
     { name: 'tokyo-night', label: 'Tokyo Night', scheme: 'dark', builtin: true, colors: TOKYO_NIGHT },
+    { name: 'catppuccin-latte', label: 'Catppuccin Latte', scheme: 'light', builtin: true, colors: CATPPUCCIN_LATTE },
     { name: 'foreglow', label: 'Foreglow', scheme: 'dark', builtin: true, colors: FOREGLOW },
 ];
 
@@ -286,6 +357,11 @@ export function applyTheme(theme: Theme) {
     const raw = theme.name === 'dark' ? RAW_TOKENS_DARK : theme.name === 'light' ? RAW_TOKENS_LIGHT : deriveRawTokens(theme.colors);
     for (const key of RAW_TOKEN_KEYS) {
         root.style.setProperty(`--k-${key}`, raw[key] ?? '');
+    }
+    // Code colors: the built-in theme's own, or an imported theme's (what it gives, the rest from its palette).
+    const syntax = syntaxOf(theme);
+    for (const key of SYNTAX_KEYS) {
+        root.style.setProperty(`--k-code-${key}`, syntax[key]);
     }
     root.style.colorScheme = theme.scheme;
     root.classList.toggle('dark', theme.scheme === 'dark');
@@ -321,7 +397,15 @@ export function parseThemeJson(raw: string, fallbackName: string): Theme | { err
     }
     const name = typeof data.name === 'string' && data.name.trim() ? data.name.trim() : fallbackName;
     const scheme: 'dark' | 'light' = data.scheme === 'light' ? 'light' : 'dark';
-    return { name: `custom:${name}`, label: name, scheme, colors };
+    // Optional code colors: whichever of them the file gives.
+    const syntax: Partial<SyntaxColors> = {};
+    if (data.syntax && typeof data.syntax === 'object') {
+        for (const key of SYNTAX_KEYS) {
+            const value = data.syntax[key];
+            if (typeof value === 'string' && value.trim()) syntax[key] = value.trim();
+        }
+    }
+    return { name: `custom:${name}`, label: name, scheme, colors, ...(Object.keys(syntax).length > 0 ? { syntax } : {}) };
 }
 
 export function isThemeError(result: Theme | { error: string }): result is { error: string } {

@@ -106,6 +106,8 @@ pub struct ChannelIdentityCheck {
     pub renamed_from: Option<String>,
     pub new_display_name: Option<String>,
     pub old_display_name: Option<String>,
+    /// The channel's subscriber count now, when it had changed since it was stored (already saved).
+    pub subscriber_count: Option<i64>,
 }
 
 /// Looks the channel up by its channel ID (which never changes) on its public YouTube page, no API key needed, and
@@ -114,7 +116,7 @@ pub struct ChannelIdentityCheck {
 #[command]
 pub async fn check_channel_identity(app: tauri::AppHandle, handle: String) -> Result<ChannelIdentityCheck, String> {
     let db_path = get_db_path(&app);
-    let mut out = ChannelIdentityCheck { handle: handle.clone(), renamed_from: None, new_display_name: None, old_display_name: None };
+    let mut out = ChannelIdentityCheck { handle: handle.clone(), renamed_from: None, new_display_name: None, old_display_name: None, subscriber_count: None };
     let found = {
         let path = db_path.clone();
         let h = handle.clone();
@@ -132,7 +134,7 @@ pub async fn check_channel_identity(app: tauri::AppHandle, handle: String) -> Re
             .map_err(|e| e.to_string())?;
         channel_id = id;
     }
-    let Some((now_handle, now_name)) = crate::youtube::fetch_channel_identity(channel_id.trim()).await? else { return Ok(out) };
+    let Some((now_handle, now_name, subscribers)) = crate::youtube::fetch_channel_identity(channel_id.trim()).await? else { return Ok(out) };
 
     let bare = |h: &str| h.trim().trim_start_matches('@').to_lowercase();
     if bare(&now_handle) != bare(&stored) {
@@ -157,6 +159,15 @@ pub async fn check_channel_identity(app: tauri::AppHandle, handle: String) -> Re
     if !display_name.trim().is_empty() && bare_name(&now_name) != bare_name(&display_name) {
         out.old_display_name = Some(display_name.trim().to_string());
         out.new_display_name = Some(now_name);
+    }
+    // Its subscriber count, from the same page, under the handle it goes by now. Stored without a word: it has
+    // usually moved. A page that shows none (a hidden count) leaves what's stored.
+    if let Some(count) = subscribers {
+        let (path, h) = (db_path.clone(), out.handle.clone());
+        out.subscriber_count = tauri::async_runtime::spawn_blocking(move || db::update_biography_subscribers(&path, &h, count))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
     }
     Ok(out)
 }

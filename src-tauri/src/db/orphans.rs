@@ -79,6 +79,23 @@ pub fn update_video_title(db_path: &str, video_id: &str, title: &str) -> Result<
     Ok(Some(old))
 }
 
+/// A saved video's view count catching up with YouTube's: stored when it differs, and returned then (None when it's
+/// the same, or the video isn't saved). A count of zero or less is no answer (YouTube gave none), and changes nothing.
+pub fn update_video_view_count(db_path: &str, video_id: &str, views: i64) -> Result<Option<i64>> {
+    if views <= 0 {
+        return Ok(None);
+    }
+    let conn = Connection::open(db_path)?;
+    let old: Option<i64> = conn
+        .query_row("SELECT IFNULL(view_count, 0) FROM Videos WHERE video_id = ?1", params![video_id], |r| r.get(0))
+        .optional()?;
+    if old.is_none() || old == Some(views) {
+        return Ok(None);
+    }
+    conn.execute("UPDATE Videos SET view_count = ?1 WHERE video_id = ?2", params![views, video_id])?;
+    Ok(Some(views))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +133,17 @@ mod tests {
         let now: String = Connection::open(&path).unwrap().query_row("SELECT title FROM Videos WHERE video_id = 'v1'", [], |r| r.get(0)).unwrap();
         assert_eq!(now, "New Title");
         assert_eq!(update_video_title(&path, "missing", "X").unwrap(), None);
+    }
+
+    #[test]
+    fn a_view_count_catches_up_only_when_it_differs() {
+        let path = db("views");
+        // Saved with 1 view.
+        assert_eq!(update_video_view_count(&path, "v1", 1).unwrap(), None);
+        assert_eq!(update_video_view_count(&path, "v1", 0).unwrap(), None);
+        assert_eq!(update_video_view_count(&path, "v1", 2500).unwrap(), Some(2500));
+        let now: i64 = Connection::open(&path).unwrap().query_row("SELECT view_count FROM Videos WHERE video_id = 'v1'", [], |r| r.get(0)).unwrap();
+        assert_eq!(now, 2500);
+        assert_eq!(update_video_view_count(&path, "missing", 10).unwrap(), None);
     }
 }

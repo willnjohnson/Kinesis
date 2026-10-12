@@ -15,7 +15,7 @@ interface Props {
 // What the pack holds, in the words the rest of the app uses. Kinds not listed aren't shown.
 const COUNT_LABELS: [string, string][] = [
     ["video", "videos"], ["wdbs", "categories"], ["glossary", "glossary terms"], ["biography", "bios"],
-    ["custom_prompt", "custom prompts"], ["video_note", "notes"], ["attachment", "attachments"], ["calendar_track", "calendar tracks"], ["history", "searches"],
+    ["custom_prompt", "custom prompts"], ["video_note", "video notes"], ["attachment", "attachments"], ["calendar_track", "calendar tracks"], ["study_note", "shared notes"], ["history", "searches"],
 ];
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() ?? path;

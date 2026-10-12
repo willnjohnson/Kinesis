@@ -1,7 +1,15 @@
 import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
-import { ChevronRight, ChevronDown, Inbox } from 'lucide-react';
-import { setWdbsAlias, setWdbsIcon, setWdbsColor, setWdbsShape, UNSORTED_WDBS_FILTER, type WdbsNode } from '../api';
+import { ChevronRight, ChevronDown, FolderTree, Inbox, ListVideo, Search, X } from 'lucide-react';
+import {
+    decodeWdbs, encodeWdbs, getWdbsAliases, listDriveSequences, setWdbsAlias, setWdbsIcon, setWdbsColor, setWdbsShape, SEQUENCES_CHANGED_EVENT, UNSORTED_WDBS_FILTER,
+    type SequenceSummary, type WdbsNode,
+} from '../api';
 import { useWorkspace } from '../hooks/useWorkspace';
+import { openInternalLink } from '../lib/internal-links';
+import { handlePlainContextMenu } from '../lib/markdown-editor';
+import { driveSegmentLabel } from '../lib/utils';
+import { HoverDates } from './HoverDates';
+import { PlaylistThumb } from './SequenceCard';
 import { WdbsAliasMenu } from './WdbsAliasMenu';
 import { MENU_PANEL, MENU_ROW } from './ContextMenu';
 import { WdbsIconMenu } from './WdbsIconMenu';
@@ -23,6 +31,9 @@ interface WdbsTreePanelProps {
     // Gates the right-click "Edit Alias"/"Edit Icon" menu, same settings flag (allowEditWDBS)
     // that gates Bulk Assign Mode and the Sidebar's Warp Drive editor — see App.tsx.
     allowEditAlias?: boolean;
+    // Whether sequences are switched on (flags.showSequences): with them, the heading has a toggle between the tree
+    // and the list of every Drive's sequence.
+    showSequences?: boolean;
     // The tree's data and which branches are expanded, owned by the caller (App.tsx, via
     // hooks/useWdbsTree) rather than by this component — App.tsx never unmounts, so state living
     // there survives this panel unmounting/remounting every time the user leaves and returns to
@@ -37,6 +48,9 @@ interface WdbsTreePanelProps {
     expanded: Set<string>;
     setExpanded: Dispatch<SetStateAction<Set<string>>>;
 }
+
+/** Where the panel's view (the tree, or the list of sequences) is remembered: this reader's, in this browser. */
+const VIEW_KEY = 'kinesis.library.driveView';
 
 /** The paths of the nodes above `path` (root first), or null when `path` isn't in the tree. */
 function ancestorPaths(nodes: WdbsNode[], path: string, trail: string[] = []): string[] | null {
@@ -117,7 +131,19 @@ function NodeContextMenu({ x, y, onEditAlias, onEditIcon, onEditColor, onClose }
  * user leaves the Library view; selection itself is controlled by the caller too (wired into the
  * Library's own search/filter state).
  */
-export function WdbsTreePanel({ selectedPath, onSelect, className, allowEditAlias = false, tree, setTree, unsortedCount, loading, expanded, setExpanded }: WdbsTreePanelProps) {
+export function WdbsTreePanel({ selectedPath, onSelect, className, allowEditAlias = false, showSequences = false, tree, setTree, unsortedCount, loading, expanded, setExpanded }: WdbsTreePanelProps) {
+    const { labels } = useWorkspace();
+    // The tree, or the list of sequences: a toggle in the heading, remembered. With sequences switched off it's the tree.
+    const [chosenView, setChosenView] = useState<'tree' | 'sequences'>(() => {
+        try { return localStorage.getItem(VIEW_KEY) === 'sequences' ? 'sequences' : 'tree'; } catch { return 'tree'; }
+    });
+    const view = showSequences ? chosenView : 'tree';
+    // What's typed over the list of sequences, to narrow it (by name, Drive, or first video).
+    const [sequenceFilter, setSequenceFilter] = useState('');
+    const pickView = (v: 'tree' | 'sequences') => {
+        setChosenView(v);
+        try { localStorage.setItem(VIEW_KEY, v); } catch { /* just not remembered */ }
+    };
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; node: WdbsNode } | null>(null);
     const [aliasMenu, setAliasMenu] = useState<{ x: number; y: number; path: string; segment: string; alias: string } | null>(null);
     const [savingAlias, setSavingAlias] = useState(false);
@@ -128,7 +154,8 @@ export function WdbsTreePanel({ selectedPath, onSelect, className, allowEditAlia
     const [colorMenu, setColorMenu] = useState<{ x: number; y: number; path: string; segment: string; color: string | null; shape: string | null } | null>(null);
     const [savingColor, setSavingColor] = useState(false);
     const [colorError, setColorError] = useState<string | null>(null);
-    const label = useWorkspace().labels.aliasDriveName;
+    const label = labels.aliasDriveName;
+    const sequencesLabel = `${labels.aliasSequence}s`;
 
     // A selection made from outside the tree (e.g. a Biography's "In Drive" list) may sit inside
     // collapsed branches, so open the ones above it.
@@ -247,22 +274,64 @@ export function WdbsTreePanel({ selectedPath, onSelect, className, allowEditAlia
         <div className={className}>
             {/* shrink-0: stays visible above the tree's own scroll below, same as every other
                 view's heading (see VideoList.tsx/GlossaryView.tsx/BiographyView.tsx). */}
-            <h2 className="shrink-0 flex items-center min-h-9 text-xl font-bold text-white mb-4 px-1">{label}</h2>
+            <div className="shrink-0 flex items-center gap-2 min-h-9 mb-4 px-1">
+                <h2 className="flex-1 min-w-0 truncate text-xl font-bold text-white">{view === 'sequences' ? sequencesLabel : label}</h2>
+                {/* Icons alone: the panel can be squeezed too narrow for two words beside its heading. */}
+                {showSequences && (
+                    <div className="shrink-0 flex items-center gap-0.5 p-0.5 rounded-lg bg-[#1a1a1a] border border-[#303030]">
+                        {([['tree', FolderTree, `${label} tree`], ['sequences', ListVideo, sequencesLabel]] as const).map(([v, Icon, title]) => (
+                            <button
+                                key={v}
+                                type="button"
+                                onClick={() => pickView(v)}
+                                aria-pressed={view === v}
+                                aria-label={title}
+                                title={title}
+                                className={`p-1.5 rounded-md transition-colors cursor-pointer ${view === v ? 'bg-[#3f3f3f] text-white' : 'text-gray-400 hover:text-white'}`}
+                            >
+                                <Icon className="w-3.5 h-3.5" />
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
             {/* This panel gets its own independent scroll (App.tsx no longer shares
                 scrollContainerRef with it) — scrolling the video grid shouldn't move the Drive
                 tree, and vice versa. */}
+            {/* The sequences' filter: under the heading, and outside the list's scroll so it stays in reach. */}
+            {view === 'sequences' && (
+                <div className="shrink-0 mb-3 flex items-center gap-2 bg-[#121212] border border-[#333] focus-within:border-red-600/50 rounded-lg px-3 transition-colors">
+                    <Search className="w-3.5 h-3.5 text-[#666666] shrink-0" />
+                    <input
+                        value={sequenceFilter}
+                        onChange={e => setSequenceFilter(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Escape' && sequenceFilter) { e.stopPropagation(); setSequenceFilter(''); } }}
+                        onContextMenu={handlePlainContextMenu}
+                        placeholder={`Filter ${sequencesLabel.toLowerCase()}`}
+                        aria-label={`Filter ${sequencesLabel.toLowerCase()}`}
+                        className="flex-1 min-w-0 bg-transparent outline-none py-2 text-sm text-white placeholder-[#555]"
+                    />
+                    {sequenceFilter && (
+                        <button type="button" onClick={() => setSequenceFilter('')} aria-label="Clear" title="Clear" className="shrink-0 text-gray-500 hover:text-white transition-colors cursor-pointer">
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
+            )}
             <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
-                {loading ? (
-                    <div className="text-center text-gray-500 py-16 bg-[#121212] rounded-xl border border-[#272727]">
+                {view === 'sequences' ? (
+                    <SequenceList selectedPath={selectedPath} onSelect={onSelect} reloadKey={tree} filter={sequenceFilter} />
+                ) : loading ? (
+                    <div className="text-center text-gray-500 min-h-full py-16 bg-[#121212] rounded-xl border border-[#272727]">
                         <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-3" />
                         <p className="text-sm">Loading {label}...</p>
                     </div>
                 ) : tree.length === 0 && unsortedCount === 0 ? (
-                    <div className="text-center text-gray-500 py-16 bg-[#121212] rounded-xl border border-[#272727] px-4">
+                    <div className="text-center text-gray-500 min-h-full py-16 bg-[#121212] rounded-xl border border-[#272727] px-4">
                         <p className="text-sm">No videos yet. They'll show up here once tagged with a {label} designator.</p>
                     </div>
                 ) : (
-                    <div className="bg-[#121212] rounded-xl border border-[#272727] p-2 space-y-0.5">
+                    <div className="min-h-full bg-[#121212] rounded-xl border border-[#272727] p-2 space-y-0.5">
                         {unsortedCount > 0 && (
                             <>
                                 <UnsortedRow
@@ -354,6 +423,104 @@ export function WdbsTreePanel({ selectedPath, onSelect, className, allowEditAlia
     );
 }
 
+/** The panel's other view: every Drive that has a sequence, as a playlist (its first video's picture with the count on
+ *  it). Clicking one opens it, as a sequence link does: its first video, with the bar under the video following that
+ *  sequence. The button at the end of a row shows the Drive's videos in the Library instead (what clicking the Drive in
+ *  the tree does). `reloadKey`: read again when it changes (the tree, which is fetched again when Drives change).
+ *  `filter`: only the ones with every word of it in their name, their Drive or their first video's title. */
+function SequenceList({ selectedPath, onSelect, reloadKey, filter }: { selectedPath: string | undefined; onSelect: (path: string, label: string, alias: string | null) => void; reloadKey: unknown; filter: string }) {
+    const { labels } = useWorkspace();
+    const [rows, setRows] = useState<{ summary: SequenceSummary; path: string; alias: string | null }[] | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [nonce, setNonce] = useState(0);
+    useEffect(() => {
+        const again = () => setNonce(n => n + 1);
+        window.addEventListener(SEQUENCES_CHANGED_EVENT, again);
+        return () => window.removeEventListener(SEQUENCES_CHANGED_EVENT, again);
+    }, []);
+    useEffect(() => {
+        let live = true;
+        (async () => {
+            const sequences = await listDriveSequences();
+            const paths = sequences.map(s => encodeWdbs(s.drive));
+            const aliases = await getWdbsAliases(paths).catch(() => ({} as Record<string, string>));
+            return sequences.map((summary, i) => ({ summary, path: paths[i], alias: aliases[paths[i]] ?? null }));
+        })()
+            .then(list => { if (live) { setRows(list); setError(null); } })
+            .catch(e => { if (live) { setRows([]); setError(typeof e === 'string' ? e : e?.message ?? "Couldn't load them."); } });
+        return () => { live = false; };
+    }, [reloadKey, nonce]);
+
+    const sequenceLower = labels.aliasSequence.toLowerCase();
+    const box = 'text-center text-gray-500 min-h-full py-16 bg-[#121212] rounded-xl border border-[#272727] px-4';
+    if (rows === null) {
+        return (
+            <div className={box}>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm">Loading {sequenceLower}s...</p>
+            </div>
+        );
+    }
+    if (error) return <div className={box}><p className="text-sm text-red-400 break-words">{error}</p></div>;
+    if (rows.length === 0) {
+        return <div className={box}><p className="text-sm">No {sequenceLower}s yet. One is started from the {labels.aliasSequence} bar under a video.</p></div>;
+    }
+    const words = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const shownRows = words.length === 0 ? rows : rows.filter(({ summary, alias }) => {
+        const text = `${alias ?? ''}\n${summary.drive}\n${summary.firstTitle ?? ''}`.toLowerCase();
+        return words.every(w => text.includes(w));
+    });
+    if (shownRows.length === 0) {
+        return <div className={box}><p className="text-sm">No {sequenceLower}s match.</p></div>;
+    }
+    return (
+        <div className="min-h-full bg-[#121212] rounded-xl border border-[#272727] p-2 space-y-0.5">
+            {shownRows.map(({ summary, path, alias }) => {
+                const name = alias || driveSegmentLabel(summary.drive);
+                const shown = selectedPath === path;
+                return (
+                    // Resting the pointer on it says what the row has no room for, on a card to its right.
+                    <HoverDates
+                        key={summary.drive}
+                        title={name}
+                        rows={[
+                            { label: labels.aliasDriveName, value: summary.drive },
+                            { label: 'Videos', value: String(summary.count) },
+                            ...(summary.firstTitle ? [{ label: 'Starts with', value: summary.firstTitle }] : []),
+                            ...(summary.stale > 0 ? [{ label: `Left the ${labels.aliasDriveName}`, value: String(summary.stale) }] : []),
+                        ]}
+                    >{hover => (
+                    <div {...hover} className="group flex items-center gap-1 rounded-lg text-gray-300 hover:bg-[#272727] transition-colors">
+                        <button
+                            type="button"
+                            onClick={() => openInternalLink('playlist', summary.drive)}
+                            aria-label={`Open this ${sequenceLower}`}
+                            className="flex-1 min-w-0 flex items-center gap-2.5 p-1.5 text-left cursor-pointer"
+                        >
+                            <PlaylistThumb videoId={summary.firstVideoId} count={summary.count} className="w-16 aspect-video rounded-md" />
+                            <span className="min-w-0 flex flex-col">
+                                <span className="text-sm text-white truncate">{name}</span>
+                                <span className="text-[11px] font-mono text-gray-500 truncate">{summary.drive}</span>
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            onMouseEnter={hover.onMouseLeave}
+                            onClick={() => onSelect(path, driveSegmentLabel(summary.drive), alias)}
+                            aria-pressed={shown}
+                            title={shown ? `Showing this ${labels.aliasDriveName}'s videos (click to show them all again)` : `Show this ${labels.aliasDriveName}'s videos in the ${labels.aliasLibrary}`}
+                            className={`shrink-0 p-1.5 mr-1 rounded-md transition-colors cursor-pointer ${shown ? 'bg-red-600 text-white' : 'text-gray-500 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}`}
+                        >
+                            <FolderTree className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
+                    )}</HoverDates>
+                );
+            })}
+        </div>
+    );
+}
+
 function TreeBranch({ node, depth, expanded, onToggleExpanded, selectedPath, onSelect, allowEditAlias, onContextMenu }: {
     node: WdbsNode;
     depth: number;
@@ -370,6 +537,8 @@ function TreeBranch({ node, depth, expanded, onToggleExpanded, selectedPath, onS
         <>
             <TreeRow
                 label={node.segment}
+                path={node.path}
+                childCount={node.children.length}
                 alias={node.alias}
                 icon={node.icon}
                 color={node.color}
@@ -421,8 +590,11 @@ function UnsortedRow({ count, selected, onSelect }: { count: number; selected: b
     );
 }
 
-function TreeRow({ label, alias, icon, color, shape, count, depth, hasChildren, expanded, selected, editable, onToggle, onSelect, onContextMenu }: {
+function TreeRow({ label, path, childCount, alias, icon, color, shape, count, depth, hasChildren, expanded, selected, editable, onToggle, onSelect, onContextMenu }: {
     label: string;
+    /** Its path as stored, and how many Drives sit directly under it: for the card that opens beside it. */
+    path: string;
+    childCount: number;
     alias: string | null;
     icon: string | null;
     color: string | null;
@@ -444,8 +616,20 @@ function TreeRow({ label, alias, icon, color, shape, count, depth, hasChildren, 
     // --k-drive-* tokens, which already carry the light/dark-appropriate shade for whichever theme
     // is active, so nothing here needs its own light/dark branching.
     const colorValue = getWdbsColorValue(color);
+    const { labels } = useWorkspace();
     return (
+        // Resting the pointer on it says what the row has no room for (its alias, where it sits, what's in it), on a card
+        // to its right.
+        <HoverDates
+            title={alias || label}
+            rows={[
+                { label: labels.aliasDriveName, value: decodeWdbs(path) || path },
+                { label: 'Videos', value: `${count}${childCount > 0 ? ' (with those beneath it)' : ''}` },
+                ...(childCount > 0 ? [{ label: 'Directly under it', value: `${childCount} ${labels.aliasDriveName} Node${childCount === 1 ? '' : 's'}` }] : []),
+            ]}
+        >{hover => (
         <div
+            {...hover}
             className={`flex items-center gap-1 rounded-lg cursor-pointer group transition-colors ${selected ? 'bg-red-600 text-white' : 'text-gray-300 hover:bg-[#272727]'}`}
             style={{ paddingLeft: `${depth * 16 + 4}px` }}
             onClick={onSelect}
@@ -467,10 +651,11 @@ function TreeRow({ label, alias, icon, color, shape, count, depth, hasChildren, 
                 />
             )}
             {Icon && <Icon className={`w-3.5 h-3.5 shrink-0 mr-1 ${selected ? 'text-white/80' : 'text-gray-500'}`} />}
-            <span className="flex-1 min-w-0 text-sm py-1.5 truncate" title={alias ?? undefined}>
+            <span className="flex-1 min-w-0 text-sm py-1.5 truncate">
                 {label}
             </span>
             <span className={`text-[11px] font-medium px-2 shrink-0 ${selected ? 'text-white/80' : 'text-gray-500'}`}>{count}</span>
         </div>
+        )}</HoverDates>
     );
 }

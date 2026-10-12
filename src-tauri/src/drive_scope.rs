@@ -179,7 +179,7 @@ impl ScopePlan {
             for (term, key) in rows.filter_map(|r| r.ok()) {
                 let drives = decode_drives(&key);
                 let entry = rows_by_term.entry(term).or_default();
-                if drives.is_empty() || drives.iter().any(|d| !excluded.contains(d.trim())) {
+                if drives.is_empty() || drives.iter().any(|d| root_of_display(d.trim()).is_some_and(|r| !excluded.contains(&r))) {
                     entry.0 = true;
                 } else {
                     entry.1.push(key);
@@ -238,7 +238,7 @@ impl ScopePlan {
         if drives.is_empty() {
             return Some(Vec::new());
         }
-        let kept: Vec<String> = drives.iter().filter(|d| self.root_kept(d)).cloned().collect();
+        let kept: Vec<String> = drives.iter().filter(|d| self.category_kept(d)).cloned().collect();
         if !kept.is_empty() {
             return Some(kept);
         }
@@ -290,8 +290,11 @@ impl ScopePlan {
                     .filter(|_| link.key.starts_with(':'))
                     .or_else(|| root_of_storage(&link.key))
                     .is_some_and(|r| !self.root_kept(&r)),
-                // A sequence link carries its Drive's display path.
-                LinkKind::Playlist => root_of_display(&link.key).is_some_and(|r| !self.root_kept(&r)),
+                // A sequence link carries its Drive's display path, and so does a flashcards link ("*", every term,
+                // has no root and stays).
+                LinkKind::Playlist | LinkKind::Flashcards => root_of_display(&link.key).is_some_and(|r| !self.root_kept(&r)),
+                // A note isn't filed by Drive the way left-out things are: links to it stay.
+                LinkKind::Note | LinkKind::Workbook => false,
             };
             if gone {
                 LinkAction::Unlink

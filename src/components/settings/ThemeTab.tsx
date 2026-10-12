@@ -6,7 +6,7 @@ import { useLockedSettings, LOCKED_TITLE } from '../../hooks/useLockedSettings';
 import { useFlags } from '../../hooks/useFlags';
 import {
     BUILTIN_THEMES, applyTheme, loadCustomThemes, saveCustomThemes,
-    parseThemeJson, isThemeError, resolveTheme, type Theme,
+    parseThemeJson, isThemeError, resolveTheme, syntaxOf, type Theme,
 } from '../../lib/themes';
 
 interface Props {
@@ -85,7 +85,8 @@ export function ThemeTab({ settings, onUpdate }: Props) {
     const handleCopyTemplate = async () => {
         const solarized = BUILTIN_THEMES.find(t => t.name === 'solarized');
         if (!solarized) return;
-        const template = { name: 'My Custom Theme', scheme: solarized.scheme, colors: solarized.colors };
+        // `syntax` (the colors of code in a block) is optional in a theme file; it's in the template so it's known to be there.
+        const template = { name: 'My Custom Theme', scheme: solarized.scheme, colors: solarized.colors, syntax: syntaxOf(solarized) };
         try {
             await navigator.clipboard.writeText(JSON.stringify(template, null, 2));
             setCopied(true);

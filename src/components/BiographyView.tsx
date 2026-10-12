@@ -5,8 +5,10 @@ import { UnderlineTabs } from './ui/UnderlineTabs';
 import { BsTwitterX, BsInstagram, BsFacebook, BsYoutube, BsTiktok, BsThreads, BsTwitch, BsReddit, BsDiscord } from 'react-icons/bs';
 import { SiWikipedia } from 'react-icons/si';
 import ReactMarkdown from 'react-markdown';
+import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import { remarkHighlight } from '../lib/remark-highlight';
+import { remarkCallouts } from '../lib/remark-callouts';
 import { remarkTimestamps } from '../lib/remark-timestamps';
 import { remarkEmbeds } from '../lib/remark-embeds';
 import { foldVideoLinkTimes, markdownUrlTransform } from '../lib/internal-links';
@@ -38,7 +40,7 @@ const handleKey = (h: string) => h.trim().replace(/^@/, '').toLowerCase();
 /** Why the Handle tab's text can't be saved, or null when it can: only its capitals may differ from the stored handle. */
 function handleCaseError(stored: string, typed: string): string | null {
     if (!typed.trim().replace(/^@/, '')) return "Type the channel's handle.";
-    if (handleKey(typed) !== handleKey(stored)) return `Only the capitals can change: it has to stay ${stored}.`;
+    if (handleKey(typed) !== handleKey(stored)) return `Only the capitals can change: It has to stay ${stored}.`;
     return null;
 }
 
@@ -226,13 +228,14 @@ function BarSwitch({ label, on, onChange, title, disabled = false }: { label: st
 function PersonName({ person, showAlias, aliasOnly, onOpen }: { person: BiographyEntry; showAlias: boolean; aliasOnly: boolean; onOpen: () => void }) {
     const preview = useBioPreview(person, onOpen);
     const alias = showAlias ? person.alias.trim() : '';
-    // Alias Only: the alias stands in for the channel's own name (its handle stays, to tell channels apart).
+    // Alias Only: the alias stands in for the channel's own name (its handle stays, to tell channels apart). It reads as
+    // any other name in the list, in plain type: the row's bullet is what says it's an alias (a small "a", see the list).
     if (alias && aliasOnly) {
         return (
             <>
                 <button onClick={onOpen} className="min-w-0 text-left cursor-pointer">
-                    <span {...preview.handlers} className="text-base group-hover:text-[var(--k-accent)] transition-colors">
-                        <AliasBadge alias={alias} displayName={person.displayName || person.handle} />
+                    <span {...preview.handlers} className="group-hover:underline group-hover:decoration-dotted group-hover:underline-offset-4 group-hover:text-[var(--k-accent)] transition-all text-base font-medium">
+                        {alias}
                     </span>
                     <span className="ml-1.5 text-xs text-gray-500">({person.handle})</span>
                 </button>
@@ -244,7 +247,7 @@ function PersonName({ person, showAlias, aliasOnly, onOpen }: { person: Biograph
         <>
             <button onClick={onOpen} className="min-w-0 text-left cursor-pointer">
                 {/* The alias (Edit Bio), when there is one: marked before the channel's own name. */}
-                {alias && <AliasBadge alias={alias} displayName={person.displayName || person.handle} className="mr-1.5" />}
+                {alias && <AliasBadge alias={alias} displayName={person.displayName || person.handle} tooltip={false} className="mr-1.5" />}
                 <span {...preview.handlers} className="group-hover:underline group-hover:decoration-dotted group-hover:underline-offset-4 group-hover:text-[var(--k-accent)] transition-all text-base font-medium">
                     {person.displayName || person.handle}
                 </span>
@@ -477,7 +480,13 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                         <ul className="space-y-1.5 pl-2">
                             {grouped[char].map((person) => (
                                 <li key={person.handle} className="text-gray-300 group flex items-center">
-                                    <div className="w-1.5 h-1.5 rounded-full bg-[#444] mr-3 shrink-0 group-hover:bg-[var(--k-accent)] transition-colors"></div>
+                                    {/* The bullet. With Show Alias and Alias Only both on, a name that is an alias has a small mark
+                                        there instead: an italic serif "a" on a tiny tile, so it reads as an icon rather than a
+                                        stray letter. Centred where the dot would be (-ml-[3px], as the Glossary's built-in tag
+                                        icons are), so the names still line up. */}
+                                    {showAlias && aliasOnly && person.alias.trim()
+                                        ? <span title="Alias" aria-label="Alias" className="w-3 h-3 -ml-[3px] mr-[9px] shrink-0 flex items-center justify-center rounded-[3px] bg-[#333333] text-[#bbbbbb] group-hover:bg-[var(--k-accent)] group-hover:text-white transition-colors select-none font-serif italic font-bold text-[10px] leading-none"><span className="-translate-y-px">a</span></span>
+                                        : <div className="w-1.5 h-1.5 rounded-full bg-[#444] mr-3 shrink-0 group-hover:bg-[var(--k-accent)] transition-colors"></div>}
                                      {/* data-preview-anchor: the name's hover preview opens past the edit icon, not over it. */}
                                      <div data-preview-anchor className="flex items-center min-w-0">
                                      <PersonName person={person} showAlias={showAlias} aliasOnly={aliasOnly} onOpen={() => setSelected(person)} />
@@ -610,7 +619,7 @@ export function BiographyView({ searchQuery, onChange, onVideoSelect, onViewMore
                                     value={editing?.bio || ''}
                                     onChange={(val) => setEditing(prev => prev && { ...prev, bio: val })}
                                     rows={16}
-                                    placeholder="Describe who this person is (Markdown supported)... Tip: paste your existing YouTube channel description here as a starting point."
+                                    placeholder="Describe who this person is (Markdown supported)... Tip: Paste your existing YouTube channel description here as a starting point."
                                 />
                             </div>
 
@@ -722,10 +731,15 @@ export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdi
     // Each time the window is viewed (not while it's stepped aside for Edit Bio), the channel is looked up on YouTube by
     // its channel ID (no API key): a new handle is taken over right away (and said here); a new name asks whether to
     // keep the old one as the alias. In a read-only workspace both are simply taken over, with no alias and no asking.
+    // So is a new name where the workspace says not to ask (doNotAskToAlias), but there it's said, so the reader
+    // knows why the channel is called something else: an acknowledgement, with nothing to decide. An alias the channel
+    // already has is left as it is either way.
     const [renamedFrom, setRenamedFrom] = useState<string | null>(null);
     const [nameChange, setNameChange] = useState<{ handle: string; from: string; to: string } | null>(null);
+    const [nameTaken, setNameTaken] = useState<{ from: string; to: string } | null>(null);
     const { flags: modalFlags } = useFlags();
     const readOnly = modalFlags.workspaceReadOnly;
+    const noAsking = readOnly || modalFlags.doNotAskToAlias;
     useEffect(() => {
         const key = given.handle.toLowerCase();
         if (identityChecking.has(key)) return;
@@ -734,16 +748,17 @@ export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdi
         // a late answer to a closed window does no harm.
         checkChannelIdentity(given.handle)
             .then(async result => {
-                if (result.newDisplayName && result.oldDisplayName && readOnly) {
+                if (result.newDisplayName && result.oldDisplayName && noAsking) {
                     await renameBiographyDisplayName(result.handle, result.newDisplayName, false);
+                    if (!readOnly) setNameTaken({ from: result.oldDisplayName, to: result.newDisplayName });
                 }
-                const fresh = result.renamedFrom || (readOnly && result.newDisplayName) ? await getBiography(result.handle) : null;
+                const fresh = result.renamedFrom || (noAsking && result.newDisplayName) ? await getBiography(result.handle) : null;
                 if (fresh) {
                     setBiography(fresh);
                     onChanged?.(fresh);
                 }
                 if (result.renamedFrom) setRenamedFrom(result.renamedFrom);
-                if (!readOnly && result.newDisplayName && result.oldDisplayName) {
+                if (!noAsking && result.newDisplayName && result.oldDisplayName) {
                     setNameChange({ handle: result.handle, from: result.oldDisplayName, to: result.newDisplayName });
                 }
             })
@@ -833,7 +848,7 @@ export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdi
                     <div className="flex items-center gap-3 pr-4 overflow-hidden min-w-0">
                         <FileText className="w-5 h-5 text-gray-400 shrink-0" />
                         {/* Always shown here (Show Alias only governs the list): this is the channel's own window. */}
-                        {biography.alias.trim() && <AliasBadge alias={biography.alias.trim()} displayName={biography.displayName || biography.handle} className="text-base shrink-0" />}
+                        {biography.alias.trim() && <AliasBadge alias={biography.alias.trim()} displayName={biography.displayName || biography.handle} tooltip={false} className="text-base shrink-0" />}
                         <h2 className="text-xl font-bold text-white truncate">{title}</h2>
                         <span className="text-xs text-gray-400 shrink-0 whitespace-nowrap">{biography.handle}</span>
                         {renamedFrom && (
@@ -866,7 +881,8 @@ export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdi
                                oversized next to it. */}
                            <div {...selectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400`}>
                                <ReactMarkdown
-                                   remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                                   remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                                   rehypePlugins={CODE_HIGHLIGHT}
  urlTransform={markdownUrlTransform}
                                    components={{
                                        a: MarkdownLink,
@@ -976,6 +992,30 @@ export function BiographyModal({ biography: given, onClose, onVideoSelect, onEdi
                      </div>
                 </div>
 
+                {nameTaken && (
+                    <Modal
+                        onClose={() => setNameTaken(null)}
+                        layer="top"
+                        title="Channel Renamed"
+                        footer={
+                            <button
+                                type="button"
+                                onClick={() => setNameTaken(null)}
+                                className="px-6 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-all text-sm font-bold text-white cursor-pointer"
+                            >
+                                OK
+                            </button>
+                        }
+                    >
+                        <p className="text-[#aaaaaa] leading-relaxed">
+                            <span className="text-white font-semibold">{nameTaken.from}</span> is now called{' '}
+                            <span className="text-white font-semibold">{nameTaken.to}</span> on YouTube, and is shown under that name here.
+                        </p>
+                        {biography.alias.trim() && (
+                            <p className="text-[11px] text-gray-500 mt-3">Its alias, "{biography.alias.trim()}", is unchanged.</p>
+                        )}
+                    </Modal>
+                )}
                 {nameChange && (
                     <Modal
                         onClose={() => setNameChange(null)}

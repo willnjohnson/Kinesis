@@ -3,8 +3,10 @@
 //! A **track** is a named, ordered list of **entries** (a video, or a task with just a label), and its `advance_mode` says
 //! how it moves along:
 //!   - `completion`: the next entry comes up once the one before it is marked done. No dates (a Gantt-style chain).
-//!   - `calendar`: entries are dealt out in order onto the track's schedule (its weekdays, within its terms, minus its
-//!     holidays), whether or not the last one was done (a school schedule: Mon/Wed/Fri lectures).
+//!   - `calendar`: entries are dealt out in order onto the track's schedule (the days its pattern repeats on, within its
+//!     terms, minus its holidays), whether or not the last one was done (a school schedule: Mon/Wed/Fri lectures).
+//!     The pattern (`Repeat`) is its weekdays every week or every few weeks, every N days from its start, or the Nth of a
+//!     weekday each month.
 //!   - `hybrid`: both. An entry is up once its date has come *and* the one before it is done; past its date and still not
 //!     done, it's overdue rather than skipped.
 //! `loop_entries` starts the list over after its last entry: a Push/Pull/Legs rotation is a looping `completion` track.
@@ -64,7 +66,10 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
             time_duration INTEGER,
             cycle_offset INTEGER NOT NULL DEFAULT 0,
             previous_start_date TEXT,
-            previous_cycle_offset INTEGER
+            previous_cycle_offset INTEGER,
+            repeat_kind TEXT NOT NULL DEFAULT 'weekly',
+            repeat_every INTEGER NOT NULL DEFAULT 1,
+            repeat_ordinal INTEGER NOT NULL DEFAULT 1
         ) STRICT;
         CREATE TABLE IF NOT EXISTS CalendarEntries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,8 +123,13 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (track_id, set_id)
         ) STRICT;
 
+        -- These three were named ..._Cascade until the maintained schema named them ..._CascadeDelete: the old ones go,
+        -- so a database never has both doing the same deletes.
+        DROP TRIGGER IF EXISTS trgCalendarTracksAfterDEL_Cascade;
+        DROP TRIGGER IF EXISTS trgCalendarEntriesAfterDEL_Cascade;
+        DROP TRIGGER IF EXISTS trgCalendarHolidaySetsAfterDEL_Cascade;
         -- A deleted track takes everything of its own with it (completions first, while their entries still exist).
-        CREATE TRIGGER IF NOT EXISTS trgCalendarTracksAfterDEL_Cascade
+        CREATE TRIGGER IF NOT EXISTS trgCalendarTracksAfterDEL_CascadeDelete
         AFTER DELETE ON CalendarTracks
         BEGIN
             DELETE FROM CalendarCompletions WHERE entry_id IN (SELECT id FROM CalendarEntries WHERE track_id = OLD.id);
@@ -127,12 +137,12 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
             DELETE FROM CalendarTerms WHERE track_id = OLD.id;
             DELETE FROM CalendarTrackHolidayRules WHERE track_id = OLD.id;
         END;
-        CREATE TRIGGER IF NOT EXISTS trgCalendarEntriesAfterDEL_Cascade
+        CREATE TRIGGER IF NOT EXISTS trgCalendarEntriesAfterDEL_CascadeDelete
         AFTER DELETE ON CalendarEntries
         BEGIN
             DELETE FROM CalendarCompletions WHERE entry_id = OLD.id;
         END;
-        CREATE TRIGGER IF NOT EXISTS trgCalendarHolidaySetsAfterDEL_Cascade
+        CREATE TRIGGER IF NOT EXISTS trgCalendarHolidaySetsAfterDEL_CascadeDelete
         AFTER DELETE ON CalendarHolidaySets
         BEGIN
             DELETE FROM CalendarHolidayDates WHERE set_id = OLD.id;
@@ -148,6 +158,10 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
         ("CalendarTracks", "cycle_offset", "INTEGER NOT NULL DEFAULT 0"),
         ("CalendarTracks", "previous_start_date", "TEXT"),
         ("CalendarTracks", "previous_cycle_offset", "INTEGER"),
+        // How a dated track's days repeat (Repeat): a track from before these has its weekdays every week.
+        ("CalendarTracks", "repeat_kind", "TEXT NOT NULL DEFAULT 'weekly'"),
+        ("CalendarTracks", "repeat_every", "INTEGER NOT NULL DEFAULT 1"),
+        ("CalendarTracks", "repeat_ordinal", "INTEGER NOT NULL DEFAULT 1"),
         ("CalendarEntries", "icon", "TEXT NOT NULL DEFAULT ''"),
         ("CalendarEntries", "description", "TEXT NOT NULL DEFAULT ''"),
         ("CalendarEntries", "priority", "INTEGER NOT NULL DEFAULT 0"),
@@ -156,6 +170,12 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
         // folder has its position among the folder's entries; one not in a folder, among the track's.
         ("CalendarEntries", "is_folder", "INTEGER NOT NULL DEFAULT 0"),
         ("CalendarEntries", "folder_id", "INTEGER"),
+        // A note (db/notes.rs) as an entry, like a video: note_id while the note exists, former_note_id while it's gone.
+        ("CalendarEntries", "note_id", "TEXT"),
+        ("CalendarEntries", "former_note_id", "TEXT"),
+        // The workbook (db/workbooks.rs) a note's entry was added as a page of, so the note opens in it. Only a
+        // pointer: cleared when the workbook is deleted, and nothing depends on it.
+        ("CalendarEntries", "workbook_id", "TEXT"),
     ] {
         if !super::schema::column_exists(conn, table, column)? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
@@ -213,6 +233,35 @@ pub fn ensure_calendar_schema(conn: &Connection) -> Result<()> {
             );
         END;",
     )?;
+    // A note on a track behaves like a video: deleted (or moved between shared and personal, which deletes and re-adds it),
+    // its place stays as a task named after it; back again, it takes the place back. A track holds a note once.
+    for table in [super::notes::SHARED_NOTES, super::notes::PERSONAL_NOTES] {
+        conn.execute_batch(&format!(
+            "CREATE TRIGGER IF NOT EXISTS trg{table}AfterDEL_CalendarEntries_KeepPlace
+            AFTER DELETE ON {table}
+            BEGIN
+                UPDATE CalendarEntries
+                SET label = CASE WHEN label = '' THEN COALESCE(NULLIF(OLD.title, ''), 'Untitled') ELSE label END,
+                    former_note_id = OLD.id,
+                    note_id = NULL
+                WHERE note_id = OLD.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS trg{table}AfterINS_CalendarEntries_Reconnect
+            AFTER INSERT ON {table}
+            BEGIN
+                UPDATE CalendarEntries
+                SET note_id = NEW.id,
+                    former_note_id = NULL,
+                    label = CASE WHEN label = COALESCE(NULLIF(NEW.title, ''), 'Untitled') THEN '' ELSE label END
+                WHERE id IN (
+                    SELECT MIN(id) FROM CalendarEntries
+                    WHERE former_note_id = NEW.id
+                      AND track_id NOT IN (SELECT track_id FROM CalendarEntries WHERE note_id = NEW.id)
+                    GROUP BY track_id
+                );
+            END;"
+        ))?;
+    }
     conn.execute(
         "INSERT OR IGNORE INTO CalendarHolidaySets (name, annual, builtin) VALUES ('US Federal Holidays', 1, ?1)",
         params![US_FEDERAL],
@@ -288,6 +337,74 @@ fn is_us_federal_holiday(d: NaiveDate) -> bool {
 
 // ── Tracks ───────────────────────────────────────────────────────────────────────────────────────
 
+/// How a dated track's days repeat, from its start date:
+///   - `weekly`: on its weekdays, every `every` weeks (1 = every week; 2 = every other week, counted in whole weeks from
+///     the week it starts in). What every track was before there was a choice.
+///   - `interval`: every `every` days, counted from its start (2 = every other day). Its weekdays aren't used.
+///   - `monthly`: the `ordinal`th of each of its weekdays in every month (1 = the first Monday; 5 = the last).
+/// Terms and holiday sets apply on top, as before: a day the pattern lands on that's excluded just isn't a day on the
+/// schedule (nothing is used up, and the pattern keeps its rhythm rather than shifting).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Repeat {
+    pub kind: String,
+    pub every: i64,
+    pub ordinal: i64,
+}
+
+impl Default for Repeat {
+    fn default() -> Self {
+        Repeat { kind: "weekly".into(), every: 1, ordinal: 1 }
+    }
+}
+
+const REPEAT_KINDS: [&str; 3] = ["weekly", "interval", "monthly"];
+/// The longest gaps a pattern can have: a year of weeks, a year of days.
+const MAX_REPEAT_WEEKS: i64 = 52;
+const MAX_REPEAT_DAYS: i64 = 365;
+
+impl Repeat {
+    /// Whether `d` is one of the pattern's days, for a schedule that starts on `start` with these `weekdays` (1 Monday to
+    /// 7 Sunday). Only the pattern: not the start itself, terms or holidays (Schedule::has adds those).
+    fn lands_on(&self, start: NaiveDate, weekdays: &HashSet<u32>, d: NaiveDate) -> bool {
+        let on_weekday = weekdays.contains(&d.weekday().number_from_monday());
+        match self.kind.as_str() {
+            "interval" => (d - start).num_days().rem_euclid(self.every.max(1)) == 0,
+            "monthly" => {
+                on_weekday && if self.ordinal >= 5 {
+                    // The last one: a week later is in the next month.
+                    (d + Duration::days(7)).month() != d.month()
+                } else {
+                    i64::from((d.day() - 1) / 7 + 1) == self.ordinal
+                }
+            }
+            _ => {
+                let monday = |x: NaiveDate| x - Duration::days(i64::from(x.weekday().num_days_from_monday()));
+                on_weekday && ((monday(d) - monday(start)).num_days() / 7).rem_euclid(self.every.max(1)) == 0
+            }
+        }
+    }
+
+    /// The pattern in a few words, for a message: "Mon/Wed/Fri", "Mon/Wed/Fri every other week", "every 3 days",
+    /// "1st Mon of the month". (calendar/shared.tsx's repeatLabel says the same on screen.)
+    fn label(&self, weekdays: &[u32]) -> String {
+        let days: Vec<&str> = WEEKDAY_NAMES.iter().enumerate().filter(|(i, _)| weekdays.contains(&(*i as u32 + 1))).map(|(_, n)| *n).collect();
+        let days = days.join("/");
+        match self.kind.as_str() {
+            "interval" if self.every == 1 => "every day".to_string(),
+            "interval" if self.every == 2 => "every other day".to_string(),
+            "interval" => format!("every {} days", self.every),
+            "monthly" => {
+                let nth = ["1st", "2nd", "3rd", "4th", "last"][(self.ordinal.clamp(1, 5) - 1) as usize];
+                format!("{nth} {days} of the month")
+            }
+            _ if self.every == 2 => format!("{days} every other week"),
+            _ if self.every > 2 => format!("{days} every {} weeks", self.every),
+            _ => days,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CalendarTrack {
@@ -298,8 +415,11 @@ pub struct CalendarTrack {
     pub advance_mode: String,
     pub loop_entries: bool,
     pub source_drive_sequence: bool,
-    /// The days of the week its schedule runs on, 1 (Monday) to 7 (Sunday). Empty for a `completion` track.
+    /// The days of the week its schedule runs on, 1 (Monday) to 7 (Sunday). Empty for a `completion` track, and for one
+    /// that repeats every N days (`repeat`).
     pub weekdays: Vec<u32>,
+    /// How those days repeat (every week, unless set otherwise). The default for a `completion` track, which has no days.
+    pub repeat: Repeat,
     pub start_date: String,
     pub archived: bool,
     pub created_at: String,
@@ -332,6 +452,9 @@ pub struct TrackInput {
     pub source_drive_sequence: bool,
     #[serde(default)]
     pub weekdays: Vec<u32>,
+    /// How its days repeat; every week on its weekdays when left out.
+    #[serde(default)]
+    pub repeat: Repeat,
     /// When its schedule starts; today when left out.
     pub start_date: Option<String>,
     /// A time window on its days (minutes after midnight, and minutes long); both left out for any time that day.
@@ -346,6 +469,7 @@ struct CleanTrack {
     drive: String,
     mode: String,
     weekdays: String,
+    repeat: Repeat,
     start: String,
     time: Option<(i64, i64)>,
 }
@@ -359,6 +483,9 @@ fn clean_track(input: &TrackInput) -> Result<CleanTrack> {
     if name.is_empty() {
         return Err(invalid("A track needs a name."));
     }
+    if name.chars().count() > MAX_TRACK_NAME {
+        return Err(invalid(format!("A track's name can be at most {MAX_TRACK_NAME} characters.")));
+    }
     if !MODES.contains(&input.advance_mode.as_str()) {
         return Err(invalid(format!("'{}' isn't a way a track can advance", input.advance_mode)));
     }
@@ -369,12 +496,41 @@ fn clean_track(input: &TrackInput) -> Result<CleanTrack> {
     let mut days: Vec<u32> = input.weekdays.iter().copied().filter(|d| (1..=7).contains(d)).collect();
     days.sort_unstable();
     days.dedup();
-    if input.advance_mode != "completion" && days.is_empty() {
-        return Err(invalid("A track that follows dates needs at least one day of the week."));
-    }
-    if input.advance_mode == "completion" {
+    // Its pattern, tidied: only what its kind uses is kept (so two tracks that repeat the same way are stored the same).
+    let repeat = if input.advance_mode == "completion" {
         days.clear();
-    }
+        Repeat::default()
+    } else {
+        let Repeat { kind, every, ordinal } = &input.repeat;
+        if !REPEAT_KINDS.contains(&kind.as_str()) {
+            return Err(invalid(format!("'{kind}' isn't a way a track's days can repeat")));
+        }
+        match kind.as_str() {
+            "interval" => {
+                if !(1..=MAX_REPEAT_DAYS).contains(every) {
+                    return Err(invalid(format!("A track can repeat every 1 to {MAX_REPEAT_DAYS} days.")));
+                }
+                days.clear();
+                Repeat { kind: kind.clone(), every: *every, ordinal: 1 }
+            }
+            _ => {
+                if days.is_empty() {
+                    return Err(invalid("A track that follows dates needs at least one day of the week."));
+                }
+                if kind == "monthly" {
+                    if !(1..=5).contains(ordinal) {
+                        return Err(invalid("A monthly track is on the first, second, third, fourth or last of its weekday."));
+                    }
+                    Repeat { kind: kind.clone(), every: 1, ordinal: *ordinal }
+                } else {
+                    if !(1..=MAX_REPEAT_WEEKS).contains(every) {
+                        return Err(invalid(format!("A track can repeat every 1 to {MAX_REPEAT_WEEKS} weeks.")));
+                    }
+                    Repeat { kind: kind.clone(), every: *every, ordinal: 1 }
+                }
+            }
+        }
+    };
     let start = match &input.start_date {
         Some(s) if !s.trim().is_empty() => fmt_date(parse_date(s)?),
         _ => fmt_date(local_today()),
@@ -397,11 +553,11 @@ fn clean_track(input: &TrackInput) -> Result<CleanTrack> {
         }
         _ => return Err(invalid("A track's time needs both a start and a length.")),
     };
-    Ok(CleanTrack { name, drive, mode: input.advance_mode.clone(), weekdays: days.iter().map(u32::to_string).collect::<Vec<_>>().join(","), start, time })
+    Ok(CleanTrack { name, drive, mode: input.advance_mode.clone(), weekdays: days.iter().map(u32::to_string).collect::<Vec<_>>().join(","), repeat, start, time })
 }
 
 const TRACK_COLUMNS: &str =
-    "id, name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, archived, created_at, time_start, time_duration, cycle_offset, previous_start_date, previous_cycle_offset";
+    "id, name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, archived, created_at, time_start, time_duration, cycle_offset, previous_start_date, previous_cycle_offset, repeat_kind, repeat_every, repeat_ordinal";
 
 fn track_from_row(row: &rusqlite::Row) -> Result<CalendarTrack> {
     let weekdays: String = row.get(6)?;
@@ -413,6 +569,7 @@ fn track_from_row(row: &rusqlite::Row) -> Result<CalendarTrack> {
         loop_entries: row.get::<_, i64>(4)? != 0,
         source_drive_sequence: row.get::<_, i64>(5)? != 0,
         weekdays: weekdays.split(',').filter_map(|d| d.trim().parse().ok()).collect(),
+        repeat: Repeat { kind: row.get(15)?, every: row.get(16)?, ordinal: row.get(17)? },
         start_date: row.get(7)?,
         archived: row.get::<_, i64>(8)? != 0,
         created_at: row.get(9)?,
@@ -429,10 +586,12 @@ fn fmt_time(minutes: i64) -> String {
     format!("{}:{:02}", minutes / 60, minutes % 60)
 }
 
-/// When a track's time slot is taken: its weekdays, its time window, and the dates it runs between (its start, to the end
-/// of its last term; open-ended without terms, or with a term that comes back every year). None for a track without a time.
+/// When a track's time slot is taken: the days its pattern lands on, its time window, and the dates it runs between (its
+/// start, to the end of its last term; open-ended without terms, or with a term that comes back every year). None for a
+/// track without a time.
 struct Slot {
     weekdays: HashSet<u32>,
+    repeat: Repeat,
     from: i64,
     to: i64,
     runs_from: NaiveDate,
@@ -452,6 +611,7 @@ fn slot_of(conn: &Connection, track: &CalendarTrack) -> Result<Option<Slot>> {
     };
     Ok(Some(Slot {
         weekdays: track.weekdays.iter().copied().collect(),
+        repeat: track.repeat.clone(),
         from,
         to: from + duration,
         runs_from: parse_date(&track.start_date).unwrap_or_else(|_| local_today()),
@@ -459,9 +619,15 @@ fn slot_of(conn: &Connection, track: &CalendarTrack) -> Result<Option<Slot>> {
     }))
 }
 
+/// How far ahead two tracks' patterns are compared for a day they share (see ensure_no_clash): two years from the later
+/// of their starts, which is past where any two patterns allowed here come round together again.
+const CLASH_LOOKAHEAD_DAYS: i64 = 731;
+
 /// Refuses a track whose time window would clash with another active track's: overlapping times (back to back is fine) on
-/// a weekday they share, while both are running. Checked after a change is written, inside its transaction, so a clash
-/// rolls the change back. (A make-up day from an included holiday set isn't counted: it's a one-off, not the schedule.)
+/// a day both their patterns land on, while both are running. The days are worked out, not read off the weekdays: "every
+/// other day" and "Mondays" share a day sooner or later, while two every-other-week tracks on opposite weeks never do.
+/// Checked after a change is written, inside its transaction, so a clash rolls the change back. (A make-up day from an
+/// included holiday set isn't counted: it's a one-off, not the schedule. Nor are days a holiday set takes out.)
 fn ensure_no_clash(conn: &Connection, track_id: i64) -> Result<()> {
     let track = load_track(conn, track_id)?;
     let Some(mine) = slot_of(conn, &track)? else { return Ok(()) };
@@ -475,16 +641,27 @@ fn ensure_no_clash(conn: &Connection, track_id: i64) -> Result<()> {
     for other in others {
         let Some(theirs) = slot_of(conn, &other)? else { continue };
         let times_overlap = mine.from < theirs.to && theirs.from < mine.to;
-        let shared_day = mine.weekdays.intersection(&theirs.weekdays).next().is_some();
-        let both_running = theirs.runs_to.map_or(true, |end| mine.runs_from <= end) && mine.runs_to.map_or(true, |end| theirs.runs_from <= end);
-        if times_overlap && shared_day && both_running {
-            let days: Vec<&str> = WEEKDAY_NAMES.iter().enumerate().filter(|(i, _)| theirs.weekdays.contains(&(*i as u32 + 1))).map(|(_, n)| *n).collect();
+        if !times_overlap {
+            continue;
+        }
+        // The days both are running on: from the later start, to the earlier end (or as far as is looked).
+        let first = mine.runs_from.max(theirs.runs_from);
+        let mut last = first + Duration::days(CLASH_LOOKAHEAD_DAYS);
+        for end in [mine.runs_to, theirs.runs_to].into_iter().flatten() {
+            last = last.min(end);
+        }
+        let shared_day = first
+            .iter_days()
+            .take_while(|d| *d <= last)
+            .find(|d| mine.repeat.lands_on(mine.runs_from, &mine.weekdays, *d) && theirs.repeat.lands_on(theirs.runs_from, &theirs.weekdays, *d));
+        if let Some(day) = shared_day {
             return Err(invalid(format!(
-                "That time clashes with \"{}\" ({} {}–{}). Pick another time or other days.",
+                "That time clashes with \"{}\" ({} {}–{}): both are on {}. Pick another time or other days.",
                 other.name,
-                days.join("/"),
+                theirs.repeat.label(&other.weekdays),
                 fmt_time(theirs.from),
                 fmt_time(theirs.to),
+                day.format("%a, %b %-d"),
             )));
         }
     }
@@ -521,10 +698,11 @@ pub fn create_calendar_track(db_path: &str, input: &TrackInput) -> Result<i64> {
     let tx = conn.transaction()?;
     ensure_name_free(&tx, &t.name, None)?;
     tx.execute(
-        "INSERT INTO CalendarTracks (name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, created_at, time_start, time_duration)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO CalendarTracks (name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, created_at, time_start, time_duration,
+             repeat_kind, repeat_every, repeat_ordinal)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
         params![t.name, t.drive, t.mode, input.loop_entries as i64, input.source_drive_sequence as i64, t.weekdays, t.start, now_stamp(),
-            t.time.map(|(s, _)| s), t.time.map(|(_, d)| d)],
+            t.time.map(|(s, _)| s), t.time.map(|(_, d)| d), t.repeat.kind, t.repeat.every, t.repeat.ordinal],
     )?;
     let id = tx.last_insert_rowid();
     ensure_no_clash(&tx, id)?;
@@ -545,11 +723,12 @@ pub fn update_calendar_track(db_path: &str, id: i64, input: &TrackInput) -> Resu
     tx.execute(
         "UPDATE CalendarTracks SET name = ?1, drive = ?2, advance_mode = ?3, loop_entries = ?4, source_drive_sequence = ?5,
              weekdays = ?6, start_date = ?7, time_start = ?8, time_duration = ?9,
+             repeat_kind = ?11, repeat_every = ?12, repeat_ordinal = ?13,
              previous_start_date = CASE WHEN start_date = ?7 THEN previous_start_date END,
              previous_cycle_offset = CASE WHEN start_date = ?7 THEN previous_cycle_offset END
          WHERE id = ?10",
         params![t.name, t.drive, t.mode, input.loop_entries as i64, input.source_drive_sequence as i64, t.weekdays, t.start,
-            t.time.map(|(s, _)| s), t.time.map(|(_, d)| d), id],
+            t.time.map(|(s, _)| s), t.time.map(|(_, d)| d), id, t.repeat.kind, t.repeat.every, t.repeat.ordinal],
     )?;
     ensure_no_clash(&tx, id)?;
     tx.commit()
@@ -580,6 +759,20 @@ pub fn delete_calendar_track(db_path: &str, id: i64) -> Result<()> {
 
 /// The longest an entry's description can be, in characters.
 const MAX_DESCRIPTION: usize = 2000;
+
+/// The longest a track's name can be, and a task's or folder's (or the name a video is given on a track). The windows
+/// they're typed in stop at the same lengths (TrackModal.tsx, TaskModal.tsx).
+pub const MAX_TRACK_NAME: usize = 80;
+pub const MAX_ENTRY_LABEL: usize = 200;
+
+/// A task's or folder's name, checked: trimmed, and no longer than MAX_ENTRY_LABEL.
+fn clean_label(label: &str) -> Result<&str> {
+    let label = label.trim();
+    if label.chars().count() > MAX_ENTRY_LABEL {
+        return Err(invalid(format!("A name can be at most {MAX_ENTRY_LABEL} characters.")));
+    }
+    Ok(label)
+}
 
 /// An entry's priority: 0 none, 1 low, 2 medium, 3 high. Only a marker: it doesn't change the entry's place or day.
 pub const MAX_PRIORITY: i64 = 3;
@@ -617,7 +810,7 @@ pub fn add_calendar_entry(db_path: &str, track_id: i64, video_id: Option<&str>, 
     let conn = Connection::open(db_path)?;
     let track = load_track(&conn, track_id)?;
     let video_id = video_id.map(str::trim).filter(|v| !v.is_empty());
-    let label = label.trim();
+    let label = clean_label(label)?;
     if video_id.is_none() && label.is_empty() {
         return Err(invalid("An entry without a video needs a label."));
     }
@@ -646,6 +839,71 @@ pub fn add_calendar_entry(db_path: &str, track_id: i64, video_id: Option<&str>, 
     Ok(conn.last_insert_rowid())
 }
 
+/// Adds a note (db/notes.rs) to the end of a track, as an entry named after it. A track holds a note once, and one that
+/// follows a Drive's sequence holds only that sequence's videos.
+pub fn add_calendar_note_entry(db_path: &str, track_id: i64, note_id: &str, extras: &EntryExtras) -> Result<i64> {
+    let EntryExtras { icon, description, priority } = clean_extras(extras)?;
+    let conn = Connection::open(db_path)?;
+    let track = load_track(&conn, track_id)?;
+    if track.source_drive_sequence {
+        return Err(invalid("A track that follows a Drive's sequence only holds that sequence's videos."));
+    }
+    if super::notes::get_note(db_path, note_id)?.is_none() {
+        return Err(invalid("That note doesn't exist any more."));
+    }
+    let already: bool = conn
+        .query_row("SELECT 1 FROM CalendarEntries WHERE track_id = ?1 AND note_id = ?2", params![track_id, note_id], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if already {
+        return Err(invalid("That note is already in this track."));
+    }
+    let position = next_top_position(&conn, track_id)?;
+    conn.execute(
+        "INSERT INTO CalendarEntries (track_id, note_id, label, position, icon, description, priority) VALUES (?1, ?2, '', ?3, ?4, ?5, ?6)",
+        params![track_id, note_id, position, icon, description, priority],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// Adds a workbook's notes (db/workbooks.rs) to the end of a track, in the workbook's order: a page a step, as the
+/// workbook is read. The ones already on the track are left where they are. Returns how many were added. A copy of the
+/// workbook as it is now: notes added to it later aren't added here. `from_page` (1 for the first) starts at that page
+/// and leaves out the ones before it: for a workbook someone's already partway through.
+pub fn add_calendar_workbook(db_path: &str, track_id: i64, workbook_id: &str, from_page: Option<usize>) -> Result<usize> {
+    let book = super::workbooks::get_workbook(db_path, workbook_id)?.ok_or_else(|| invalid("That workbook doesn't exist any more."))?;
+    let mut conn = Connection::open(db_path)?;
+    if load_track(&conn, track_id)?.source_drive_sequence {
+        return Err(invalid("A track that follows a Drive's sequence only holds that sequence's videos."));
+    }
+    if book.note_ids.is_empty() {
+        return Err(invalid(format!("\"{}\" has no notes yet.", book.title)));
+    }
+    let skip = from_page.unwrap_or(1).max(1) - 1;
+    if skip >= book.note_ids.len() {
+        return Err(invalid(format!("\"{}\" has no page {}.", book.title, skip + 1)));
+    }
+    let tx = conn.transaction()?;
+    let mut added = 0;
+    for note_id in &book.note_ids[skip..] {
+        let already: bool = tx
+            .query_row("SELECT 1 FROM CalendarEntries WHERE track_id = ?1 AND note_id = ?2", params![track_id, note_id], |_| Ok(()))
+            .optional()?
+            .is_some();
+        if already {
+            continue;
+        }
+        let position = next_top_position(&tx, track_id)?;
+        tx.execute(
+            "INSERT INTO CalendarEntries (track_id, note_id, label, position, workbook_id) VALUES (?1, ?2, '', ?3, ?4)",
+            params![track_id, note_id, position, book.id],
+        )?;
+        added += 1;
+    }
+    tx.commit()?;
+    Ok(added)
+}
+
 /// The position after a track's last top-level entry (not counting what's inside folders).
 fn next_top_position(conn: &Connection, track_id: i64) -> Result<i64> {
     conn.query_row(
@@ -664,7 +922,7 @@ pub fn add_calendar_folder(db_path: &str, track_id: i64, name: &str, extras: &En
     if load_track(&conn, track_id)?.source_drive_sequence {
         return Err(invalid("A track that follows a Drive's sequence takes its order from the sequence, so it has no folders."));
     }
-    let name = name.trim();
+    let name = clean_label(name)?;
     if name.is_empty() {
         return Err(invalid("A folder needs a name."));
     }
@@ -682,12 +940,14 @@ pub fn update_calendar_entry(db_path: &str, id: i64, label: &str, target_date: O
         Some(s) => Some(fmt_date(parse_date(s)?)),
         None => None,
     };
+    let label = clean_label(label)?;
     let conn = Connection::open(db_path)?;
-    let (video_id,): (Option<String>,) = conn
-        .query_row("SELECT video_id FROM CalendarEntries WHERE id = ?1", params![id], |r| Ok((r.get(0)?,)))
+    let (video_id, note_id): (Option<String>, Option<String>) = conn
+        .query_row("SELECT video_id, note_id FROM CalendarEntries WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?)))
         .optional()?
         .ok_or_else(|| invalid("That entry doesn't exist any more."))?;
-    if video_id.is_none() && label.trim().is_empty() {
+    // A video or a note is named after itself without one.
+    if video_id.is_none() && note_id.is_none() && label.trim().is_empty() {
         return Err(invalid("An entry without a video needs a label."));
     }
     conn.execute(
@@ -768,7 +1028,7 @@ pub fn set_calendar_entry_layout(db_path: &str, track_id: i64, layout: &[(i64, O
     let mut conn = Connection::open(db_path)?;
     let tx = conn.transaction()?;
     if load_track(&tx, track_id)?.source_drive_sequence {
-        return Err(invalid("This track follows its Drive's sequence: reorder the sequence instead."));
+        return Err(invalid("This track follows its Drive's sequence: Reorder the sequence instead."));
     }
     let is_folder: HashMap<i64, bool> = {
         let mut stmt = tx.prepare("SELECT id, is_folder FROM CalendarEntries WHERE track_id = ?1")?;
@@ -818,7 +1078,7 @@ pub fn set_calendar_completion(db_path: &str, track_id: i64, entry_id: Option<i6
         let mut stmt = conn.prepare("SELECT id FROM CalendarEntries WHERE folder_id = ?1")?;
         let inside: Vec<i64> = stmt.query_map(params![entry_id], |r| r.get(0))?.collect::<Result<_>>()?;
         if inside.is_empty() {
-            return Err(invalid("This folder is empty: drag videos or tasks into it first."));
+            return Err(invalid("This folder is empty: Drag videos or tasks into it first."));
         }
         inside
     } else {
@@ -1116,6 +1376,7 @@ impl SetDates {
 struct Schedule {
     start: NaiveDate,
     weekdays: HashSet<u32>,
+    repeat: Repeat,
     /// (start, end, annual)
     terms: Vec<(NaiveDate, NaiveDate, bool)>,
     exclude: Vec<SetDates>,
@@ -1152,6 +1413,7 @@ impl Schedule {
         Ok(Schedule {
             start: parse_date(&track.start_date).unwrap_or_else(|_| local_today()),
             weekdays: track.weekdays.iter().copied().collect(),
+            repeat: track.repeat.clone(),
             terms,
             exclude,
             include,
@@ -1180,7 +1442,7 @@ impl Schedule {
         if self.include.iter().any(|s| s.contains(d)) {
             return true;
         }
-        self.weekdays.contains(&d.weekday().number_from_monday()) && self.in_terms(d) && !self.exclude.iter().any(|s| s.contains(d))
+        self.repeat.lands_on(self.start, &self.weekdays, d) && self.in_terms(d) && !self.exclude.iter().any(|s| s.contains(d))
     }
 
     /// The schedule's days, in order, from its start.
@@ -1197,8 +1459,13 @@ pub struct EntryView {
     /// 0 for a video in a Drive's sequence that has no row of its own yet.
     pub id: i64,
     pub video_id: Option<String>,
+    /// A note's entry: the note (db/notes.rs). Never with a video.
+    pub note_id: Option<String>,
+    /// The workbook the note was added as a page of (add_calendar_workbook), which it opens in. None for a note added
+    /// on its own.
+    pub workbook_id: Option<String>,
     pub label: String,
-    /// What to call it: its label, else its video's title, else its video's id.
+    /// What to call it: its label, else its video's title (or id), else its note's title ("Untitled" without one).
     pub title: String,
     pub target_date: Option<String>,
     /// Its icon, a name from the app's own set ("palm-tree"); "" for the default (a video's, or a task's).
@@ -1278,7 +1545,7 @@ fn load_entries(conn: &Connection, track: &CalendarTrack) -> Result<Vec<EntryVie
     let view = |video_id: Option<String>, video_title: Option<String>, (id, label, target_date, icon, description, priority): Own| {
         let title = if !label.is_empty() { label.clone() } else { video_title.or_else(|| video_id.clone()).unwrap_or_default() };
         EntryView {
-            id, video_id, label, title, target_date, icon, description, priority,
+            id, video_id, note_id: None, workbook_id: None, label, title, target_date, icon, description, priority,
             done: false, in_progress: false, due_date: None, is_folder: false, folder_id: None, place: 0,
         }
     };
@@ -1293,7 +1560,10 @@ fn load_entries(conn: &Connection, track: &CalendarTrack) -> Result<Vec<EntryVie
     };
     if !track.source_drive_sequence {
         let mut stmt = conn.prepare(
-            "SELECT e.id, e.video_id, e.label, v.title, e.target_date, e.icon, e.description, e.priority, e.is_folder, e.folder_id
+            "SELECT e.id, e.video_id, e.label, v.title, e.target_date, e.icon, e.description, e.priority, e.is_folder, e.folder_id,
+                    e.note_id,
+                    COALESCE((SELECT title FROM Notes WHERE id = e.note_id), (SELECT title FROM PersonalNotes WHERE id = e.note_id)),
+                    e.workbook_id
              FROM CalendarEntries e LEFT JOIN Videos v ON v.video_id = e.video_id
              WHERE e.track_id = ?1
              ORDER BY e.position IS NULL, e.position, e.id",
@@ -1303,6 +1573,11 @@ fn load_entries(conn: &Connection, track: &CalendarTrack) -> Result<Vec<EntryVie
                 let mut e = view(r.get(1)?, r.get(3)?, (r.get(0)?, r.get(2)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?));
                 e.is_folder = r.get::<_, i64>(8)? != 0;
                 e.folder_id = r.get(9)?;
+                e.note_id = r.get(10)?;
+                e.workbook_id = r.get(12)?;
+                if e.note_id.is_some() && e.label.is_empty() {
+                    e.title = super::notes::note_title(&r.get::<_, Option<String>>(11)?.unwrap_or_default());
+                }
                 Ok(e)
             })?
             .collect::<Result<_>>()?;
@@ -1509,6 +1784,9 @@ pub struct DayItem {
     /// 0 for a video in a Drive's sequence with no row of its own yet (it's named by `video_id` then).
     pub entry_id: i64,
     pub video_id: Option<String>,
+    /// A note's entry: the note, to open it from its chip; and the workbook it's a page of, if it was added as one.
+    pub note_id: Option<String>,
+    pub workbook_id: Option<String>,
     pub title: String,
     /// Its icon, description and priority (see EntryView).
     pub icon: String,
@@ -1573,6 +1851,8 @@ fn track_days(conn: &Connection, track: &CalendarTrack, from: NaiveDate, to: Nai
             date: fmt_date(date),
             entry_id: e.id,
             video_id: e.video_id.clone(),
+            note_id: e.note_id.clone(),
+            workbook_id: e.workbook_id.clone(),
             title: e.title.clone(),
             icon: e.icon.clone(),
             description: e.description.clone(),
@@ -1790,6 +2070,9 @@ pub struct TrackPack {
     pub loop_entries: bool,
     pub source_drive_sequence: bool,
     pub weekdays: Vec<u32>,
+    /// How its days repeat; every week (what an older pack's tracks all did) when the pack doesn't say.
+    #[serde(default)]
+    pub repeat: Repeat,
     pub start_date: String,
     pub archived: bool,
     pub created_at: String,
@@ -1825,6 +2108,12 @@ pub struct EntryPack {
     /// The folder it's in, as that folder's index in the track's `entries`.
     #[serde(default)]
     pub folder: Option<usize>,
+    /// A note's entry: the note's id, and its title when it was exported (the task's name if the note isn't there when
+    /// it's imported, as a personal note never is).
+    #[serde(default)]
+    pub note_id: Option<String>,
+    #[serde(default)]
+    pub note_title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1887,6 +2176,8 @@ pub fn export_calendar_tracks(conn: &Connection, progress: bool) -> Result<Vec<T
                 folder: e.folder_id.and_then(|f| index_of.get(&f).copied()),
                 video_title: if e.video_id.is_some() { e.title.clone() } else { String::new() },
                 video_id: e.video_id,
+                note_title: if e.note_id.is_some() { e.title.clone() } else { String::new() },
+                note_id: e.note_id,
                 label: e.label,
                 target_date: e.target_date,
                 icon: e.icon,
@@ -1924,6 +2215,7 @@ pub fn export_calendar_tracks(conn: &Connection, progress: bool) -> Result<Vec<T
             loop_entries: track.loop_entries,
             source_drive_sequence: track.source_drive_sequence,
             weekdays: track.weekdays,
+            repeat: track.repeat,
             start_date: track.start_date,
             archived: track.archived,
             created_at: track.created_at,
@@ -1959,6 +2251,7 @@ pub fn import_calendar_track(conn: &Connection, p: &TrackPack) -> Result<TrackIm
         loop_entries: p.loop_entries,
         source_drive_sequence: p.source_drive_sequence,
         weekdays: p.weekdays.clone(),
+        repeat: p.repeat.clone(),
         start_date: Some(p.start_date.clone()),
         time_start: p.time_start,
         time_duration: p.time_duration,
@@ -1978,6 +2271,13 @@ pub fn import_calendar_track(conn: &Connection, p: &TrackPack) -> Result<TrackIm
     let has_video = |id: &str| -> Result<bool> {
         Ok(conn.query_row("SELECT 1 FROM Videos WHERE video_id = ?1", params![id], |_| Ok(())).optional()?.is_some())
     };
+    let has_note = |id: &str| -> Result<bool> {
+        Ok(conn
+            .query_row("SELECT 1 FROM Notes WHERE id = ?1 UNION ALL SELECT 1 FROM PersonalNotes WHERE id = ?1", params![id], |_| Ok(()))
+            .optional()?
+            .is_some())
+    };
+    let mut seen_notes: HashSet<String> = HashSet::new();
     let follows = p.source_drive_sequence
         && conn.query_row("SELECT 1 FROM DriveSequence WHERE drive = ?1 LIMIT 1", params![t.drive], |_| Ok(())).optional()?.is_some();
 
@@ -1985,10 +2285,11 @@ pub fn import_calendar_track(conn: &Connection, p: &TrackPack) -> Result<TrackIm
     let added = (|| -> Result<std::result::Result<(), String>> {
         let created = if p.created_at.trim().is_empty() { now_stamp() } else { p.created_at.clone() };
         conn.execute(
-            "INSERT INTO CalendarTracks (name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, archived, created_at, time_start, time_duration, cycle_offset)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO CalendarTracks (name, drive, advance_mode, loop_entries, source_drive_sequence, weekdays, start_date, archived, created_at, time_start, time_duration, cycle_offset,
+                 repeat_kind, repeat_every, repeat_ordinal)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![t.name, t.drive, t.mode, p.loop_entries as i64, follows as i64, t.weekdays, t.start, p.archived as i64, created,
-                t.time.map(|(s, _)| s), t.time.map(|(_, d)| d), p.cycle_offset.max(0)],
+                t.time.map(|(s, _)| s), t.time.map(|(_, d)| d), p.cycle_offset.max(0), t.repeat.kind, t.repeat.every, t.repeat.ordinal],
         )?;
         let track_id = conn.last_insert_rowid();
         // Positions count within each group: the top level, and each folder (by its new id).
@@ -2025,19 +2326,34 @@ pub fn import_calendar_track(conn: &Connection, p: &TrackPack) -> Result<TrackIm
             if follows && !present {
                 continue;
             }
-            let (video_id, former, label) = match (&e.video_id, present) {
+            let (video_id, former, mut label) = match (&e.video_id, present) {
                 (Some(v), true) => (Some(v.clone()), None, e.label.clone()),
                 // Not in this library: a task with the video's name, remembering the video.
                 (Some(v), false) => (None, Some(v.clone()), if e.label.is_empty() { if e.video_title.is_empty() { v.clone() } else { e.video_title.clone() } } else { e.label.clone() }),
                 (None, _) => (None, None, e.label.clone()),
             };
+            // A note the same way: its own when it's here (the pack's shared notes arrive before its tracks), else a task
+            // with its name that remembers it.
+            let (note_id, former_note) = match &e.note_id {
+                Some(n) if video_id.is_none() && former.is_none() => {
+                    if has_note(n)? && seen_notes.insert(n.clone()) {
+                        (Some(n.clone()), None)
+                    } else {
+                        if label.is_empty() {
+                            label = super::notes::note_title(&e.note_title);
+                        }
+                        (None, Some(n.clone()))
+                    }
+                }
+                _ => (None, None),
+            };
             let target = e.target_date.as_deref().and_then(|d| parse_date(d).ok()).map(fmt_date);
             let position = next_position.entry(folder_id).or_insert(0);
             *position += 1;
             conn.execute(
-                "INSERT INTO CalendarEntries (track_id, video_id, label, position, target_date, icon, description, priority, former_video_id, folder_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![track_id, video_id, label, *position, target, extras.icon, extras.description, extras.priority, former, folder_id],
+                "INSERT INTO CalendarEntries (track_id, video_id, label, position, target_date, icon, description, priority, former_video_id, folder_id, note_id, former_note_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                params![track_id, video_id, label, *position, target, extras.icon, extras.description, extras.priority, former, folder_id, note_id, former_note],
             )?;
             let entry_id = conn.last_insert_rowid();
             for (cycle, at) in &e.completions {
@@ -2172,6 +2488,7 @@ mod tests {
         // Each its own name: names are unique among active tracks.
         static NEXT: AtomicU64 = AtomicU64::new(0);
         create_calendar_track(path, &TrackInput {
+            repeat: Default::default(),
             name: format!("Track {}", NEXT.fetch_add(1, Ordering::SeqCst)),
             drive: String::new(),
             advance_mode: mode.into(),
@@ -2183,6 +2500,107 @@ mod tests {
             time_duration: None,
         })
         .unwrap()
+    }
+
+    #[test]
+    fn names_have_a_longest_length() {
+        let path = temp_db();
+        let t = track(&path, "completion", &[], "2026-10-05", false);
+        let long = "x".repeat(MAX_ENTRY_LABEL + 1);
+        assert!(add_calendar_entry(&path, t, None, &long, &EntryExtras::default()).is_err());
+        assert!(add_calendar_folder(&path, t, &long, &EntryExtras::default()).is_err());
+        let task = add_calendar_entry(&path, t, None, &"x".repeat(MAX_ENTRY_LABEL), &EntryExtras::default()).unwrap();
+        assert!(update_calendar_entry(&path, task, &long, None, &EntryExtras::default()).is_err());
+        let named = |name: String| TrackInput {
+            repeat: Default::default(),
+            name,
+            drive: String::new(),
+            advance_mode: "completion".into(),
+            loop_entries: false,
+            source_drive_sequence: false,
+            weekdays: vec![],
+            start_date: Some("2026-10-05".into()),
+            time_start: None,
+            time_duration: None,
+        };
+        assert!(create_calendar_track(&path, &named("y".repeat(MAX_TRACK_NAME + 1))).is_err());
+        assert!(create_calendar_track(&path, &named("y".repeat(MAX_TRACK_NAME))).is_ok());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_workbook_goes_onto_a_track_whole_or_from_a_page_on() {
+        let path = temp_db();
+        let book = db::create_workbook(&path, false, "Course").unwrap();
+        let ids: Vec<String> = ["One", "Two", "Three"].iter().map(|title| {
+            let n = db::create_note(&path, false, title, "", &[]).unwrap();
+            db::add_note_to_workbook(&path, &book.id, &n.id).unwrap();
+            n.id
+        }).collect();
+        let notes_on = |t: i64| -> Vec<String> {
+            resolve_track(&path, t, d("2026-10-08")).unwrap().entries.into_iter().filter_map(|e| e.note_id).collect()
+        };
+        let books_on = |t: i64| -> Vec<Option<String>> {
+            resolve_track(&path, t, d("2026-10-08")).unwrap().entries.into_iter().map(|e| e.workbook_id).collect()
+        };
+
+        // From page 2: the first page is left out, and the rest are in the workbook's order.
+        let later = track(&path, "completion", &[], "2026-10-05", false);
+        assert_eq!(add_calendar_workbook(&path, later, &book.id, Some(2)).unwrap(), 2);
+        assert_eq!(notes_on(later), ids[1..].to_vec());
+        // The whole workbook after that only adds what isn't there yet.
+        assert_eq!(add_calendar_workbook(&path, later, &book.id, None).unwrap(), 1);
+        assert_eq!(notes_on(later), vec![ids[1].clone(), ids[2].clone(), ids[0].clone()]);
+        assert!(add_calendar_workbook(&path, later, &book.id, Some(4)).is_err(), "there is no page 4");
+
+        let whole = track(&path, "completion", &[], "2026-10-05", false);
+        assert_eq!(add_calendar_workbook(&path, whole, &book.id, None).unwrap(), 3);
+        assert_eq!(notes_on(whole), ids);
+        // Each step remembers the workbook it's a page of (a note added on its own doesn't), until the workbook goes.
+        let alone = db::create_note(&path, false, "Alone", "", &[]).unwrap();
+        add_calendar_note_entry(&path, whole, &alone.id, &EntryExtras::default()).unwrap();
+        assert_eq!(books_on(whole), vec![Some(book.id.clone()), Some(book.id.clone()), Some(book.id.clone()), None]);
+        db::delete_workbook(&path, &book.id).unwrap();
+        assert_eq!(books_on(whole), vec![None, None, None, None]);
+        assert_eq!(notes_on(whole).len(), 4, "the steps stay: only the workbook is gone");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_note_on_a_track_follows_the_note() {
+        let path = temp_db();
+        let t = track(&path, "completion", &[], "2026-10-05", false);
+        let note = db::create_note(&path, false, "Das Perfekt", "", &[]).unwrap();
+        let entry = add_calendar_note_entry(&path, t, &note.id, &EntryExtras::default()).unwrap();
+        assert!(add_calendar_note_entry(&path, t, &note.id, &EntryExtras::default()).is_err(), "a track holds a note once");
+        let view = |path: &str| resolve_track(path, t, d("2026-10-08")).unwrap().entries.into_iter().find(|e| e.id == entry).unwrap();
+        let e = view(&path);
+        assert_eq!((e.note_id.as_deref(), e.title.as_str(), e.label.as_str()), (Some(note.id.as_str()), "Das Perfekt", ""));
+
+        // Its title follows the note's, and moving the note to shared keeps its place.
+        db::update_note(&path, &note.id, "Perfekt with haben", "", &[]).unwrap();
+        db::set_note_shared(&path, &note.id, true).unwrap();
+        let e = view(&path);
+        assert_eq!((e.note_id.as_deref(), e.title.as_str(), e.label.as_str()), (Some(note.id.as_str()), "Perfekt with haben", ""));
+
+        // Deleted, it's a task by its name; restored, it's the note again.
+        let (gone, _) = db::delete_note_recorded(&path, &note.id).unwrap().unwrap();
+        let e = view(&path);
+        assert_eq!((e.note_id, e.title.as_str()), (None, "Perfekt with haben"));
+        db::restore_note(&path, &gone).unwrap();
+        let e = view(&path);
+        assert_eq!((e.note_id.as_deref(), e.label.as_str()), (Some(note.id.as_str()), ""));
+        // An entry needs no label of its own while it's a note.
+        update_calendar_entry(&path, entry, "", None, &EntryExtras::default()).unwrap();
+
+        // In a pack, a note this workspace doesn't have arrives as a task named after it.
+        let packs = export_calendar_tracks(&rusqlite::Connection::open(&path).unwrap(), false).unwrap();
+        let other = temp_db();
+        let conn = rusqlite::Connection::open(&other).unwrap();
+        assert_eq!(import_calendar_track(&conn, &packs[0]).unwrap(), TrackImport::Added);
+        let (label, former): (String, Option<String>) =
+            conn.query_row("SELECT label, former_note_id FROM CalendarEntries", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        assert_eq!((label.as_str(), former.as_deref()), ("Perfekt with haben", Some(note.id.as_str())));
     }
 
     fn tasks(path: &str, track: i64, n: usize) -> Vec<i64> {
@@ -2489,6 +2907,7 @@ mod tests {
     fn track_names_are_unique_among_active_tracks() {
         let p = temp_db();
         let input = |name: &str| TrackInput {
+            repeat: Default::default(),
             name: name.into(),
             drive: String::new(),
             advance_mode: "completion".into(),
@@ -2520,6 +2939,7 @@ mod tests {
         let p = temp_db();
         // Tue/Thu 9:00-10:30 from Tuesday 2026-09-01, three entries (one with a comma and a long description).
         let class = create_calendar_track(&p, &TrackInput {
+            repeat: Default::default(),
             name: "Data Structures".into(),
             drive: String::new(),
             advance_mode: "calendar".into(),
@@ -2659,6 +3079,7 @@ mod tests {
 
         // A new start date set by hand replaces what the Start over set: nothing to undo then.
         let input = TrackInput {
+            repeat: Default::default(),
             name: get_calendar_track(&p, class, d("2026-09-24")).unwrap().track.name,
             drive: String::new(),
             advance_mode: "calendar".into(),
@@ -2677,6 +3098,7 @@ mod tests {
     fn time_windows_cannot_clash() {
         let p = temp_db();
         let timed = |name: &str, days: &[u32], start: i64, duration: i64| TrackInput {
+            repeat: Default::default(),
             name: name.into(),
             drive: String::new(),
             advance_mode: "calendar".into(),
@@ -2714,6 +3136,128 @@ mod tests {
         assert!(create_calendar_track(&p, &timed("Late", &[7], 23 * 60, 90)).is_err());
     }
 
+    fn every(kind: &str, every: i64) -> Repeat {
+        Repeat { kind: kind.into(), every, ordinal: 1 }
+    }
+
+    /// A track that follows dates, with a pattern and (optionally) a time: what `track` makes, plus those.
+    fn repeating(name: &str, weekdays: &[u32], start: &str, repeat: Repeat, time_start: Option<i64>) -> TrackInput {
+        TrackInput {
+            repeat,
+            name: name.into(),
+            drive: String::new(),
+            advance_mode: "calendar".into(),
+            loop_entries: false,
+            source_drive_sequence: false,
+            weekdays: weekdays.to_vec(),
+            start_date: Some(start.into()),
+            time_start,
+            time_duration: time_start.map(|_| 60),
+        }
+    }
+
+    #[test]
+    fn a_pattern_decides_which_days_a_track_is_on() {
+        let p = temp_db();
+        let due = |t: i64| -> Vec<String> {
+            resolve_track(&p, t, d("2026-09-01")).unwrap().entries.iter().map(|e| e.due_date.clone().unwrap()).collect()
+        };
+        // Mon/Wed/Fri every other week, starting on a Wednesday: the rest of that week, then the week after next.
+        let t = create_calendar_track(&p, &repeating("Lab", &[1, 3, 5], "2026-09-09", every("weekly", 2), None)).unwrap();
+        tasks(&p, t, 4);
+        assert_eq!(due(t), vec!["2026-09-09", "2026-09-11", "2026-09-21", "2026-09-23"]);
+
+        // Every other day from a Tuesday: weekends and all, and whatever weekdays came with it aren't kept.
+        let t = create_calendar_track(&p, &repeating("Run", &[1], "2026-09-08", every("interval", 2), None)).unwrap();
+        tasks(&p, t, 4);
+        assert_eq!(due(t), vec!["2026-09-08", "2026-09-10", "2026-09-12", "2026-09-14"]);
+        assert!(load_track(&Connection::open(&p).unwrap(), t).unwrap().weekdays.is_empty());
+        // A holiday on one of its days is skipped, and the rest keep to the same rhythm.
+        let off = create_calendar_holiday_set(&p, "Days off", false).unwrap();
+        add_calendar_holiday_date(&p, off, "2026-09-10", "Rest").unwrap();
+        set_calendar_track_holiday_rule(&p, t, off, Some("exclude")).unwrap();
+        assert_eq!(due(t), vec!["2026-09-08", "2026-09-12", "2026-09-14", "2026-09-16"]);
+
+        // The first Monday of each month, and the last.
+        let t = create_calendar_track(&p, &repeating("Review", &[1], "2026-09-08", Repeat { kind: "monthly".into(), every: 1, ordinal: 1 }, None)).unwrap();
+        tasks(&p, t, 3);
+        assert_eq!(due(t), vec!["2026-10-05", "2026-11-02", "2026-12-07"]);
+        let t = create_calendar_track(&p, &repeating("Wrap-up", &[1], "2026-09-01", Repeat { kind: "monthly".into(), every: 7, ordinal: 5 }, None)).unwrap();
+        tasks(&p, t, 3);
+        assert_eq!(due(t), vec!["2026-09-28", "2026-10-26", "2026-11-30"]);
+        // Only what its kind uses is kept.
+        assert_eq!(load_track(&Connection::open(&p).unwrap(), t).unwrap().repeat, Repeat { kind: "monthly".into(), every: 1, ordinal: 5 });
+
+        // A pattern travels with its track in a pack.
+        let packs = export_calendar_tracks(&Connection::open(&p).unwrap(), false).unwrap();
+        let other = temp_db();
+        let conn = Connection::open(&other).unwrap();
+        for pack in &packs {
+            assert_eq!(import_calendar_track(&conn, pack).unwrap(), TrackImport::Added);
+        }
+        let kept: Vec<(String, String, i64, i64)> = conn
+            .prepare("SELECT name, repeat_kind, repeat_every, repeat_ordinal FROM CalendarTracks ORDER BY name")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(kept, vec![
+            ("Lab".to_string(), "weekly".to_string(), 2, 1),
+            ("Review".to_string(), "monthly".to_string(), 1, 1),
+            ("Run".to_string(), "interval".to_string(), 2, 1),
+            ("Wrap-up".to_string(), "monthly".to_string(), 1, 5),
+        ]);
+    }
+
+    #[test]
+    fn a_pattern_has_to_make_sense() {
+        let p = temp_db();
+        let refused = |weekdays: &[u32], repeat: Repeat| create_calendar_track(&p, &repeating("Odd", weekdays, "2026-09-01", repeat, None)).is_err();
+        assert!(refused(&[1], every("yearly", 1)));
+        assert!(refused(&[1], every("weekly", 0)));
+        assert!(refused(&[1], every("weekly", 53)));
+        assert!(refused(&[], every("weekly", 2)));
+        assert!(refused(&[], every("interval", 0)));
+        assert!(refused(&[], every("interval", 366)));
+        assert!(refused(&[], Repeat { kind: "monthly".into(), every: 1, ordinal: 1 }));
+        assert!(refused(&[1], Repeat { kind: "monthly".into(), every: 1, ordinal: 6 }));
+        // A track that isn't on dates has no pattern, whatever came with it.
+        let t = create_calendar_track(&p, &TrackInput { advance_mode: "completion".into(), ..repeating("Reading", &[1], "2026-09-01", every("interval", 3), None) }).unwrap();
+        assert_eq!(load_track(&Connection::open(&p).unwrap(), t).unwrap().repeat, Repeat::default());
+
+        assert_eq!(Repeat::default().label(&[1, 3, 5]), "Mon/Wed/Fri");
+        assert_eq!(every("weekly", 2).label(&[2, 4]), "Tue/Thu every other week");
+        assert_eq!(every("weekly", 3).label(&[2, 4]), "Tue/Thu every 3 weeks");
+        assert_eq!(every("interval", 1).label(&[]), "every day");
+        assert_eq!(every("interval", 2).label(&[]), "every other day");
+        assert_eq!(every("interval", 14).label(&[]), "every 14 days");
+        assert_eq!(Repeat { kind: "monthly".into(), every: 1, ordinal: 5 }.label(&[5]), "last Fri of the month");
+    }
+
+    #[test]
+    fn patterns_clash_only_on_a_day_they_share() {
+        let p = temp_db();
+        // Mondays at 9:00, every other week from the 7th.
+        create_calendar_track(&p, &repeating("Seminar", &[1], "2026-09-07", every("weekly", 2), Some(9 * 60))).unwrap();
+        // The Mondays in between are free at that time...
+        create_calendar_track(&p, &repeating("Tutoring", &[1], "2026-09-14", every("weekly", 2), Some(9 * 60))).unwrap();
+        // ...but a third on the same weeks as the first isn't.
+        let err = create_calendar_track(&p, &repeating("Club", &[1], "2026-09-21", every("weekly", 2), Some(9 * 60))).unwrap_err().to_string();
+        assert!(err.contains("Seminar") && err.contains("Mon every other week") && err.contains("Mon, Sep 21"), "{err}");
+
+        // Mondays at 13:00, every other week from the 7th.
+        create_calendar_track(&p, &repeating("Lecture", &[1], "2026-09-07", every("weekly", 2), Some(13 * 60))).unwrap();
+        // Every third day from Tuesday the 8th comes round to one of those Mondays four weeks on.
+        let err = create_calendar_track(&p, &repeating("Swim", &[], "2026-09-08", every("interval", 3), Some(13 * 60))).unwrap_err().to_string();
+        assert!(err.contains("Lecture") && err.contains("Mon, Oct 5"), "{err}");
+        // Every other day from that Tuesday never does: it's always an odd number of days after the first Monday.
+        create_calendar_track(&p, &repeating("Walk", &[], "2026-09-08", every("interval", 2), Some(13 * 60))).unwrap();
+        // The first Monday of the month, at that time, meets the lecture in October.
+        let err = create_calendar_track(&p, &repeating("Check-in", &[1], "2026-09-08", Repeat { kind: "monthly".into(), every: 1, ordinal: 1 }, Some(13 * 60))).unwrap_err().to_string();
+        assert!(err.contains("Mon, Oct 5"), "{err}");
+    }
+
     #[test]
     fn days_list_every_cycle_and_undated_completions() {
         let p = temp_db();
@@ -2747,6 +3291,7 @@ mod tests {
         }
         db::add_to_drive_sequence(&p, ":CS-DSA", &["b".into(), "a".into(), "c".into()]).unwrap();
         let t = create_calendar_track(&p, &TrackInput {
+            repeat: Default::default(),
             name: "DSA".into(),
             drive: ":cs-dsa".into(),
             advance_mode: "completion".into(),

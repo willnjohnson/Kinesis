@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { requestLog } from './lib/logs';
 import {
     getTranscript, getVideoHandle, getDisplaySettings, setDisplaySettings,
     getApiKey, getKeyStatus, getSetting, openExternalUrl,
@@ -14,7 +15,8 @@ import { useBulkAssign } from "./hooks/useBulkAssign";
 import { TrashModal } from "./components/TrashModal";
 import { DriveManagerModal } from "./components/drive-manager/DriveManagerModal";
 import { driveSegmentLabel, formatBytes, parseTagList } from "./lib/utils";
-import { resolveEntry } from "./lib/glossary";
+import { ALL_TERMS, resolveEntry, studyTerms } from "./lib/glossary";
+import { driveLabel } from "./components/DriveTreeList";
 import { setInternalLinkHandler, linkKindLabel, type LinkKind } from "./lib/internal-links";
 import { setExternalLinkGuard } from "./lib/external-links";
 import { LinkPicker } from "./components/LinkPicker";
@@ -42,11 +44,16 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { SettingsModal, type SettingsTarget } from "./components/SettingsModal";
 import { CommandPalette, type PaletteCommand } from "./components/CommandPalette";
 import { SETTINGS_ENTRIES, TAB_LABELS, type SettingsTabId } from "./lib/settings-search";
-import { Settings, ChevronUp, LayoutGrid, List, ChevronDown, Sparkles, Search, BookMarked, BookA, UserSearch, CalendarDays, ListChecks, HardDrive, MousePointerClick, FolderTree, Key, Layers, Monitor, Palette, History, Cpu, RefreshCw, FileDown, Trash2, ArrowLeft, ArrowRight, Info, Network } from "lucide-react";
+import { Settings, ChevronUp, LayoutGrid, List, Sparkles, Search, BookMarked, BookA, UserSearch, CalendarDays, NotebookPen, NotebookTabs, NotebookText, ListChecks, HardDrive, MousePointerClick, FolderTree, Key, Layers, Monitor, Palette, History, Cpu, RefreshCw, FileDown, Trash2, ArrowLeft, ArrowRight, Info, Network } from "lucide-react";
 import { GlossaryView } from "./components/GlossaryView";
 import { BiographyView } from "./components/BiographyView";
 import { BiographyModal } from "./components/BiographyView";
 import { CalendarView } from "./components/CalendarView";
+import { NotesView } from "./components/NotesView";
+import { LogsView } from "./components/LogsView";
+import { SectionNav } from "./components/SectionNav";
+import { createNote, getWorkbook } from "./api";
+import { ACTIVE_NOTE_EVENT, getActiveNoteId, requestWorkbook } from "./lib/notes";
 import { WdbsTreePanel } from "./components/WdbsTreePanel";
 import { useWdbsTree } from "./hooks/useWdbsTree";
 import { BulkAssignMenu } from "./components/BulkAssignMenu";
@@ -60,7 +67,7 @@ import { getLibraryFacets, getLibraryQuery } from "./lib/search-facets";
 import { setExitGuard } from "./lib/exit-guard";
 import { announceNavigation, useCloseOnNavigate } from "./lib/navigation";
 
-type ViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
+type ViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar' | 'notes' | 'logs';
 
 
 
@@ -73,7 +80,6 @@ function App() {
         if (firstViewRef.current) { firstViewRef.current = false; return; }
         announceNavigation();
     }, [viewMode]);
-    const [showGlossaryMenu, setShowGlossaryMenu] = useState(false);
     // Toggleable Drive/Warp Drive side panel inside the Library/Portal grid (see
     // components/WdbsTreePanel.tsx) — replaced the standalone Drive/Warp Drive tab this app used
     // to have.
@@ -108,6 +114,31 @@ function App() {
     const setTracksPanel = useCallback((open: boolean) => {
         setShowTracksPanel(open);
         try { localStorage.setItem('kinesis.calendar.panelOpen', String(open)); } catch { /* just not remembered */ }
+    }, []);
+    // The note open in the Notes section: kept here, so Back/Forward can return to it and a note link can open it.
+    const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+    // The note written into from elsewhere (cited into from a video, or picked there) is the one the Notes section
+    // shows next time. Not while in the section, where the open note is itself what sets the active one.
+    useEffect(() => {
+        if (viewMode === 'notes') return;
+        const follow = () => { const id = getActiveNoteId(); if (id) setOpenNoteId(id); };
+        window.addEventListener(ACTIVE_NOTE_EVENT, follow);
+        return () => window.removeEventListener(ACTIVE_NOTE_EVENT, follow);
+    }, [viewMode]);
+    // Bumped when a note is put back from the Trash, so the Notes section reloads its list.
+    const [notesReload, setNotesReload] = useState(0);
+    // The Notes section's search bar filters its list: plain words (a note's title and text) or `title_search:`.
+    const [notesSearchQuery, setNotesSearchQuery] = useState("");
+    // The Logs section's search bar filters the open log's entries (date, title or description).
+    const [logsSearchQuery, setLogsSearchQuery] = useState("");
+    // Whether the Notes section's list is open (its button sits beside the search bar, like the Calendar's tracks panel's).
+    // Remembered in this browser, as a per-viewer convenience.
+    const [showNotesPanel, setShowNotesPanel] = useState(() => {
+        try { return localStorage.getItem('kinesis.notes.panelOpen') !== 'false'; } catch { return true; }
+    });
+    const setNotesPanel = useCallback((open: boolean) => {
+        setShowNotesPanel(open);
+        try { localStorage.setItem('kinesis.notes.panelOpen', String(open)); } catch { /* just not remembered */ }
     }, []);
     const [notification, setNotification] = useState<NotificationContent | null>(null);
     // External link pending confirmation: the dialog asks before leaving Kinesis.
@@ -182,13 +213,21 @@ function App() {
     // Flashcards (the Glossary's). Something opened from a card (a video, a term's or person's window) puts it aside, and
     // once that's closed again (and whatever was opened from it in turn) Flashcards comes back where it was left. Going
     // to another section lets it go. Not a place in Back/Forward.
-    const [flashcards, setFlashcards] = useState<{ entries: GlossaryTerm[]; deckName: string } | null>(null);
+    const [flashcards, setFlashcards] = useState<{ entries: GlossaryTerm[]; deckName: string; drive?: string } | null>(null);
     const [flashcardsResume, setFlashcardsResume] = useState(false);
     const [flashcardsAside, setFlashcardsAside] = useState(false);
-    const openFlashcards = (entries: GlossaryTerm[], deckName: string) => {
+    const openFlashcards = (entries: GlossaryTerm[], deckName: string, drive?: string) => {
         setFlashcardsResume(false);
         setFlashcardsAside(false);
-        setFlashcards({ entries, deckName });
+        setFlashcards({ entries, deckName, drive });
+    };
+    // Flashcards for a Drive's terms (ALL_TERMS: every term), read afresh: what a flashcards link opens, and what
+    // picking another deck inside the window does. False when the Drive has no terms to study.
+    const openFlashcardsFor = async (drive: string): Promise<boolean> => {
+        const terms = studyTerms(await getGlossaryTerms(), drive);
+        if (terms.length === 0) return false;
+        openFlashcards(terms, drive === ALL_TERMS ? 'All Terms' : driveLabel(drive), drive);
+        return true;
     };
     const openedOverFlashcards = Boolean((sidebarOpen && selectedVideo) || linkedTerm || selectedBiography);
     useEffect(() => {
@@ -688,6 +727,27 @@ function App() {
                     goToLibraryDrive(node.path, driveSegmentLabel(decodeWdbs(node.path)));
                     return;
                 }
+                case 'note': {
+                    if (!flags.viewVisible.notes) return unavailable();
+                    setLinkedTerm(null);
+                    setSelectedBiography(null);
+                    // From over the video sidebar, its own close (so an unsaved edit there asks first).
+                    leaveSidebarThen(() => { setOpenNoteId(key); setViewMode('notes'); })();
+                    return;
+                }
+                case 'workbook': {
+                    if (!flags.viewVisible.notes) return unavailable();
+                    if (!(await getWorkbook(key))) return say("That workbook doesn't exist any more.");
+                    setLinkedTerm(null);
+                    setSelectedBiography(null);
+                    leaveSidebarThen(() => { setViewMode('notes'); requestWorkbook(key); })();
+                    return;
+                }
+                case 'flashcards': {
+                    if (!flags.showGlossary) return unavailable();
+                    if (!(await openFlashcardsFor(key))) return say(key === ALL_TERMS ? 'There are no terms to study yet.' : `${driveLabel(key)} has no terms to study.`);
+                    return;
+                }
                 case 'playlist': {
                     // Opens whatever is first in the sequence now (so reordering it never breaks the link), with the
                     // bar under the video following that sequence.
@@ -706,7 +766,7 @@ function App() {
         } catch (e) {
             say(typeof e === 'string' ? e : (e as { message?: string })?.message ?? "Couldn't open that link.");
         }
-    }, [flags.showGlossary, flags.showBiography, flags.showDrive, flags.showSequences, handleSelectVideo, goToLibraryDrive, library.wdbsFilter, sidebarOpen, selectedVideo?.id]);
+    }, [flags.showGlossary, flags.showBiography, flags.showDrive, flags.showSequences, flags.viewVisible.notes, handleSelectVideo, goToLibraryDrive, library.wdbsFilter, sidebarOpen, selectedVideo?.id]);
 
     useEffect(() => setInternalLinkHandler(handleOpenLink), [handleOpenLink]);
     // Where the open video's player starts, from the timed link (?t=) that opened it. Applies only to that video, and
@@ -778,6 +838,8 @@ function App() {
         glossaryQuery: glossarySearchQuery,
         biographyQuery: biographySearchQuery,
         calendarQuery: calendarSearchQuery,
+        notesQuery: notesSearchQuery,
+        note: openNoteId,
         video: sidebarOpen ? selectedVideo : null,
         graph: showGraph,
     };
@@ -785,7 +847,8 @@ function App() {
         navPlace,
         // The graph view is a place of its own (so Back from a video opened in it comes back to it). While it's open, a
         // video opening under it doesn't make a new place: it closes as the video opens, and that's the next place.
-        p => (p.graph ? `${p.view}|graph` : `${p.view}|${p.wdbs ?? ''}|${p.video?.id ?? ''}`),
+        // In the Notes section, each note opened is a place of its own.
+        p => (p.graph ? `${p.view}|graph` : `${p.view}|${p.wdbs ?? ''}|${p.video?.id ?? ''}|${p.view === 'notes' ? p.note ?? '' : ''}`),
         p => {
             // Back to the graph: as it was left (its layout, zoom and filters), not laid out afresh.
             setGraphResume(p.graph);
@@ -801,6 +864,8 @@ function App() {
             setGlossarySearchQuery(p.glossaryQuery);
             setBiographySearchQuery(p.biographyQuery);
             setCalendarSearchQuery(p.calendarQuery);
+            setNotesSearchQuery(p.notesQuery);
+            setOpenNoteId(p.note);
             // In the graph's place, no sidebar (the video opened from it is the next place).
             if (p.video && !p.graph) {
                 void handleSelectVideo(p.video);
@@ -879,13 +944,16 @@ function App() {
     const [manageDriveOpen, setManageDriveOpen] = useState(false);
     const videoTrash = useTrash('video');
     const glossaryTrash = useTrash('glossary');
+    const notesTrash = useTrash('note');
     // Bumped when a term is put back, so a mounted Glossary reloads.
     const [glossaryReload, setGlossaryReload] = useState(0);
     // Something put back from the Trash chip's right-click menu (not the Trash window, which reloads through its own
     // callback below): reload whatever shows that kind of item.
     useEffect(() => {
         const onRestored = (e: Event) => {
-            if ((e as CustomEvent<TrashKind>).detail === 'video') library.refreshLibrary();
+            const kind = (e as CustomEvent<TrashKind>).detail;
+            if (kind === 'video') library.refreshLibrary();
+            else if (kind === 'note') setNotesReload(n => n + 1);
             else setGlossaryReload(n => n + 1);
         };
         window.addEventListener(TRASH_RESTORED_EVENT, onRestored);
@@ -907,6 +975,18 @@ function App() {
         if (flags.viewVisible.glossary) cmds.push({ id: 'view-glossary', label: `Go to ${labels.aliasGlossary}`, icon: BookA, keywords: 'glossary terms tags', run: () => { setGlossarySearchQuery(""); setViewMode('glossary'); } });
         if (flags.viewVisible.biography) cmds.push({ id: 'view-biography', label: `Go to ${labels.aliasBiography}`, icon: UserSearch, keywords: 'biography people channels creators', run: () => { setBiographySearchQuery(""); setViewMode('biography'); } });
         if (flags.viewVisible.calendar) cmds.push({ id: 'view-calendar', label: `Go to ${labels.aliasCalendar}`, icon: CalendarDays, keywords: 'calendar schedule tracks plan routine', run: () => { setCalendarSearchQuery(""); setViewMode('calendar'); } });
+        if (flags.viewVisible.logs) cmds.push({ id: 'view-logs', label: `Go to ${labels.aliasLogs}`, icon: NotebookText, keywords: 'logs log record diary journal history done', run: () => { setLogsSearchQuery(""); setViewMode('logs'); } });
+        if (flags.viewVisible.notes) {
+            cmds.push({ id: 'view-notes', label: `Go to ${labels.aliasNotes}`, icon: NotebookPen, keywords: 'notes notebook write study cite journal', run: () => setViewMode('notes') });
+            cmds.push({
+                id: 'new-note', label: 'New Note', icon: NotebookPen, keywords: 'note write create add notebook journal',
+                run: () => {
+                    createNote({ shared: false })
+                        .then(n => { setOpenNoteId(n.id); setViewMode('notes'); })
+                        .catch(e => setNotification({ message: `Couldn't make a note: ${String(e)}`, type: 'error' }));
+                },
+            });
+        }
         cmds.push({ id: 'graph', label: 'Open Graph View', icon: Network, keywords: 'graph network map links connections web nodes relationships', run: () => { setGraphResume(false); setShowGraph(true); } });
         cmds.push({ id: 'about', label: `About ${BRAND.name}`, icon: Info, keywords: 'about help tour walkthrough guide intro welcome', run: () => setShowAbout(true) });
         if (flags.settingsVisible) cmds.push({ id: 'settings', label: 'Open Settings', icon: Settings, keywords: 'preferences options', run: () => setShowSettings(true) });
@@ -940,6 +1020,9 @@ function App() {
         if (flags.viewVisible.glossary && glossaryTrash.count > 0) {
             cmds.push({ id: 'trash-glossary', label: `Open Trash: ${labels.aliasGlossary}`, hint: `${glossaryTrash.count} in Trash`, icon: Trash2, keywords: 'trash deleted restore undo terms tags', run: () => setTrashOpen('glossary') });
         }
+        if (flags.viewVisible.notes && notesTrash.count > 0) {
+            cmds.push({ id: 'trash-note', label: `Open Trash: ${labels.aliasNotes}`, hint: `${notesTrash.count} in Trash`, icon: Trash2, keywords: 'trash deleted restore undo notes', run: () => setTrashOpen('note') });
+        }
         if (nav.canBack) cmds.push({ id: 'nav-back', label: 'Go back', hint: 'Alt + Left', icon: ArrowLeft, keywords: 'previous back history return', run: guardedBack });
         if (nav.canForward) cmds.push({ id: 'nav-forward', label: 'Go forward', hint: 'Alt + Right', icon: ArrowRight, keywords: 'next forward history', run: guardedForward });
         if (flags.showListModeToggle) {
@@ -947,7 +1030,7 @@ function App() {
         }
         return cmds;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [flags, labels, videoListMode, videoTrash.count, glossaryTrash.count, nav.canBack, nav.canForward, guardedBack, guardedForward]);
+    }, [flags, labels, videoListMode, videoTrash.count, glossaryTrash.count, notesTrash.count, nav.canBack, nav.canForward, guardedBack, guardedForward]);
 
 
     const handleAddTag = async (term: string) => {
@@ -1068,6 +1151,8 @@ function App() {
         ...(flags.viewVisible.glossary ? [{ key: 'glossary', label: labels.aliasGlossary, icon: <BookA className={tabIcon} />, active: viewMode === 'glossary', onClick: leaveSidebarThen(() => { setGlossarySearchQuery(""); setViewMode('glossary'); }) }] : []),
         ...(showBiography ? [{ key: 'biography', label: labels.aliasBiography, icon: <UserSearch className={tabIcon} />, active: viewMode === 'biography', onClick: leaveSidebarThen(() => { setBiographySearchQuery(""); setViewMode('biography'); }) }] : []),
         ...(flags.viewVisible.calendar ? [{ key: 'calendar', label: labels.aliasCalendar, icon: <CalendarDays className={tabIcon} />, active: viewMode === 'calendar', onClick: leaveSidebarThen(() => { setCalendarSearchQuery(""); setViewMode('calendar'); }) }] : []),
+        ...(flags.viewVisible.notes ? [{ key: 'notes', label: labels.aliasNotes, icon: <NotebookPen className={tabIcon} />, active: viewMode === 'notes', onClick: leaveSidebarThen(() => setViewMode('notes')) }] : []),
+        ...(flags.viewVisible.logs ? [{ key: 'logs', label: labels.aliasLogs, icon: <NotebookText className={tabIcon} />, active: viewMode === 'logs', onClick: leaveSidebarThen(() => { setLogsSearchQuery(""); setViewMode('logs'); }) }] : []),
     ] : undefined;
     // The layout toggle and Settings: on the right of the title bar, before What's New. A click here closes any open
     // dialog first (afterDialogs), then does its thing; Settings toggles.
@@ -1126,6 +1211,12 @@ function App() {
                             setCalendarSearchQuery("");
                             setViewMode('calendar');
                             if (date) setCalendarDate({ date, at: Date.now() });
+                        })() : undefined}
+                        // Its log reminders and Log Entry go to that log, on today's row (only where Logs is shown).
+                        onOpenLog={flags.viewVisible.logs ? (id: string) => leaveSidebarThen(() => {
+                            setLogsSearchQuery("");
+                            requestLog(id);
+                            setViewMode('logs');
                         })() : undefined}
                     />
                 )}
@@ -1192,6 +1283,24 @@ function App() {
                                 <CalendarDays className="w-6 h-6" />
                             </button>
                         )}
+                        {flags.viewVisible.notes && (
+                            <button
+                                onClick={() => setViewMode('notes')}
+                                className={`p-1.5 rounded-lg transition-all cursor-pointer ${viewMode === 'notes' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white hover:bg-[#272727]'}`}
+                                title={labels.aliasNotes}
+                            >
+                                <NotebookPen className="w-6 h-6" />
+                            </button>
+                        )}
+                        {flags.viewVisible.logs && (
+                            <button
+                                onClick={() => { setLogsSearchQuery(""); setViewMode('logs'); }}
+                                className={`p-1.5 rounded-lg transition-all cursor-pointer ${viewMode === 'logs' ? 'bg-red-600 text-white' : 'text-gray-400 hover:text-white hover:bg-[#272727]'}`}
+                                title={labels.aliasLogs}
+                            >
+                                <NotebookText className="w-6 h-6" />
+                            </button>
+                        )}
                     </div>
 
                     {/* Bottom Icons (with the bottom padding the rail used to have, now that the switcher below sits flush) */}
@@ -1229,7 +1338,7 @@ function App() {
                     {navigationOrientation === 'horizontal' && (
                         <div className="flex items-center justify-between mb-6 relative border-b border-[#272727] pb-2">
                             {/* -ml-1: the K sits where it does in the vertical layout's rail (centered in its 3.5rem), so it doesn't jump when switching. */}
-                            <div className="flex items-center gap-3 -ml-1">
+                            <div className="flex items-center gap-3 -ml-1 shrink-0">
                                 <BrandLogo
                                     onContextMenu={(e) => {
                                         e.preventDefault();
@@ -1246,66 +1355,23 @@ function App() {
                                 </div>
                             </div>
 
-                            <div className="flex gap-3">
-                                {(['search', 'library'] as ViewMode[]).map(mode => {
-                                    if (!flags.viewVisible[mode]) return null;
-                                    // 'library' renders as the workspace's Library alias (e.g. "Portal") — the
-                                    // ViewMode value itself stays 'library' either way.
-                                    const label = mode === 'library' ? labels.aliasLibrary : labels.aliasSearch;
-                                    return (
-                                        <button
-                                            key={mode}
-                                            onClick={() => setViewMode(mode)}
-                                            className={`px-4 py-2 rounded-lg font-semibold text-sm transition-all cursor-pointer ${viewMode === mode ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
-                                        >
-                                            {label}
-                                        </button>
-                                    );
-                                })}
-                                {(flags.viewVisible.glossary || showBiography || flags.viewVisible.calendar) && (
-                                <div className="relative">
-                                    <button
-                                        onClick={() => setShowGlossaryMenu(!showGlossaryMenu)}
-                                        onBlur={() => setTimeout(() => setShowGlossaryMenu(false), 200)}
-                                        className={`p-2 rounded-lg transition-all cursor-pointer flex items-center justify-center ${viewMode === 'glossary' || viewMode === 'biography' || viewMode === 'calendar' || showGlossaryMenu ? 'bg-white text-black' : 'bg-[#272727] text-white hover:bg-[#3f3f3f]'}`}
-                                        title="More Options"
-                                    >
-                                        <ChevronDown className="w-5 h-5" />
-                                    </button>
-                                    {showGlossaryMenu && (
-                                        <div className="absolute top-full right-0 mt-2 min-w-36 w-max bg-[#272727] border border-[#3f3f3f] rounded-lg shadow-xl z-51 overflow-hidden">
-                                            {flags.viewVisible.glossary && (
-                                                <button
-                                                    onClick={() => { setGlossarySearchQuery(""); setViewMode('glossary'); setShowGlossaryMenu(false); }}
-                                                    className={`w-full text-left px-4 py-2 text-sm hover:bg-[#3f3f3f] cursor-pointer ${viewMode === 'glossary' ? 'text-white font-bold' : 'text-gray-300'}`}
-                                                >
-                                                    {labels.aliasGlossary}
-                                                </button>
-                                            )}
-                                            {showBiography && (
-                                                <button
-                                                    onClick={() => { setBiographySearchQuery(""); setViewMode('biography'); setShowGlossaryMenu(false); }}
-                                                    className={`w-full text-left px-4 py-2 text-sm hover:bg-[#3f3f3f] cursor-pointer ${viewMode === 'biography' ? 'text-white font-bold' : 'text-gray-300'}`}
-                                                >
-                                                    {labels.aliasBiography}
-                                                </button>
-                                            )}
-                                            {flags.viewVisible.calendar && (
-                                                <button
-                                                    onClick={() => { setCalendarSearchQuery(""); setViewMode('calendar'); setShowGlossaryMenu(false); }}
-                                                    className={`w-full text-left px-4 py-2 text-sm hover:bg-[#3f3f3f] cursor-pointer ${viewMode === 'calendar' ? 'text-white font-bold' : 'text-gray-300'}`}
-                                                >
-                                                    {labels.aliasCalendar}
-                                                </button>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                )}
+                            {/* The section names take the room the name leaves, and fold into a dropdown as it runs out
+                                (components/SectionNav.tsx); the layout toggle and Settings keep their place at the end. */}
+                            <div className="flex-1 min-w-0 flex items-center gap-3 ml-4">
+                                <SectionNav items={[
+                                    ...(flags.viewVisible.search ? [{ key: 'search', label: labels.aliasSearch, active: viewMode === 'search', onClick: () => setViewMode('search') }] : []),
+                                    // 'library' shows as the workspace's Library alias (e.g. "Portal"); the ViewMode stays 'library'.
+                                    ...(flags.viewVisible.library ? [{ key: 'library', label: labels.aliasLibrary, active: viewMode === 'library', onClick: () => setViewMode('library') }] : []),
+                                    ...(flags.viewVisible.glossary ? [{ key: 'glossary', label: labels.aliasGlossary, active: viewMode === 'glossary', onClick: () => { setGlossarySearchQuery(""); setViewMode('glossary'); } }] : []),
+                                    ...(showBiography ? [{ key: 'biography', label: labels.aliasBiography, active: viewMode === 'biography', onClick: () => { setBiographySearchQuery(""); setViewMode('biography'); } }] : []),
+                                    ...(flags.viewVisible.calendar ? [{ key: 'calendar', label: labels.aliasCalendar, active: viewMode === 'calendar', onClick: () => { setCalendarSearchQuery(""); setViewMode('calendar'); } }] : []),
+                                    ...(flags.viewVisible.notes ? [{ key: 'notes', label: labels.aliasNotes, active: viewMode === 'notes', onClick: () => setViewMode('notes') }] : []),
+                                    ...(flags.viewVisible.logs ? [{ key: 'logs', label: labels.aliasLogs, active: viewMode === 'logs', onClick: () => { setLogsSearchQuery(""); setViewMode('logs'); } }] : []),
+                                ]} />
                                 {flags.showListModeToggle && (
                                     <button
                                         onClick={toggleVideoListMode}
-                                        className="p-2 ml-2 text-gray-400 hover:text-white transition-all cursor-pointer bg-[#272727] rounded-lg"
+                                        className="shrink-0 p-2 ml-2 text-gray-400 hover:text-white transition-all cursor-pointer bg-[#272727] rounded-lg"
                                         title={videoListMode === 'grid' ? "Switch to Compact View" : "Switch to Grid View"}
                                     >
                                         {videoListMode === 'grid' ? <List className="w-5 h-5 k-reveal" /> : <LayoutGrid className="w-5 h-5 k-pop" />}
@@ -1314,7 +1380,7 @@ function App() {
                                 {flags.settingsVisible && (
                                     <button
                                         onClick={() => setShowSettings(true)}
-                                        className="p-2 ml-1 text-gray-400 hover:text-white transition-all cursor-pointer"
+                                        className="shrink-0 p-2 ml-1 text-gray-400 hover:text-white transition-all cursor-pointer"
                                         title="Settings"
                                     >
                                         <Settings className="w-5 h-5 k-spin-once" />
@@ -1334,6 +1400,16 @@ function App() {
                                 title="Toggle Tracks"
                             >
                                 <ListChecks className="w-5 h-5" />
+                            </button>
+                        )}
+                        {/* The Notes section's list, the same way. */}
+                        {viewMode === 'notes' && (
+                            <button
+                                onClick={() => setNotesPanel(!showNotesPanel)}
+                                className={`shrink-0 p-2.5 mb-2 rounded-full border transition-all cursor-pointer ${showNotesPanel ? 'bg-red-600 border-red-600 text-white' : 'bg-[#121212] border-[#404040] text-gray-400 hover:text-white hover:border-[#505050]'}`}
+                                title={`Toggle the list of ${labels.aliasNotes.toLowerCase()}`}
+                            >
+                                <NotebookTabs className="w-5 h-5" />
                             </button>
                         )}
                         {viewMode === 'library' && showDrive && (
@@ -1358,21 +1434,29 @@ function App() {
                             </button>
                         )}
                         {/* The search bar's own side padding (px-4) sat on top of the row's gap; beside the Drive button, take most of it back. */}
-                        <div className={`flex-1 min-w-0 ${(viewMode === 'library' && showDrive) || viewMode === 'calendar' ? '-ml-3' : ''}`}>
+                        <div className={`flex-1 min-w-0 ${(viewMode === 'library' && showDrive) || viewMode === 'calendar' || viewMode === 'notes' ? '-ml-3' : ''}`}>
                             <SearchBar
                                 key={viewMode}
-                                onSearch={viewMode === 'calendar' ? setCalendarSearchQuery : viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : handleSearch))}
+                                onSearch={viewMode === 'logs' ? setLogsSearchQuery : viewMode === 'notes' ? setNotesSearchQuery : viewMode === 'calendar' ? setCalendarSearchQuery : viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : handleSearch))}
                                 onLiveFilter={
                                     viewMode === 'search'
                                         ? (search.videos.length > 0 ? search.handleInput : undefined)
                                         : viewMode === 'calendar'
                                             ? setCalendarSearchQuery
+                                            : viewMode === 'logs'
+                                            ? setLogsSearchQuery
+                                            : viewMode === 'notes'
+                                            ? setNotesSearchQuery
                                             : (viewMode === 'glossary' ? setGlossarySearchQuery : (viewMode === 'biography' ? setBiographySearchQuery : (viewMode === 'library' ? handleLibrarySearch : undefined)))
                                 }
                                 loading={search.loading}
                                 viewMode={viewMode}
                                 initialFacets={
-                                    viewMode === 'calendar'
+                                    viewMode === 'logs'
+                                        ? getLibraryFacets(logsSearchQuery, 'logs')
+                                        : viewMode === 'notes'
+                                        ? getLibraryFacets(notesSearchQuery, 'notes')
+                                        : viewMode === 'calendar'
                                         ? getLibraryFacets(calendarSearchQuery, 'calendar')
                                         : viewMode === 'glossary'
                                         ? getLibraryFacets(glossarySearchQuery, 'glossary')
@@ -1381,7 +1465,11 @@ function App() {
                                             : (viewMode === 'library' ? (library.librarySearch ? getLibraryFacets(library.librarySearch, 'library') : []) : search.activeFacets as Facet[])
                                 }
                                 initialQuery={
-                                    viewMode === 'calendar'
+                                    viewMode === 'logs'
+                                        ? getLibraryQuery(logsSearchQuery, 'logs')
+                                        : viewMode === 'notes'
+                                        ? getLibraryQuery(notesSearchQuery, 'notes')
+                                        : viewMode === 'calendar'
                                         ? getLibraryQuery(calendarSearchQuery, 'calendar')
                                         : viewMode === 'glossary'
                                         ? getLibraryQuery(glossarySearchQuery, 'glossary')
@@ -1389,7 +1477,7 @@ function App() {
                                             ? getLibraryQuery(biographySearchQuery, 'biography')
                                         : (viewMode === 'library' ? getLibraryQuery(library.librarySearch, 'library') : search.activeText)
                                 }
-                                 placeholder={viewMode === 'calendar' ? 'Filter Tasks (Enter: Next Match)' : viewMode === 'glossary' ? "Look up Tag/Term" : (viewMode === 'biography' ? `Look up ${labels.aliasBiographyItem}` : (viewMode === 'library' ? "Look up Videos and Transcripts" : "Search YouTube handle, playlist URL, or video URL"))}
+                                 placeholder={viewMode === 'logs' ? `Look up ${labels.aliasLogs}` : viewMode === 'notes' ? `Look up ${labels.aliasNotes}` : viewMode === 'calendar' ? 'Filter Tasks (Enter: Next Match)' : viewMode === 'glossary' ? "Look up Tag/Term" : (viewMode === 'biography' ? `Look up ${labels.aliasBiographyItem}` : (viewMode === 'library' ? "Look up Videos and Transcripts" : "Search YouTube handle, playlist URL, or video URL"))}
                             />
                         </div>
                     </div>
@@ -1438,6 +1526,7 @@ function App() {
                                         }
                                     }}
                                     allowEditAlias={allowEditWDBS}
+                                    showSequences={flags.showSequences}
                                     tree={wdbsTree.tree}
                                     setTree={wdbsTree.setTree}
                                     unsortedCount={wdbsTree.unsortedCount}
@@ -1456,7 +1545,7 @@ function App() {
                                             onClick={() => setManageDriveOpen(true)}
                                             // Only as wide as its label, leaving the rest of the row to Bulk Assign Mode (the longer one).
                                             className="shrink-0 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-xs font-bold transition-all cursor-pointer bg-[#121212] border-[#404040] text-gray-400 hover:text-white hover:border-[#505050]"
-                                            title={`Every Drive in one place: looks, structure, videos, ${labels.aliasSequence.toLowerCase()}s and terms`}
+                                            title={`Every Drive in one place: Looks, structure, videos, ${labels.aliasSequence.toLowerCase()}s and terms`}
                                         >
                                             <FolderTree className="w-3.5 h-3.5 shrink-0" />
                                             <span className="whitespace-nowrap">Manage Drive</span>
@@ -1531,6 +1620,19 @@ function App() {
                             />
                         </div>
                     </div>
+                ) : viewMode === 'notes' ? (
+                    // Like the Calendar: its list, its page and its sources each scroll on their own (NotesView lays them out).
+                    <NotesView
+                        searchQuery={notesSearchQuery}
+                        panelOpen={showNotesPanel}
+                        openNoteId={openNoteId}
+                        onOpenNote={setOpenNoteId}
+                        onNotify={setNotification}
+                        onOpenTrash={() => setTrashOpen('note')}
+                        reloadSignal={notesReload}
+                    />
+                ) : viewMode === 'logs' ? (
+                    <LogsView searchQuery={logsSearchQuery} onNotify={setNotification} />
                 ) : viewMode === 'calendar' ? (
                     // Like the Library: its tracks panel and its week each scroll on their own (CalendarView lays them out).
                     <CalendarView focusTrack={calendarFocus} focusDate={calendarDate} pinnedIds={pinnedIds} onSetPin={(id, on) => { void setPin(id, on); }} searchQuery={calendarSearchQuery} onVideoSelect={handleSelectVideo} panelOpen={showTracksPanel} onOpenPanel={() => setTracksPanel(true)} onNotify={setNotification} />
@@ -1621,6 +1723,7 @@ function App() {
 
             <Sidebar
                 ref={sidebarRef}
+                onNotify={setNotification}
                 startAt={playerStart && playerStart.videoId === selectedVideo?.id ? playerStart.at : undefined}
                 isOpen={sidebarOpen}
                 onClose={() => {
@@ -1653,6 +1756,7 @@ function App() {
                 onRefetch={selectedVideo ? () => handleSelectVideo(selectedVideo) : undefined}
                 onRestored={library.refreshLibrary}
                 onTitleChanged={title => { setSelectedVideo(v => (v ? { ...v, title } : v)); library.refreshLibrary(); }}
+                onViewCountChanged={(id, viewCount) => { setSelectedVideo(v => (v && v.id === id ? { ...v, viewCount } : v)); library.setVideoViewCount(id, viewCount); }}
                 onTranscriptChange={setTranscript}
                 pluginSummarizeEnabled={effectivePluginSummarizeEnabled}
                 pluginPhotosynthesisEnabled={effectivePluginPhotosynthesisEnabled}
@@ -1751,8 +1855,12 @@ function App() {
             {showAbout && <AboutKinesisModal inApp onClose={() => setShowAbout(false)} />}
             {flashcards && !flashcardsAside && (
                 <FlashcardsModal
+                    // A deck picked inside the window is the window again from its first card.
+                    key={`${flashcards.drive ?? ''}|${flashcards.deckName}|${flashcards.entries.length}`}
                     entries={flashcards.entries}
                     deckName={flashcards.deckName}
+                    drive={flashcards.drive}
+                    onPickDrive={drive => { void openFlashcardsFor(drive).then(ok => { if (!ok) setNotification({ message: 'That deck has no terms any more.', type: 'error' }); }); }}
                     resume={flashcardsResume}
                     onClose={() => setFlashcards(null)}
                 />
@@ -1776,7 +1884,7 @@ function App() {
                 <TrashModal
                     kind={trashOpen}
                     onClose={() => setTrashOpen(null)}
-                    onRestored={trashOpen === 'video' ? library.refreshLibrary : () => setGlossaryReload(n => n + 1)}
+                    onRestored={trashOpen === 'video' ? library.refreshLibrary : trashOpen === 'note' ? () => setNotesReload(n => n + 1) : () => setGlossaryReload(n => n + 1)}
                 />
             )}
 

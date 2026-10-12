@@ -825,57 +825,86 @@ pub fn clear_video_wdbs_links(db_path: &str, video_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// One top-level Drive (level 1), as the Glossary's drive dropdown and assignment picker list them.
+/// One Drive with the Drives beneath it, as the Glossary's drive dropdown and assignment picker list
+/// them. `get_wdbs_roots` returns the top level; everything deeper hangs off `children`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WdbsRoot {
-    /// Display path, e.g. ":CRYPTO" — what Glossary.drives stores (one root per line).
+    /// Display path, e.g. ":CRYPTO" or ":CRYPTO-DOAC" — what Glossary.drives stores (one per line).
     pub path: String,
-    /// The bare name shown in the UI ("CRYPTO").
+    /// The node's own name shown in the UI ("CRYPTO", "DOAC").
     pub segment: String,
     /// The curated alias, when it differs from `segment`.
     pub alias: Option<String>,
+    /// The Drives one level down, sorted by name.
+    #[serde(default)]
+    pub children: Vec<WdbsRoot>,
 }
 
-/// Every Drive root: the top level of the tree built from assigned videos, plus level-1 rows in
-/// tblWDBS (a root can exist there with no videos yet), plus any root a glossary term is already
-/// filed under (so an assignment can never be invisible in the dropdown). Sorted by name.
+/// Every Drive, as a tree of top-level Drives: the tree built from assigned videos, plus the rows in
+/// tblWDBS (a Drive can exist there with no videos yet), plus any Drive a glossary term or a note is
+/// already filed under (so an assignment can never be invisible in the dropdown). Each level sorted by name.
 pub fn get_wdbs_roots(db_path: &str) -> Result<Vec<WdbsRoot>> {
-    let mut roots: BTreeMap<String, WdbsRoot> = BTreeMap::new();
-    for node in get_wdbs_tree(db_path)? {
-        let path = storage_to_display_path(&node.path);
-        if super::glossary::is_root_path(&path) {
-            roots.insert(path.clone(), WdbsRoot { path, segment: node.segment, alias: node.alias });
+    use super::glossary::is_drive_path;
+    // display path -> curated alias. Every ancestor of a path is added too, so the tree has no gaps.
+    let mut known: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut add = |path: &str, alias: Option<String>| {
+        if !is_drive_path(path) {
+            return;
+        }
+        for (i, _) in path.match_indices('-') {
+            known.entry(path[..i].to_string()).or_insert(None);
+        }
+        let slot = known.entry(path.to_string()).or_insert(None);
+        if slot.is_none() {
+            *slot = alias;
+        }
+    };
+
+    fn walk(nodes: Vec<WdbsNode>, add: &mut impl FnMut(&str, Option<String>)) {
+        for node in nodes {
+            add(&storage_to_display_path(&node.path), node.alias);
+            walk(node.children, add);
         }
     }
+    walk(get_wdbs_tree(db_path)?, &mut add);
 
     let conn = Connection::open(db_path)?;
     if table_exists(&conn, "tblWDBS")? {
-        let mut stmt = conn.prepare("SELECT WDBS, WDInfo FROM tblWDBS WHERE lev = 1")?;
+        let mut stmt = conn.prepare("SELECT WDBS, WDInfo FROM tblWDBS")?;
         let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
         for (path, info) in rows.filter_map(|r| r.ok()) {
-            if !super::glossary::is_root_path(&path) {
-                continue;
-            }
-            let segment = path.trim_start_matches(':').to_string();
-            let alias = Some(info.trim().to_string()).filter(|a| !a.is_empty() && *a != segment);
-            roots.entry(path.clone()).or_insert(WdbsRoot { path, segment, alias });
+            let segment = path.rsplit(['-', ':']).next().unwrap_or("");
+            let alias = Some(info.trim().to_string()).filter(|a| !a.is_empty() && a != segment);
+            add(&path, alias);
         }
     }
-    // Glossary is Kinesis-owned and always exists (see db/schema.rs), unlike tblWDBS above.
-    {
-        let mut stmt = conn.prepare("SELECT DISTINCT drives FROM Glossary WHERE drives != ''")?;
+    // Glossary and the notes tables are Kinesis-owned and always exist (see db/schema.rs), unlike tblWDBS above.
+    for table in ["Glossary", super::notes::SHARED_NOTES, super::notes::PERSONAL_NOTES] {
+        let mut stmt = conn.prepare(&format!("SELECT DISTINCT drives FROM {table} WHERE drives != ''"))?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         for raw in rows.filter_map(|r| r.ok()) {
             for path in super::glossary::decode_drives(&raw) {
-                let segment = path.trim_start_matches(':').to_string();
-                roots.entry(path.clone()).or_insert(WdbsRoot { path, segment, alias: None });
+                add(&path, None);
             }
         }
     }
 
-    let mut out: Vec<WdbsRoot> = roots.into_values().collect();
-    out.sort_by_key(|r| r.segment.to_lowercase());
-    Ok(out)
+    // A path's parent is everything before its last '-'; top-level paths have none.
+    fn build(parent: Option<&str>, known: &BTreeMap<String, Option<String>>) -> Vec<WdbsRoot> {
+        let mut out: Vec<WdbsRoot> = known
+            .iter()
+            .filter(|(path, _)| path.rfind('-').map(|i| &path[..i]) == parent)
+            .map(|(path, alias)| WdbsRoot {
+                path: path.clone(),
+                segment: path.rsplit(['-', ':']).next().unwrap_or("").to_string(),
+                alias: alias.clone(),
+                children: build(Some(path), known),
+            })
+            .collect();
+        out.sort_by_key(|r| r.segment.to_lowercase());
+        out
+    }
+    Ok(build(None, &known))
 }
 
 /// Every (video_id, wdbs) symlink pair across the whole library, storage-encoded — used by

@@ -24,6 +24,14 @@ pub enum LinkKind {
     /// A Drive's playlist (its sequence, in the code), keyed by the Drive's display path (":CS-DSA"). Opening one opens whatever video is first in
     /// the sequence at the time, so reordering it never breaks the link.
     Playlist,
+    /// A note (the Notes section), keyed by its id (db/notes.rs).
+    Note,
+    /// The Glossary's flashcards for a Drive (its terms and those of the Drives beneath it), keyed like a playlist by the
+    /// Drive's display path (":MWD"); "*" is every term. It names a Drive, so it follows the Drive when that's renamed
+    /// or merged, and is taken out with it.
+    Flashcards,
+    /// A workbook (the Notes section's: notes in an order), keyed by its id (db/workbooks.rs).
+    Workbook,
 }
 
 impl LinkKind {
@@ -34,6 +42,9 @@ impl LinkKind {
             LinkKind::Video => "video",
             LinkKind::Drive => "drive",
             LinkKind::Playlist => "playlist",
+            LinkKind::Note => "note",
+            LinkKind::Flashcards => "flashcards",
+            LinkKind::Workbook => "workbook",
         }
     }
 
@@ -44,6 +55,9 @@ impl LinkKind {
             "video" => Some(LinkKind::Video),
             "drive" => Some(LinkKind::Drive),
             "playlist" => Some(LinkKind::Playlist),
+            "note" => Some(LinkKind::Note),
+            "flashcards" => Some(LinkKind::Flashcards),
+            "workbook" => Some(LinkKind::Workbook),
             _ => None,
         }
     }
@@ -74,7 +88,7 @@ pub fn build_link(text: &str, kind: LinkKind, key: &str) -> String {
 fn link_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        Regex::new(r"\[([^\[\]]*)\]\(kinesis://(glossary|bio|video|drive|playlist)/([A-Za-z0-9\-._~%]+)(?:\?t=([0-9:]+))?\)").unwrap()
+        Regex::new(r"\[([^\[\]]*)\]\(kinesis://(glossary|bio|video|drive|playlist|note|flashcards|workbook)/([A-Za-z0-9\-._~%]+)(?:\?t=([0-9:]+))?\)").unwrap()
     })
 }
 
@@ -202,6 +216,8 @@ const TEXT_COLUMNS: &[(&str, &str)] = &[
     ("Biographies", "bio"),
     ("Glossary", "definition"),
     ("VideoNotes", "note"),
+    ("Notes", "body"),
+    ("PersonalNotes", "body"),
 ];
 
 /// A stored text that link editing changed, kept so the change can be undone (the Trash restores it).
@@ -344,7 +360,8 @@ pub fn count_texts_linking(db_path: &str, targets: &[(LinkKind, &[String])]) -> 
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Backlink {
-    /// Which text it is: a video's "summary", "transcript" or "note", a person's "bio", or a term's "definition".
+    /// Which text it is: a video's "summary", "transcript" or "note", a person's "bio", a term's "definition", or a
+    /// note of the Notes section ("notePage", with its id as `key`).
     pub source: &'static str,
     /// The video the text belongs to (summary, transcript, note).
     pub video_id: Option<String>,
@@ -455,6 +472,20 @@ pub fn find_backlinks(db_path: &str, kind: LinkKind, key: &str) -> Result<Vec<Ba
             if !own_video(&id) {
                 add("note", Some(id), None, title, &text);
             }
+        }
+    }
+    // Notes (the Notes section), shared and personal: a citation of a video is a link to it.
+    for table in [super::notes::SHARED_NOTES, super::notes::PERSONAL_NOTES] {
+        if !table_exists(&conn, table)? {
+            continue;
+        }
+        let mut stmt = conn.prepare(&format!("SELECT id, title, body FROM {table} WHERE INSTR(body, '{SCHEME}') > 0"))?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?;
+        for (id, title, text) in rows.filter_map(|r| r.ok()) {
+            if kind == LinkKind::Note && id == key {
+                continue;
+            }
+            add("notePage", None, Some(id), super::notes::note_title(&title), &text);
         }
     }
     if table_exists(&conn, "Biographies")? {

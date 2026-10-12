@@ -1,8 +1,9 @@
-import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, ClipboardPaste, Check, ExternalLink, Pencil, Search, Terminal, Lightbulb, Eye, EyeOff, Tags, BookA, ListVideo, Paperclip, Monitor, Cloud, Link2, Play } from 'lucide-react';
+import { X, Trash2, Save, Sparkles, ArrowLeft, RotateCcw, ClipboardPaste, Check, ExternalLink, Pencil, Search, Terminal, Lightbulb, Eye, EyeOff, Tags, BookA, ListVideo, Paperclip, Monitor, Cloud, Link2, Play, NotebookPen, Plus } from 'lucide-react';
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { flushSync } from 'react-dom';
 import { LifeLoader } from './LifeLoader';
 import { checkVideoExists, summarizeTranscript, getSummary, saveSummary, getSetting, setSetting, openExternalUrl, getCustomPrompt, setCustomPrompt, getOllamaPrompt, getVenicePrompt, getGlossaryTerms, saveTranscript, getEmbedServerPort, decodeWdbs, getSimilarVideos, getVideoById, getVideoAttachments, trashList, trashRestore, type Video, type GlossaryTerm } from '../api';
+import { driveFit } from '../lib/glossary';
 import { saveImageAs } from '../lib/save-image-as';
 import { handleMarkdownKeyDown, handleMarkdownContextMenu } from '../lib/markdown-editor';
 import { useFindReplace } from './sidebar/useFindReplace';
@@ -13,7 +14,14 @@ import { UnsavedChangesModal } from './UnsavedChangesModal';
 import { Modal } from './Modal';
 import { useVideoIdentity } from './sidebar/useVideoIdentity';
 import { useResumePosition } from './sidebar/useResumePosition';
-import { useSelectableText, SELECTABLE_CLASS } from '../hooks/useSelectableText';
+import { MomentComposer } from './sidebar/MomentComposer';
+import { useSelectableText, SELECTABLE_CLASS, type SelectedText } from '../hooks/useSelectableText';
+import type { ContextMenuItem } from './ContextMenu';
+import type { NotificationContent } from './Notification';
+import { NotePicker } from './NotePicker';
+import { buildCitation, buildMomentNote, citeIntoNote, lastTimeBefore, noteDisplayTitle, setActiveNoteId, useActiveNote } from '../lib/notes';
+import { createNote, type Note } from '../api';
+import { openInternalLink } from '../lib/internal-links';
 import { MENTIONS_ATTR } from './MentionGhost';
 import { TranscriptText } from './sidebar/TranscriptText';
 import { useReadFind, FIND_SCOPE_SELECTOR } from './sidebar/useReadFind';
@@ -27,8 +35,10 @@ import { SequenceDock } from './sidebar/SequenceDock';
 import { SimilarVideosPanel } from './sidebar/SimilarVideosPanel';
 import { AttachmentsPanel } from './sidebar/AttachmentsPanel';
 import ReactMarkdown from 'react-markdown';
+import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import { remarkHighlight } from '../lib/remark-highlight';
+import { remarkCallouts } from '../lib/remark-callouts';
 import { remarkEmbeds } from '../lib/remark-embeds';
 import { remarkTimestamps, SEEK_ATTR } from '../lib/remark-timestamps';
 import { remarkSourceLines, lineAt, indexOfLine, caretY, scrollPreviewToLine, topVisibleLine } from '../lib/preview-sync';
@@ -146,6 +156,10 @@ interface Props {
     onManageTags?: () => void;
     /** The video was renamed on YouTube (found when it was opened): its new title, already saved. */
     onTitleChanged?: (title: string) => void;
+    /** The video's view count had moved on YouTube (found when it was opened): the new one, already saved. */
+    onViewCountChanged?: (videoId: string, viewCount: string) => void;
+    /** A message for the app's toast (a citation made, or why it couldn't be). */
+    onNotify?: (n: NotificationContent) => void;
 }
 
 /**
@@ -173,13 +187,13 @@ export interface SidebarHandle {
     seekTo: (seconds: number) => void;
 }
 
-export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, handle, pinned = false, onTogglePin, onOpenTrack,onSave, onDelete, onRefetch, onRestored, onTranscriptChange, pluginSummarizeEnabled, pluginPhotosynthesisEnabled, showSummarizeOllama = true, showSummarizeVenice = true, showSynthesizeVenice = true, showSynthesizePixabay = true, showSynthesizeUpload = true, onSummaryGenerated, cachedSummaries, onCacheSummary, allowDeletion = true, isLibrary = false, videoTags = [], onHandleClick, onAddTag, onRemoveTag, onTagsChanged, onSearchInLibrary, initialTab, showBiography = true, allowEditTranscriptOnNA = true, wdbs, allowEditWDBS = false, onWdbsUpdated, onWdbsChanged, onSelectDrive, driveContext, onVideoSelect, startAt, onManageTags, onTitleChanged }: Props, ref) {
+export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpen, onClose, transcript, loading, title, videoId, handle, pinned = false, onTogglePin, onOpenTrack,onSave, onDelete, onRefetch, onRestored, onTranscriptChange, pluginSummarizeEnabled, pluginPhotosynthesisEnabled, showSummarizeOllama = true, showSummarizeVenice = true, showSynthesizeVenice = true, showSynthesizePixabay = true, showSynthesizeUpload = true, onSummaryGenerated, cachedSummaries, onCacheSummary, allowDeletion = true, isLibrary = false, videoTags = [], onHandleClick, onAddTag, onRemoveTag, onTagsChanged, onSearchInLibrary, initialTab, showBiography = true, allowEditTranscriptOnNA = true, wdbs, allowEditWDBS = false, onWdbsUpdated, onWdbsChanged, onSelectDrive, driveContext, onVideoSelect, startAt, onManageTags, onTitleChanged, onViewCountChanged, onNotify }: Props, ref) {
     const [copied, setCopied] = useState(false);
     const [summaryCopied, setSummaryCopied] = useState(false);
     const [existsInDb, setExistsInDb] = useState(false);
     const [checkingDb, setCheckingDb] = useState(false);
     // A saved video's title catching up with YouTube, and whether YouTube still has it (sidebar/useVideoIdentity.ts).
-    const videoIdentity = useVideoIdentity({ videoId, saved: existsInDb, open: isOpen, onTitleChanged });
+    const videoIdentity = useVideoIdentity({ videoId, saved: existsInDb, open: isOpen, onTitleChanged, onViewCountChanged });
     // Set when the open video isn't in the library but IS sitting in this session's Trash: its id there, so a
     // "Restore" button can put it straight back instead of "Save" re-fetching it from YouTube as if new.
     const [trashId, setTrashId] = useState<number | null>(null);
@@ -221,8 +235,45 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     const [glossaryTerms, setGlossaryTerms] = useState<GlossaryTerm[]>([]);
     const [selectedTerm, setSelectedTerm] = useState<GlossaryTerm | null>(null);
     // The Summary and Transcript as read can be selected, and copied as plain text or markdown from a right-click.
-    const summarySelectable = useSelectableText();
-    const transcriptSelectable = useSelectableText();
+    // Citing what's selected into a note (the Notes section): the note open there last (the active note), one picked, or a
+    // new one. A transcript's quote is cited at the last timestamp before it; a summary's has no moment.
+    // Feature flags a DB owner sets (see lib/flags.ts): parts of this panel can be hidden or made read-only. Read here,
+    // above the right-click items below: those are built while this renders (useSelectableText calls them for an open
+    // menu), so anything they read has to be declared by then.
+    const { flags } = useFlags();
+    const activeNote = useActiveNote();
+    const [citing, setCiting] = useState<string | null>(null);
+    const canWriteNote = (n: Pick<Note, 'shared'>) => !n.shared || flags.allowEditSharedNotes;
+    const citedInto = (id: string, name: string) => {
+        setActiveNoteId(id);
+        onNotify?.({ message: `Cited in "${name}"`, type: 'success', action: { label: 'Open', onClick: () => openInternalLink('note', id) } });
+    };
+    const citeFailed = (e: unknown) => onNotify?.({ message: `Couldn't cite it: ${typeof e === 'string' ? e : (e as Error)?.message ?? e}`, type: 'error' });
+    const citeIn = (note: Pick<Note, 'id' | 'title' | 'body'>, text: string) => {
+        citeIntoNote(note.id, text).then(() => citedInto(note.id, noteDisplayTitle(note))).catch(citeFailed);
+    };
+    const citeInNew = (text: string) => {
+        // Filed where the video is.
+        createNote({ shared: false, body: text, drives: videoDrives })
+            .then(n => citedInto(n.id, 'Untitled'))
+            .catch(citeFailed);
+    };
+    const citeItems = (from: 'transcript' | 'summary') => (sel: SelectedText): ContextMenuItem[] => {
+        if (!flags.viewVisible.notes || !videoId || !sel.plain) return [];
+        const at = from === 'transcript' ? lastTimeBefore(sel.before + sel.plain.slice(0, 9)) : undefined;
+        // A transcript's own timestamps aren't part of what was said.
+        const words = from === 'transcript' ? sel.plain.replace(/\[?(?:\d{1,2}:)?\d{1,2}:[0-5]\d\]?\s*/g, '').trim() : sel.plain;
+        const text = buildCitation(words || sel.plain, title || videoId, videoId, at);
+        const active = activeNote && canWriteNote(activeNote) ? activeNote : null;
+        const name = active ? noteDisplayTitle(active) : '';
+        return [
+            ...(active ? [{ label: `Cite in "${name.length > 32 ? `${name.slice(0, 31)}…` : name}"`, icon: NotebookPen, divider: true, onClick: () => citeIn(active, text) }] : []),
+            { label: 'Cite in Note...', icon: NotebookPen, divider: !active, onClick: () => setCiting(text) },
+            { label: 'Cite in New Note', icon: Plus, onClick: () => citeInNew(text) },
+        ];
+    };
+    const summarySelectable = useSelectableText(citeItems('summary'));
+    const transcriptSelectable = useSelectableText(citeItems('transcript'));
     // A term's definition opened from here closes when the app goes somewhere else (its "search in Library", a link to
     // a Drive): the Sidebar itself closes then, and this window would otherwise stay on top of the new page.
     useCloseOnNavigate(selectedTerm !== null, () => setSelectedTerm(null));
@@ -253,24 +304,30 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         }
     };
     // Where the player is now, in seconds, asked of the embed page (it follows the player's own reports); null when it
-    // hasn't said (still loading, or no answer in time).
-    const askPlayerTime = () => new Promise<number | null>(resolve => {
+    // hasn't said (still loading, or no answer in time). `playing`: whether it was playing when asked.
+    const askPlayer = () => new Promise<{ seconds: number; playing: boolean } | null>(resolve => {
         const player = playerRef.current?.contentWindow;
         if (!player || !embedPort) { resolve(null); return; }
         const id = Math.random().toString(36).slice(2);
-        const done = (seconds: number | null) => {
+        const done = (answer: { seconds: number; playing: boolean } | null) => {
             window.removeEventListener('message', onAnswer);
             window.clearTimeout(timer);
-            resolve(seconds);
+            resolve(answer);
         };
         const onAnswer = (e: MessageEvent) => {
             if (e.source !== player || e.data?.type !== 'kinesis-time' || e.data.id !== id) return;
-            done(typeof e.data.seconds === 'number' && Number.isFinite(e.data.seconds) ? e.data.seconds : null);
+            done(typeof e.data.seconds === 'number' && Number.isFinite(e.data.seconds) ? { seconds: e.data.seconds, playing: e.data.playing === true } : null);
         };
         const timer = window.setTimeout(() => done(null), 1000);
         window.addEventListener('message', onAnswer);
         player.postMessage({ type: 'kinesis-time', id }, `http://localhost:${embedPort}`);
     });
+    const askPlayerTime = () => askPlayer().then(answer => answer?.seconds ?? null);
+    // Pauses the player, or sets it playing again (the embed page does it).
+    const setPlayerPlaying = (play: boolean) => {
+        const player = playerRef.current?.contentWindow;
+        if (player && embedPort) player.postMessage({ type: play ? 'kinesis-play' : 'kinesis-pause' }, `http://localhost:${embedPort}`);
+    };
     // "Copy link at time": a link to this video starting where the player is, ready to paste into any text (a timed
     // link, lib/internal-links.ts). At the very start, or with no time to go on, it's the plain link, and says so.
     const [timedLinkCopied, setTimedLinkCopied] = useState<string | null>(null);
@@ -285,6 +342,51 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
             setTimedLinkCopied("Couldn't copy");
         }
         window.setTimeout(() => setTimedLinkCopied(null), 2000);
+    };
+    // "Cite Moment": the video waits where it is while the thought is written in the box under the player
+    // (sidebar/MomentComposer.tsx); the moment's link and the thought then go into the active note (or a new one), and
+    // the video plays on if it was playing.
+    const [moment, setMoment] = useState<{ at: number; wasPlaying: boolean } | null>(null);
+    // Which note it goes into can be changed from the box: picking one makes it the active note (so the Notes section
+    // opens on it), and "New note" starts one for this moment.
+    const [momentInNew, setMomentInNew] = useState(false);
+    const [pickingMomentNote, setPickingMomentNote] = useState(false);
+    const momentNote = !momentInNew && activeNote && canWriteNote(activeNote) ? activeNote : null;
+    // The thought as typed so far. Kept here, not in the box: a thought not yet added is unsaved work, asked about
+    // before it's dropped (the box's own Cancel and Esc below; leaving the video, in the unsaved-changes guard).
+    const [momentThought, setMomentThought] = useState('');
+    const [confirmDropThought, setConfirmDropThought] = useState(false);
+    const thoughtUnsaved = moment !== null && momentThought.trim() !== '';
+    useEffect(() => { setMoment(null); setMomentThought(''); setPickingMomentNote(false); setConfirmDropThought(false); }, [videoId, isOpen]);
+    const citeMoment = async () => {
+        if (!videoId || moment) return;
+        const answer = await askPlayer();
+        if (answer === null) {
+            onNotify?.({ message: "The player hasn't said where it is yet. Press play, then try again.", type: 'error' });
+            return;
+        }
+        setPlayerPlaying(false);
+        setMomentInNew(false);
+        setMomentThought('');
+        setMoment({ at: answer.seconds, wasPlaying: answer.playing });
+    };
+    // `resume`: the video plays on if it was playing (not when the video is being left).
+    const closeMoment = (resume = true) => {
+        if (resume && moment?.wasPlaying) setPlayerPlaying(true);
+        setMoment(null);
+        setMomentThought('');
+        setConfirmDropThought(false);
+    };
+    const addMoment = (resume = true) => {
+        if (!videoId || !moment) return;
+        const text = buildMomentNote(title || videoId, videoId, moment.at, momentThought);
+        if (momentNote) citeIn(momentNote, text);
+        else citeInNew(text);
+        closeMoment(resume);
+    };
+    const cancelMoment = () => {
+        if (thoughtUnsaved) setConfirmDropThought(true);
+        else closeMoment();
     };
     // Listened for on the document: the Summary and Transcript sit in their own parts of the panel, apart from the
     // player's, so no one element of the panel holds every chip. Only this panel renders them.
@@ -327,14 +429,12 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     const openSequenceVideo = useCallback((id: string) => {
         getVideoById(id).then(v => { if (v) onVideoSelect?.(v); }).catch(() => {});
     }, [onVideoSelect]);
-    // Feature flags a DB owner sets (see lib/flags.ts): parts of this panel can be hidden or made read-only.
-    const { flags } = useFlags();
     const { labels } = useWorkspace();
     // Terms (glossary entries with a definition) and Tags (Quick Tags, no definition) are separate
     // tabs; showVideoTags turns both on, and showQuickTags off also drops Tags.
     const showTermsTab = flags.showVideoTags;
     const showTagsTab = flags.showVideoTags && flags.showQuickTags;
-    const availableLeftTabs = ([showTermsTab && 'terms', showTagsTab && 'tags', flags.showSimilarVideos && 'similar', flags.showAttachments && 'attachments', 'linked'].filter(Boolean)) as LeftTab[];    const activeLeftTab = availableLeftTabs.includes(leftTab) ? leftTab : availableLeftTabs[0];
+    const availableLeftTabs = ([showTermsTab && 'terms', showTagsTab && 'tags', flags.showAttachments && 'attachments', flags.showSimilarVideos && 'similar', 'linked'].filter(Boolean)) as LeftTab[];    const activeLeftTab = availableLeftTabs.includes(leftTab) ? leftTab : availableLeftTabs[0];
     const [similarVideos, setSimilarVideos] = useState<Video[]>([]);
     const [loadingSimilar, setLoadingSimilar] = useState(false);
     const fetchedSimilarForRef = useRef<string | null>(null);
@@ -701,15 +801,19 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     // calling onClose directly; App.tsx does the same (via the imperative handle) before switching
     // to a different video while this one's mid-edit, so "accidentally leaving" can't silently
     // drop a draft either way.
-    const hasUnsavedChanges = (isEditingTranscript && editedTranscript !== transcript) || (isEditingSummary && editedSummary !== (summary ?? ''));
-    const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+    // A thought typed for Cite Moment and not yet added counts too, when the video itself is being left (`edit` below
+    // is the draft alone: going back to the Transcript leaves the thought's box where it is).
+    const editUnsaved = (isEditingTranscript && editedTranscript !== transcript) || (isEditingSummary && editedSummary !== (summary ?? ''));
+    const hasUnsavedChanges = editUnsaved || thoughtUnsaved;
+    const [pendingLeave, setPendingLeave] = useState<{ proceed: () => void; edit: boolean; thought: boolean } | null>(null);
     // What to tell the caller when the user picks Cancel (only closing the app asks).
     const onCancelLeaveRef = useRef<(() => void) | undefined>(undefined);
-    const requestLeave = useCallback((proceed: () => void, onCancel?: () => void) => {
-        if (!hasUnsavedChanges) { proceed(); return; }
+    const requestLeave = useCallback((proceed: () => void, onCancel?: () => void, scope: 'video' | 'edit' = 'video') => {
+        const thought = scope === 'video' && thoughtUnsaved;
+        if (!editUnsaved && !thought) { proceed(); return; }
         onCancelLeaveRef.current = onCancel;
-        setPendingLeave(() => proceed);
-    }, [hasUnsavedChanges]);
+        setPendingLeave({ proceed, edit: editUnsaved, thought });
+    }, [editUnsaved, thoughtUnsaved]);
     const cancelLeave = () => {
         setPendingLeave(null);
         const onCancel = onCancelLeaveRef.current;
@@ -717,20 +821,24 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         onCancel?.();
     };
     const discardAndLeave = () => {
-        const proceed = pendingLeave;
+        const leave = pendingLeave;
         setPendingLeave(null);
         onCancelLeaveRef.current = undefined;
         setIsEditingTranscript(false);
         setIsEditingSummary(false);
-        proceed?.();
+        if (leave?.thought) closeMoment(false);
+        leave?.proceed();
     };
     const saveAndLeave = async () => {
-        const proceed = pendingLeave;
+        const leave = pendingLeave;
         setPendingLeave(null);
         onCancelLeaveRef.current = undefined;
-        if (isEditingTranscript) await handleSaveTranscript();
-        else if (isEditingSummary) await handleSaveEditedSummary();
-        proceed?.();
+        if (leave?.thought) addMoment(false);
+        if (leave?.edit) {
+            if (isEditingTranscript) await handleSaveTranscript();
+            else if (isEditingSummary) await handleSaveEditedSummary();
+        }
+        leave?.proceed();
     };
     useImperativeHandle(ref, () => ({ hasUnsavedChanges: () => hasUnsavedChanges, requestLeave, followSequence: setActiveSeqDrive, seekTo: (seconds: number) => seekRef.current(seconds) }), [hasUnsavedChanges, requestLeave]);
 
@@ -751,20 +859,20 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         };
     }, [isOpen]);
 
-    // The top-level Drives this video is in (its own plus any "Also in" ones), e.g. ":UAP". Terms
-    // filed under one of them are offered first when adding a term (see VideoTagsPanel).
-    const videoDriveRoots = useMemo(() => {
-        const roots = new Set<string>();
+    // The Drives this video is in (its own plus any "Also in" ones), e.g. ":FRENCH-CH2". Terms filed
+    // under one of them or a Drive above it (:FRENCH) are offered first when adding a term (see VideoTagsPanel).
+    const videoDrives = useMemo(() => {
+        const drives = new Set<string>();
         for (const p of [primaryWdbs, ...wdbsLinks]) {
             const display = decodeWdbs(p);
-            if (display) roots.add(':' + display.slice(1).split('-')[0]);
+            if (display) drives.add(display);
         }
-        return [...roots];
+        return [...drives];
     }, [primaryWdbs, wdbsLinks]);
-    const driveTerms = useMemo(() => {
-        const rootsLower = new Set(videoDriveRoots.map(r => r.toLowerCase()));
-        return new Set(glossaryTerms.filter(t => t.drives.some(d => rootsLower.has(d.toLowerCase()))).map(t => t.term));
-    }, [videoDriveRoots, glossaryTerms]);
+    const driveTerms = useMemo(
+        () => new Set(glossaryTerms.filter(t => driveFit(t.drives, videoDrives) > 0).map(t => t.term)),
+        [videoDrives, glossaryTerms],
+    );
 
     useEffect(() => {
         if (!isOpen) {
@@ -987,7 +1095,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
             setShowSummary(false);
             setIsEditingSummary(false);
             setIsEditingTranscript(false);
-        });
+        }, undefined, 'edit');
     }, [requestLeave]);
 
     // Error sentinels are always short, app-generated strings (see App.tsx), so gate the
@@ -1218,7 +1326,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                     <GlossaryDetectPanel
                                         text={isEditingTranscript ? editedTranscript : editedSummary}
                                         glossaryTerms={glossaryTerms}
-                                        driveRoots={videoDriveRoots}
+                                        driveRoots={videoDrives}
                                         onApply={applyGlossaryLinks}
                                         onJump={showInEditor}
                                 onOpenTerm={onSearchInLibrary ? setSelectedTerm : undefined}
@@ -1282,7 +1390,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                     </div>
                                                 )}
                                                 {/* Bottom left, across from Open in YouTube. Stays shown while it reports the copy. */}
-                                                <div className={`absolute bottom-2 left-2 transition-opacity ${timedLinkCopied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                                                <div className={`absolute bottom-2 left-2 flex items-center gap-1.5 transition-opacity ${timedLinkCopied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                                     <button
                                                         onClick={() => void copyTimedLink()}
                                                         className="bg-black/80 hover:bg-black text-white px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-white/10 cursor-pointer"
@@ -1291,6 +1399,17 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                         {timedLinkCopied ? <Check className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
                                                         {timedLinkCopied ?? 'Copy Link at Time'}
                                                     </button>
+                                                    {flags.viewVisible.notes && (
+                                                        <button
+                                                            onClick={() => void citeMoment()}
+                                                            className="bg-black/80 hover:bg-black text-white px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-white/10 cursor-pointer"
+                                                            title={activeNote && canWriteNote(activeNote)
+                                                                ? `Pause here and write a thought about this moment, added to "${noteDisplayTitle(activeNote)}"`
+                                                                : 'Pause here and write a thought about this moment, in a new note'}
+                                                        >
+                                                            <NotebookPen className="w-3 h-3" /> Cite Moment
+                                                        </button>
+                                                    )}
                                                 </div>
                                                 {flags.showOpenInYouTube && (
                                                 <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1305,6 +1424,35 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                 )}
                                             </div>
                                             )}
+                                            {flags.showVideoPlayer && moment && (
+                                                <MomentComposer
+                                                    key={moment.at}
+                                                    at={moment.at}
+                                                    noteName={momentNote ? noteDisplayTitle(momentNote) : null}
+                                                    thought={momentThought}
+                                                    onThought={setMomentThought}
+                                                    onChangeNote={() => setPickingMomentNote(true)}
+                                                    onAdd={() => addMoment()}
+                                                    onCancel={cancelMoment}
+                                                />
+                                            )}
+                                            {moment && confirmDropThought && (
+                                                <ConfirmDialog
+                                                    title="Discard this thought?"
+                                                    message="What you wrote for this moment isn't in your note yet."
+                                                    confirmLabel="Discard"
+                                                    onConfirm={() => closeMoment()}
+                                                    onCancel={() => setConfirmDropThought(false)}
+                                                />
+                                            )}
+                                            {moment && pickingMomentNote && (
+                                                <NotePicker
+                                                    canEditShared={flags.allowEditSharedNotes}
+                                                    onPick={n => { setPickingMomentNote(false); setMomentInNew(false); setActiveNoteId(n.id); }}
+                                                    onNew={() => { setPickingMomentNote(false); setMomentInNew(true); }}
+                                                    onClose={() => setPickingMomentNote(false)}
+                                                />
+                                            )}
                                             {/* With the player hidden the overlay button has nothing to sit on. */}
                                             {!flags.showVideoPlayer && flags.showOpenInYouTube && (
                                                 <button
@@ -1318,26 +1466,27 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
 
                                             {existsInDb && availableLeftTabs.length > 0 && (
                                                 <div className="mt-6 p-4 bg-white/5 rounded-xl border border-white/5">
-                                                    {/* No overflow-hidden here or on the row below: each label truncates to an
-                                                        ellipsis on its own (min-w-0 + truncate), so the row itself never needs to
-                                                        clip anything, and this card is free to grow to fit whatever tab is active
-                                                        below (Terms/Tags/Similar/Attachments) and push the pane's own scroll. */}
+                                                    {/* No overflow-hidden here or on the row below: tabs that don't fit go into
+                                                        the row's More dropdown, so the row never needs to clip anything (and the
+                                                        dropdown can hang below it), and this card is free to grow to fit whatever
+                                                        tab is active below and push the pane's own scroll. */}
                                                     <UnderlineTabs<LeftTab>
                                                         className="flex items-center gap-4 mb-3"
+                                                        overflow="more"
                                                         active={activeLeftTab}
                                                         onChange={setLeftTab}
                                                         tabs={[
                                                             ...(showTermsTab ? [{ id: 'terms' as const, label: 'Terms', icon: BookA }] : []),
                                                             ...(showTagsTab ? [{ id: 'tags' as const, label: 'Tags', icon: Tags }] : []),
-                                                            ...(flags.showSimilarVideos ? [{ id: 'similar' as const, label: 'Similar', title: 'Similar Videos', icon: ListVideo }] : []),
                                                             ...(flags.showAttachments ? [{
-                                                                id: 'attachments' as const, label: 'Attached', title: 'Attachments', icon: Paperclip,
+                                                                id: 'attachments' as const, label: 'Attachments', icon: Paperclip,
                                                                 badge: attachmentCount > 0 ? (
                                                                     <span className="shrink-0 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-[#3f3f3f] text-white text-[9px] font-bold leading-none normal-case tracking-normal">
                                                                         {attachmentCount}
                                                                     </span>
                                                                 ) : undefined,
                                                             }] : []),
+                                                            ...(flags.showSimilarVideos ? [{ id: 'similar' as const, label: 'Similar Videos', icon: ListVideo }] : []),
                                                             { id: 'linked' as const, label: 'Backlinks', icon: Link2 },
                                                         ]}
                                                     />
@@ -1347,9 +1496,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                             videoTags={videoTags}
                                                             detectedTerms={activeLeftTab === 'terms' ? linkedTerms : undefined}
                                                             glossaryTerms={glossaryTerms}
-                                                            preferredDrives={videoDriveRoots}
+                                                            preferredDrives={videoDrives}
                                                             priorityTerms={activeLeftTab === 'terms' ? driveTerms : undefined}
-                                                            priorityLabel={videoDriveRoots.join(', ')}
+                                                            priorityLabel={videoDrives.join(', ')}
                                                             canEdit={flags.allowEditTermsAndTags}
                                                             onAddTag={onAddTag}
                                                             onRemoveTag={onRemoveTag}
@@ -1620,7 +1769,8 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                              <div ref={previewScrollRef} className="absolute inset-0 p-3 overflow-y-auto custom-scrollbar whitespace-normal">
                                                                  <div className="leading-relaxed prose dark:prose-invert prose-sm max-w-none">
 <ReactMarkdown
-                                                                     remarkPlugins={[remarkGfm, remarkHighlight, remarkTimestamps, remarkEmbeds, remarkSourceLines]}
+                                                                     remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, remarkTimestamps, remarkEmbeds, remarkSourceLines]}
+                                                                     rehypePlugins={CODE_HIGHLIGHT}
  urlTransform={markdownUrlTransform}
                                                                      components={{
                                                                          a: MarkdownLink,
@@ -1696,9 +1846,18 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                         button below already does this while the Summary is showing, so
                                                         there's one copy control per view, not two disagreeing ones. */}
                                                     {summarySelectable.menu}
+                                                    {citing !== null && (
+                                                        <NotePicker
+                                                            canEditShared={flags.allowEditSharedNotes}
+                                                            onPick={n => { const text = citing; setCiting(null); citeIn(n, text); }}
+                                                            onNew={() => { const text = citing; setCiting(null); citeInNew(text); }}
+                                                            onClose={() => setCiting(null)}
+                                                        />
+                                                    )}
                                                     <div data-find-scope {...summarySelectable.props} className={`${SELECTABLE_CLASS} leading-relaxed prose dark:prose-invert prose-sm max-w-none`}>
                                                         <ReactMarkdown
-                                                            remarkPlugins={[remarkGfm, remarkHighlight, remarkTimestamps, remarkEmbeds]}
+                                                            remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, remarkTimestamps, remarkEmbeds]}
+                                                            rehypePlugins={CODE_HIGHLIGHT}
  urlTransform={markdownUrlTransform}
                                                             components={{
                                                                 a: MarkdownLink,
@@ -2058,7 +2217,9 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                 a different video via the imperative handle above). */}
             {pendingLeave && (
                 <UnsavedChangesModal
-                    message={<>You have unsaved changes to this {isEditingTranscript ? "transcript" : "summary"}. Save them before leaving?</>}
+                    message={pendingLeave.edit
+                        ? <>You have unsaved changes to this {isEditingTranscript ? "transcript" : "summary"}{pendingLeave.thought ? ', and a thought not yet added to your note' : ''}. Save them before leaving?</>
+                        : <>You wrote a thought for Cite Moment that isn't in your note yet. Save adds it to {momentNote ? <>"{noteDisplayTitle(momentNote)}"</> : 'a new note'} before leaving.</>}
                     saving={isSaving}
                     onCancel={cancelLeave}
                     onDiscard={discardAndLeave}
@@ -2067,7 +2228,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
             )}
 
             {/* The video was renamed on YouTube (found as it opened): just said, already taken over, nothing to choose. */}
-            {videoIdentity.renamed && isOpen && (
+            {videoIdentity.renamed && isOpen && !flags.doNotNotifyVideoTitleChange && (
                 <Modal
                     onClose={videoIdentity.dismissRenamed}
                     layer="top"

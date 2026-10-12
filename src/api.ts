@@ -61,6 +61,12 @@ export interface DbDetails {
     attachment_count: number;
     /** What attachments take up in the database, after compression. */
     attachment_bytes: number;
+    /** The Calendar's tracks, the notes and workbooks (shared and personal together), the logs and their days. */
+    track_count: number;
+    note_count: number;
+    workbook_count: number;
+    log_count: number;
+    log_entry_count: number;
 }
 
 export interface DisplaySettings {
@@ -380,6 +386,8 @@ export interface ExportSummary {
     glossary_terms: number;
     biographies: number;
     calendar_tracks: number;
+    notes: number;
+    logs: number;
     folder_path: string;
 }
 
@@ -419,6 +427,10 @@ export interface ObsidianOptions {
     biographies: boolean;
     /** A note per Calendar track, its items as a checklist. */
     calendar: boolean;
+    /** The Notes section's notes, shared and personal. */
+    notes: boolean;
+    /** The Logs section's logs: a note each, its days as a table. */
+    logs: boolean;
     drives: DriveScopeOptions;
 }
 
@@ -494,7 +506,7 @@ export async function deleteGlossaryTerm(term: string, drives: string[]): Promis
 // What was deleted this session, kept in the app's memory (never saved), so a delete can be undone. It's emptied
 // when the app closes or the workspace changes.
 
-export type TrashKind = 'video' | 'glossary';
+export type TrashKind = 'video' | 'glossary' | 'note';
 
 export interface TrashEntry {
     id: number;
@@ -526,6 +538,8 @@ export interface VideoIdentityCheck {
     oldTitle: string | null;
     newTitle: string | null;
     reason: string | null;
+    /** Its view count now, when that had changed since it was stored (already saved); null when it hadn't. */
+    viewCount: string | null;
 }
 
 export async function checkVideoIdentity(videoId: string): Promise<VideoIdentityCheck> {
@@ -624,17 +638,20 @@ export async function trashEmpty(kind: TrashKind): Promise<void> {
     notifyTrashChanged();
 }
 
-/** A top-level Drive (level 1) a Standard Glossary Tag can be filed under. */
+/** A Drive a Standard Glossary Tag can be filed under, with the Drives beneath it. getWdbsRoots
+ *  returns the top level; deeper levels hang off `children`. */
 export interface WdbsRoot {
-    /** Display path, e.g. ":CRYPTO" (what assignments are stored as). */
+    /** Display path, e.g. ":CRYPTO" or ":CRYPTO-DOAC" (what assignments are stored as). */
     path: string;
-    /** The bare name shown in the UI, e.g. "CRYPTO". */
+    /** The node's own name shown in the UI, e.g. "CRYPTO" or "DOAC". */
     segment: string;
     /** The curated alias, when it differs from `segment`. */
     alias: string | null;
+    /** The Drives one level down, sorted by name. */
+    children: WdbsRoot[];
 }
 
-/** Adds or edits one definition and the top-level Drives it's filed under (one row).
+/** Adds or edits one definition and the Drives (any level) it's filed under (one row).
  *  `original` is the entry being edited (its term and Drives): its row is replaced, and filing under
  *  a Drive where the term already has a different definition is refused. Quick Tags (empty
  *  definition) are always uncategorized; no Drives = uncategorized. */
@@ -644,6 +661,74 @@ export async function saveGlossaryTerm(original: { term: string; drives: string[
 
 export async function getWdbsRoots(): Promise<WdbsRoot[]> {
     return await invoke("get_wdbs_roots");
+}
+
+// ─── Notes (src-tauri/src/db/notes.rs) ───────────────────────────────────────
+// Pages of the reader's own writing, citing videos, moments and passages as ordinary in-app links. Shared notes travel
+// with the workspace (a Kinpak); personal ones are each reader's own, like pins, and allowed in a read-only workspace.
+
+export interface Note {
+    id: string;
+    /** "" while it's Untitled. */
+    title: string;
+    body: string;
+    /** The Drives it's filed under, at any level (":GERMAN-CH2"), as a glossary term is. */
+    drives: string[];
+    shared: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Fired (on window) after a note is made, changed, moved or deleted anywhere in the app, with the note's id as detail
+ *  (null for "anything"). The Notes section and the cite commands keep in step through it. */
+export const NOTES_CHANGED_EVENT = 'kinesis:notes-changed';
+
+function notesChanged(id: string | null) {
+    window.dispatchEvent(new CustomEvent<string | null>(NOTES_CHANGED_EVENT, { detail: id }));
+}
+
+/** Every note, shared and personal, the most recently changed first. */
+export async function listNotes(): Promise<Note[]> {
+    return await invoke("list_notes");
+}
+
+export async function getNote(id: string): Promise<Note | null> {
+    return await invoke("get_note", { id });
+}
+
+export async function createNote(note: { shared: boolean; title?: string; body?: string; drives?: string[] }): Promise<Note> {
+    const made = await invoke("create_note", { shared: note.shared, title: note.title ?? '', body: note.body ?? '', drives: note.drives ?? [] }) as Note;
+    notesChanged(made.id);
+    return made;
+}
+
+/** Saves a note. Doesn't announce itself: the Notes section is what saves as you type, and it already knows. */
+export async function updateNote(id: string, title: string, body: string, drives: string[]): Promise<Note> {
+    return await invoke("update_note", { id, title, body, drives });
+}
+
+/** Adds a paragraph (a citation) to the end of a note. */
+export async function appendToNote(id: string, text: string): Promise<Note> {
+    const note = await invoke("append_to_note", { id, text }) as Note;
+    notesChanged(id);
+    return note;
+}
+
+/** Makes a note shared or personal (it keeps its id, its links and its Calendar places). */
+export async function setNoteShared(id: string, shared: boolean): Promise<Note> {
+    const note = await invoke("set_note_shared", { id, shared }) as Note;
+    notesChanged(id);
+    return note;
+}
+
+/** Deletes a note to the Trash. Resolves to its Trash id (null if there was no such note). */
+export async function deleteNote(id: string): Promise<number | null> {
+    const trashId = await invoke("delete_note", { id }) as number | null;
+    notesChanged(id);
+    window.dispatchEvent(new Event(TRASH_CHANGED_EVENT));
+    // Its places on Calendar tracks turned into tasks.
+    window.dispatchEvent(new Event(CALENDAR_CHANGED_EVENT));
+    return trashId;
 }
 
 // ── Drive sequences (see db/sequences.rs) ────────────────────────────────────
@@ -749,6 +834,17 @@ export async function clearDriveSequence(drive: string): Promise<void> {
 /** How a track moves along: when the last entry is done, on its schedule's days, or both. */
 export type CalendarAdvanceMode = 'completion' | 'calendar' | 'hybrid';
 
+/** How a dated track's days repeat, from its start (Repeat in db/calendar.rs):
+ *   - `weekly`: on its weekdays, every `every` weeks (1 = every week, 2 = every other week);
+ *   - `interval`: every `every` days counted from its start (2 = every other day); its weekdays aren't used;
+ *   - `monthly`: the `ordinal`th of each of its weekdays in every month (1 = first ... 4 = fourth, 5 = last). */
+export type CalendarRepeatKind = 'weekly' | 'interval' | 'monthly';
+export interface CalendarRepeat {
+    kind: CalendarRepeatKind;
+    every: number;
+    ordinal: number;
+}
+
 export interface CalendarTrack {
     id: number;
     name: string;
@@ -758,8 +854,11 @@ export interface CalendarTrack {
     loopEntries: boolean;
     /** Its order is read live off its Drive's sequence. */
     sourceDriveSequence: boolean;
-    /** The days its schedule runs on, 1 (Monday) to 7 (Sunday). Empty for a `completion` track. */
+    /** The days its schedule runs on, 1 (Monday) to 7 (Sunday). Empty for a `completion` track, and for one that repeats
+     *  every N days. */
     weekdays: number[];
+    /** How those days repeat; every week for a `completion` track (which has none). */
+    repeat: CalendarRepeat;
     startDate: string;
     archived: boolean;
     createdAt: string;
@@ -777,6 +876,8 @@ export interface CalendarTrackInput {
     loopEntries: boolean;
     sourceDriveSequence: boolean;
     weekdays: number[];
+    /** How its days repeat; every week on its weekdays when left out. */
+    repeat?: CalendarRepeat;
     /** When its schedule starts ("2026-09-07"); today when left out. */
     startDate?: string;
     /** A time window on its days; both null for any time that day. It can't clash with another track's (the backend refuses). */
@@ -788,8 +889,12 @@ export interface CalendarEntry {
     /** 0 for a video in a Drive's sequence that has no row of its own yet. */
     id: number;
     videoId: string | null;
+    /** A note's entry (the Notes section): the note's id. Never with a video. */
+    noteId: string | null;
+    /** The workbook the note was added as a page of, which it opens in (null for a note added on its own). */
+    workbookId: string | null;
     label: string;
-    /** What to call it: its label, else its video's title. */
+    /** What to call it: its label, else its video's title, else its note's ("Untitled" without one). */
     title: string;
     targetDate: string | null;
     /** A task's icon, a name from lib/calendar-icons.ts ("tree-palm"); "" for the default. */
@@ -881,6 +986,9 @@ export interface CalendarDayItem {
     /** 0 for a video in a Drive's sequence with no row of its own yet. */
     entryId: number;
     videoId: string | null;
+    /** A note's entry: the note, to open it from its chip; and the workbook it's a page of, if added as one. */
+    noteId: string | null;
+    workbookId: string | null;
     title: string;
     icon: string;
     description: string;
@@ -958,6 +1066,11 @@ export async function addCalendarEntry(trackId: number, entry: CalendarEntryInpu
     });
 }
 
+/** Adds a note (the Notes section) to the end of a track, named after it. A track holds a note once. */
+export async function addCalendarNoteEntry(trackId: number, noteId: string, extras: { icon?: string; description?: string; priority?: number } = {}): Promise<number> {
+    return await changeCalendar("add_calendar_note_entry", { trackId, noteId, ...extras });
+}
+
 export async function updateCalendarEntry(id: number, entry: { label: string; targetDate?: string | null; icon?: string; description?: string; priority?: number }): Promise<void> {
     await changeCalendar("update_calendar_entry", {
         id, label: entry.label, targetDate: entry.targetDate ?? null, icon: entry.icon, description: entry.description, priority: entry.priority,
@@ -996,7 +1109,116 @@ export async function clearPins(): Promise<void> {
     await invoke("clear_pins");
 }
 
-export type GraphNodeKind = 'video' | 'glossary' | 'bio';
+// ── Workbooks (src-tauri/src/db/workbooks.rs) ────────────────────────────────────────────────────
+
+/** Notes in an order of the author's choosing. It holds no text of its own: a name, and which notes in what order. */
+export interface Workbook {
+    id: string;
+    title: string;
+    /** Shared (it holds shared notes only), or the reader's own. */
+    shared: boolean;
+    /** Its notes, in order (the ones there are to read: a deleted note isn't listed). */
+    noteIds: string[];
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Fired (on window) when a workbook is made, changed or deleted. */
+export const WORKBOOKS_CHANGED_EVENT = 'kinesis:workbooks-changed';
+async function changeWorkbooks<T>(command: string, args: Record<string, unknown>): Promise<T> {
+    const result = await invoke<T>(command, args);
+    window.dispatchEvent(new Event(WORKBOOKS_CHANGED_EVENT));
+    return result;
+}
+
+export async function listWorkbooks(): Promise<Workbook[]> {
+    return await invoke("list_workbooks");
+}
+export async function getWorkbook(id: string): Promise<Workbook | null> {
+    return await invoke("get_workbook", { id });
+}
+export const createWorkbook = (shared: boolean, title: string) => changeWorkbooks<Workbook>("create_workbook", { shared, title });
+export const renameWorkbook = (id: string, title: string) => changeWorkbooks<Workbook>("rename_workbook", { id, title });
+/** `withNotes`: its notes are shared (or made personal) with it, all or none. Without it, sharing one that holds
+ *  personal notes is refused (the message says which to share first). */
+export async function setWorkbookShared(id: string, shared: boolean, withNotes = false): Promise<Workbook> {
+    const book = await changeWorkbooks<Workbook>("set_workbook_shared", { id, shared, withNotes });
+    if (withNotes) notesChanged(null);
+    return book;
+}
+/** Its notes stay. */
+export const deleteWorkbook = (id: string) => changeWorkbooks<void>("delete_workbook", { id });
+/** A personal note isn't taken into a shared workbook: the error says to share the note first. */
+export const addNoteToWorkbook = (id: string, noteId: string) => changeWorkbooks<Workbook>("add_note_to_workbook", { id, noteId });
+export const removeNoteFromWorkbook = (id: string, noteId: string) => changeWorkbooks<Workbook>("remove_note_from_workbook", { id, noteId });
+export const reorderWorkbook = (id: string, order: string[]) => changeWorkbooks<Workbook>("reorder_workbook", { id, order });
+/** Adds a workbook's notes to the end of a Calendar track, in its order: all of them, or from page `fromPage` (1 for
+ *  the first) on. Resolves to how many were added (the ones already on the track are left where they are). */
+export async function addCalendarWorkbook(trackId: number, workbookId: string, fromPage?: number): Promise<number> {
+    return await changeCalendar("add_calendar_workbook", { trackId, workbookId, fromPage: fromPage ?? null });
+}
+
+// ── Logs (src-tauri/src/db/logs.rs) ──────────────────────────────────────────────────────────────
+
+export interface Log {
+    id: string;
+    name: string;
+    /** How many entries it has (0: nothing written in it yet). */
+    entries: number;
+    /** The date of its latest entry ("2026-10-10"), or null while it has none. */
+    lastDate: string | null;
+    createdAt: string;
+    /** Its bell: on a day nothing's been written in it, the pin menu says so. */
+    remind: boolean;
+    /** What a day's Entry starts as, before anything is written for it (lib/logs.ts). */
+    entryTemplate: LogEntryTemplate;
+}
+
+/** A log's entry template: `all` for any day, `days` (seven, Sunday first) for a weekday with its own. All empty for
+ *  none. `{{weekday}}` and `{{date}}` in a text are filled in for the day. */
+export interface LogEntryTemplate {
+    all: string;
+    days: string[];
+}
+
+export interface LogEntry {
+    id: number;
+    logId: string;
+    /** The day it was made. Never changed. */
+    date: string;
+    title: string;
+    description: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
+/** Fired (on window) when a log is made, renamed or deleted, its bell is turned, or a day is written in one: the pin
+ *  menu's reminders follow it. */
+export const LOGS_CHANGED_EVENT = 'kinesis:logs-changed';
+async function changeLogs<T>(command: string, args: Record<string, unknown>): Promise<T> {
+    const result = await invoke<T>(command, args);
+    window.dispatchEvent(new Event(LOGS_CHANGED_EVENT));
+    return result;
+}
+
+export async function listLogs(): Promise<Log[]> { return await invoke("list_logs"); }
+export const createLog = (name: string) => changeLogs<Log>("create_log", { name });
+export const renameLog = (id: string, name: string) => changeLogs<Log>("rename_log", { id, name });
+/** Deletes a log and everything written in it. */
+export const deleteLog = (id: string) => changeLogs<void>("delete_log", { id });
+/** Sets (or, all empty, clears) what a day's Entry starts as in a log. */
+export const setLogEntryTemplate = (id: string, template: LogEntryTemplate) => changeLogs<Log>("set_log_entry_template", { id, template });
+/** Turns a log's bell on or off. */
+export const setLogRemind = (id: string, remind: boolean) => changeLogs<Log>("set_log_remind", { id, remind });
+/** The logs with their bell on that have nothing written today. */
+export async function listLogsDue(): Promise<Log[]> { return await invoke("list_logs_due", { today: calendarToday() }); }
+export async function listLogEntries(logId: string): Promise<LogEntry[]> { return await invoke("list_log_entries", { logId }); }
+/** Writes a log's day, which is one row: made, changed, or removed when both are left empty (null). */
+export async function writeLogDay(logId: string, date: string, title: string, description: string): Promise<LogEntry | null> {
+    return await changeLogs("write_log_day", { logId, date, title, description });
+}
+
+export type GraphNodeKind = 'video' | 'glossary' | 'bio' | 'note';
 
 export interface GraphNode {
     kind: GraphNodeKind;
@@ -1013,7 +1235,7 @@ export interface LinkGraph {
     edges: { a: number; b: number; kind: 'link' | 'creator' }[];
 }
 
-/** Every video, term and person, and the links and creators connecting them (the graph view). */
+/** Every video, term, person and note, and the links and creators connecting them (the graph view). */
 export async function getLinkGraph(): Promise<LinkGraph> {
     return await invoke("get_link_graph");
 }
@@ -1256,11 +1478,12 @@ export async function getBiographies(): Promise<BiographyEntry[]> {
 
 /** One text that links to something: a row of its Backlinks list (see src-tauri/src/db/links.rs's find_backlinks). */
 export interface Backlink {
-    /** Which text: a video's "summary", "transcript" or "note", a person's "bio", a term's "definition". */
-    source: 'summary' | 'transcript' | 'note' | 'bio' | 'definition';
+    /** Which text: a video's "summary", "transcript" or "note", a person's "bio", a term's "definition", or a note of the
+     *  Notes section ("notePage", with its id as `key`). */
+    source: 'summary' | 'transcript' | 'note' | 'bio' | 'definition' | 'notePage';
     /** The video the text belongs to (summary, transcript, note). */
     videoId: string | null;
-    /** The person's handle (bio) or the term (definition). */
+    /** The person's handle (bio), the term (definition) or the note's id (notePage). */
     key: string | null;
     /** The video's title, the person's name, or the term. */
     title: string;
@@ -1296,6 +1519,8 @@ export interface ChannelIdentityCheck {
     renamedFrom: string | null;
     newDisplayName: string | null;
     oldDisplayName: string | null;
+    /** The channel's subscriber count now, when it had changed since it was stored (already saved); null when not. */
+    subscriberCount: number | null;
 }
 
 export async function checkChannelIdentity(handle: string): Promise<ChannelIdentityCheck> {
@@ -1630,6 +1855,10 @@ export interface SequenceSummary {
     firstTitle: string | null;
 }
 
+/** Fired (on window) when a sequence is made, reordered or emptied, so a list of them that's on screen (the Library's
+ *  Drive panel) can read them again. */
+export const SEQUENCES_CHANGED_EVENT = 'kinesis:sequences-changed';
+
 export async function listDriveSequences(): Promise<SequenceSummary[]> {
     return await invoke("list_drive_sequences");
 }
@@ -1677,7 +1906,8 @@ export interface RelocateReport {
     links: number;
     sequences: number;
     terms: number;
-    termsMovedTo: string | null;
+    /** Notes refiled (the Notes section). */
+    notes: number;
     texts: number;
 }
 
@@ -1958,6 +2188,8 @@ export interface KinpakOptions {
     calendar: boolean;
     /** With the tracks, what's been checked off (off: they arrive as a fresh plan). */
     calendarProgress: boolean;
+    /** The shared notes of the Notes section (personal notes never go in). */
+    studyNotes: boolean;
     drives: DriveScopeOptions;
 }
 

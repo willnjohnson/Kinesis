@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Folder, FolderPlus, ListPlus, ListTodo, Pencil, Video as VideoIcon } from 'lucide-react';
+import { Folder, FolderPlus, ListPlus, ListTodo, NotebookPen, Pencil, Video as VideoIcon } from 'lucide-react';
 import type { CalendarEntry } from '../../api';
 import { handlePlainContextMenu } from '../../lib/markdown-editor';
 import { Modal } from '../Modal';
@@ -34,7 +34,8 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
     const requestClose = () => { if (dirty) setConfirmClose(true); else onClose(); };
     // A new task's other settings appear once it has a name, as with a new track (an existing task shows them all at once).
     const showRest = entry !== null || label.trim() !== '';
-    const isVideo = !!entry?.videoId;
+    // A video's entry, or a note's: named after itself when it has no label of its own.
+    const isVideo = !!entry?.videoId || !!entry?.noteId;
     const isFolder = folder || !!entry?.isFolder;
     const noun = isFolder ? 'Folder' : 'Task';
     // A folder is only its name: priority, icon and description are its entries' own.
@@ -59,7 +60,7 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
             <Modal
                 onClose={requestClose}
                 icon={isFolder ? (entry ? Folder : FolderPlus) : entry ? Pencil : ListPlus}
-                title={isVideo ? 'Edit Video' : entry ? `Edit ${noun}` : `Add ${noun}`}
+                title={entry?.noteId ? 'Edit Note' : isVideo ? 'Edit Video' : entry ? `Edit ${noun}` : `Add ${noun}`}
                 subtitle={trackName}
                 size="lg"
                 onSubmit={e => { e.preventDefault(); void save(); }}
@@ -75,10 +76,10 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
             >
                 {isVideo ? (
                     <div>
-                        <label className={field}>Video</label>
+                        <label className={field}>{entry?.noteId ? 'Note' : 'Video'}</label>
                         <div className="flex items-center gap-3">
                             <span className="w-11 h-11 shrink-0 rounded-xl bg-[#1b1b1b] border border-[#333] flex items-center justify-center text-gray-300">
-                                <VideoIcon className="w-5 h-5" />
+                                {entry?.noteId ? <NotebookPen className="w-5 h-5" /> : <VideoIcon className="w-5 h-5" />}
                             </span>
                             <span className="flex-1 min-w-0 text-sm text-white truncate" title={entry!.title}>{entry!.title}</span>
                         </div>
@@ -94,6 +95,7 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
                             autoFocus
                             required
                             value={label}
+                            maxLength={200}
                             onChange={e => setLabel(e.target.value)}
                             onContextMenu={handlePlainContextMenu}
                             placeholder={isFolder ? 'e.g. "Lab day" or "Week 1 readings"' : 'e.g. "Problem set 3", "Leg day" or "Fall Break"'}
@@ -102,8 +104,8 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
                     </div>
                     <p className="text-[11px] text-gray-500 mt-2">
                         {isFolder
-                            ? 'Drag videos and tasks into the folder to group them: on a dated track, everything in it lands on the same day.'
-                            : 'A break works too: a task like "Free day" or "Fall Break" takes up a day on the schedule, so what comes after it moves along a day.'}
+                            ? 'Drag videos and tasks into the folder to group them: On a dated track, everything in it lands on the same day.'
+                            : 'A break works too: A task like "Free day" or "Fall Break" takes up a day on the schedule, so what comes after it moves along a day.'}
                     </p>
                 </div>
                 )}
@@ -187,7 +189,7 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
                         onChange={setDescription}
                         rows={5}
                         focusColor="red"
-                        placeholder="Anything to remember about it: what to read, which exercises, where you're going..."
+                        placeholder="Anything to remember about it: What to read, which exercises, where you're going..."
                     />
                 </div>
                 </div>
@@ -197,7 +199,7 @@ export function TaskModal({ entry, folder = false, trackName, onClose, onSave }:
             </Modal>
             {confirmClose && (
                 <UnsavedChangesModal
-                    message={<>You have unsaved changes to this {isVideo ? 'video' : noun.toLowerCase()}. Save them before closing?</>}
+                    message={<>You have unsaved changes to this {entry?.noteId ? 'note' : isVideo ? 'video' : noun.toLowerCase()}. Save them before closing?</>}
                     saving={saving}
                     onCancel={() => setConfirmClose(false)}
                     onDiscard={() => { setConfirmClose(false); onClose(); }}

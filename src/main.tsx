@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
+import { installTabBetweenFields } from './lib/tab-fields';
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
@@ -77,9 +78,9 @@ if (typeof window !== 'undefined') {
 
 
 // The webview's own find-in-page (Ctrl+F, and F3 / Ctrl+G to step through it) would search the whole app,
-// its menus and settings included. It's blocked everywhere: the only find is the Sidebar's, which searches
-// nothing but the transcript or AI summary (see Sidebar.tsx). This only stops the browser's default; the
-// Sidebar still sees the keypress.
+// its menus and settings included. It's blocked everywhere: the only finds are the app's own, the Sidebar's
+// (nothing but the transcript or AI summary, see Sidebar.tsx) and the Notes section's (nothing but the open note,
+// components/NoteFind.tsx). This only stops the browser's default; those still see the keypress.
 window.addEventListener('keydown', (e) => {
   const key = e.key.toLowerCase();
   if (((e.ctrlKey || e.metaKey) && !e.altKey && (key === 'f' || key === 'g')) || key === 'f3') e.preventDefault();
@@ -88,3 +89,6 @@ window.addEventListener('keydown', (e) => {
 // The webview's own right-click menu (Back, Refresh, Save as, Print, Inspect...) never shows, anywhere, text boxes
 // included. Only stops the browser's default: the app's own menus (onContextMenu handlers) still open as before.
 window.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Tab moves between the fields that are typed in, and passes over buttons, tabs and rows (lib/tab-fields.ts).
+installTabBetweenFields();

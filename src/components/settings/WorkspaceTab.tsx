@@ -151,6 +151,8 @@ const NAME_GROUPS: { key: LabelKey; subs?: { key: LabelKey; title: string }[] }[
     { key: 'aliasGlossary' },
     { key: 'aliasBiography', subs: [{ key: 'aliasBiographyItem', title: 'One entry' }] },
     { key: 'aliasCalendar' },
+    { key: 'aliasNotes' },
+    { key: 'aliasLogs' },
     {
         key: 'aliasDriveName',
         subs: [

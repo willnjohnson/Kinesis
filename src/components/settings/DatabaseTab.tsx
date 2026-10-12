@@ -38,6 +38,16 @@ export function DatabaseTab({ dbDetails, onOpen, onChangeLocation, loading, erro
             value: String(dbDetails.attachment_count),
             detail: dbDetails.attachment_count > 0 ? formatSize(dbDetails.attachment_bytes) : undefined,
         }] : []),
+        ...(flags.showCalendar ? [{ label: `${labels.aliasCalendar} Tracks`, value: String(dbDetails.track_count) }] : []),
+        ...(flags.showNotes ? [
+            { label: labels.aliasNotes, value: String(dbDetails.note_count) },
+            { label: 'Workbooks', value: String(dbDetails.workbook_count) },
+        ] : []),
+        ...(flags.showLogs ? [{
+            label: labels.aliasLogs,
+            value: String(dbDetails.log_count),
+            detail: dbDetails.log_entry_count > 0 ? `${dbDetails.log_entry_count} ${dbDetails.log_entry_count === 1 ? 'entry' : 'entries'}` : undefined,
+        }] : []),
         { label: `${labels.aliasSearch} History`, value: String(dbDetails.history_count) },
         { label: 'Database Size', value: formatSize(dbDetails.size_bytes), wide: true },
     ];

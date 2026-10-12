@@ -1,4 +1,4 @@
-import { Search, AtSign, ListVideo, Filter, X, Lightbulb, History, Clock, Type, FileText, ListChecks, SignalHigh, CircleCheck, Shapes, HardDrive } from 'lucide-react';
+import { Search, AtSign, ListVideo, Filter, X, Lightbulb, History, Clock, Type, FileText, ListChecks, SignalHigh, CircleCheck, Shapes, HardDrive, CalendarDays } from 'lucide-react';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { addSearchHistory, getSearchHistory, getGlossaryTerms, getSearchSuggestions, listCalendarTracks, getWdbsSuggestions, decodeWdbs, type HistoryEntry } from '../api';
 import { CALENDAR_FACET_VALUES } from '../lib/calendar-filter';
@@ -17,7 +17,7 @@ interface Props {
     onLiveFilter?: (query: string) => void;
     loading: boolean;
     placeholder?: string;
-    viewMode?: 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
+    viewMode?: 'search' | 'library' | 'glossary' | 'biography' | 'calendar' | 'notes' | 'logs';
     initialFacets?: Facet[];
     initialQuery?: string;
     /** The bar's outer spacing, in place of the page header's `mb-2 px-4` (Manage Drive's Unsorted list sits it in a pane). */
@@ -37,6 +37,8 @@ function unescapeSpecial(text: string): string {
 export type SearchFacet = 'handle' | 'channel_name' | 'playlist' | 'video' | 'title_search' | 'term_search' | 'definition_search' | 'tag_search' | 'person_search' | 'bio_search' | 'no_tags'
     // The Biography's: creators with videos filed under a Drive (its path is the chip's own value, ":MWD-JOHN").
     | 'drive'
+    // The Logs section's: a log's rows by their entry or their date (the logs themselves are found with title_search).
+    | 'entry_search' | 'date_search'
     // The Calendar's (lib/calendar-filter.ts).
     | 'track' | 'importance' | 'status' | 'kind';
 
@@ -67,7 +69,12 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
     // The Calendar's bar filters its tracks and items as you type (lib/calendar-filter.ts): plain words or one facet,
     // with no search history (its Enter jumps to the next match).
     const isCalendar = viewMode === 'calendar';
-    const isLibraryOrGlossary = isLibrary || isGlossary || isBiography || isCalendar;
+    // The Notes section's bar filters its list as you type, like the Glossary's: plain words look in a note's title and
+    // text, and one facet narrows that to titles.
+    // The Logs section's bar works as the Notes section's does (a filter with a title facet), plus a date facet.
+    const isLogs = viewMode === 'logs';
+    const isNotes = viewMode === 'notes' || isLogs;
+    const isLibraryOrGlossary = isLibrary || isGlossary || isBiography || isCalendar || isNotes;
     // Ghost-text completion: as a value is typed into a filter chip, the rest of the first saved one that starts
     // that way is drawn faintly after it. Tab (or the right arrow at the end) takes it, and Up/Down step through
     // the other ones that fit. Nothing is drawn over the results. What it completes depends on the chip:
@@ -279,6 +286,9 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             case 'person_search': return <AtSign className="w-3 h-3" />;
             case 'bio_search': return <FileText className="w-3 h-3" />;
             case 'drive': return <HardDrive className="w-3 h-3" />;
+            case 'date_search': return <CalendarDays className="w-3 h-3" />;
+
+            case 'entry_search': return <FileText className="w-3 h-3" />;
             case 'tag_search': return <span className="text-xs font-bold">#</span>;
             case 'no_tags': return <span className="text-xs font-bold">!#</span>;
             case 'track': return <ListChecks className="w-3 h-3" />;
@@ -298,6 +308,12 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             patterns['kind:'] = 'kind';
         } else if (isGlossary) {
             patterns['definition_search:'] = 'definition_search';
+        } else if (isLogs) {
+            patterns['title_search:'] = 'title_search';
+            patterns['entry_search:'] = 'entry_search';
+            patterns['date_search:'] = 'date_search';
+        } else if (isNotes) {
+            patterns['title_search:'] = 'title_search';
         } else if (isBiography) {
             patterns['person_search:'] = 'person_search';
             patterns['bio_search:'] = 'bio_search';
@@ -314,7 +330,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             patterns['playlist:'] = 'playlist';
         }
         return patterns;
-    }, [isLibrary, isGlossary, isBiography, isCalendar]);
+    }, [isLibrary, isGlossary, isBiography, isCalendar, isNotes, isLogs]);
 
     const extractPlaylistId = (val: string) => {
         const match = val.match(/[?&]list=([^#&?]+)/);
@@ -358,7 +374,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             }
         }
 
-        if (!isGlossary && !isBiography && !isCalendar && (facets.length === 0 || (isLibrary && facets.length === 1 && (facets[0].type === 'tag_search' || facets[0].type === 'term_search')))) {
+        if (!isGlossary && !isBiography && !isCalendar && !isNotes && (facets.length === 0 || (isLibrary && facets.length === 1 && (facets[0].type === 'tag_search' || facets[0].type === 'term_search')))) {
             const handle = extractHandle(val);
             const videoId = extractVideoId(val);
             const playlistId = !isLibrary ? extractPlaylistId(val) : null;
@@ -423,6 +439,23 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         if (isGlossary) {
             if (val === '!d' || val.startsWith('!d ')) {
                 setFacets([{ type: 'definition_search', value: '' }]);
+                setQuery(val.slice(2).trimStart());
+                return;
+            }
+        }
+        // Logs shortcuts: !n the logs by title, !e a log's rows by entry, !r by date (plain words look in descriptions).
+        if (isLogs) {
+            const shortcut = val.match(/^!([ner])(?: |$)/);
+            if (shortcut) {
+                setFacets([{ type: ({ n: 'title_search', e: 'entry_search', r: 'date_search' } as const)[shortcut[1] as 'n' | 'e' | 'r'], value: '' }]);
+                setQuery(val.slice(2).trimStart());
+                return;
+            }
+        }
+        // Notes shortcut: !n → title_search (a plain search already looks in titles and text).
+        if (isNotes && !isLogs) {
+            if (val === '!n' || val.startsWith('!n ')) {
+                setFacets([{ type: 'title_search', value: '' }]);
                 setQuery(val.slice(2).trimStart());
                 return;
             }
@@ -582,7 +615,8 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             onSearch(trimmed);
             const hasOnlyTagSearch = facets.length > 0 && facets.every(f => f.type === 'tag_search' || f.type === 'term_search');
             // The Calendar's Enter jumps to the next matching item (CalendarView.tsx), it isn't a search to remember.
-            if (!hasOnlyTagSearch && !isCalendar) {
+            // Nor is the Notes section's: it filters the list as it's typed.
+            if (!hasOnlyTagSearch && !isCalendar && !isNotes) {
                 addSearchHistory(trimmed);
             }
             setShowHistory(false);
@@ -602,7 +636,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
 
     const handleFocus = () => {
         if (wantsSuggestions) loadSuggestions();
-        if (!isLibrary && flags.showSearchHistory) {
+        if (!isLibrary && !isNotes && flags.showSearchHistory) {
             loadHistory();
             setShowHistory(true);
         }
@@ -625,6 +659,18 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             // facet that did the same thing again would be redundant. Definition search is the one real addition.
             return [
                 { type: 'definition_search' as const, label: 'Definition (!d)' },
+            ];
+        }
+        if (viewMode === 'logs') {
+            return [
+                { type: 'title_search' as const, label: 'Title (!n)' },
+                { type: 'entry_search' as const, label: 'Entry (!e)' },
+                { type: 'date_search' as const, label: 'Date (!r)' },
+            ];
+        }
+        if (viewMode === 'notes') {
+            return [
+                { type: 'title_search' as const, label: 'Title (!n)' },
             ];
         }
         if (viewMode === 'biography') {
@@ -814,9 +860,9 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                     <h4 className="text-[11px] font-bold text-gray-500 uppercase tracking-widest mb-3 border-b border-[#333] pb-2">{labels.aliasSearch} Tips</h4>
                                 <div className="space-y-4">
                                     <div className="flex flex-col gap-1">
-                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{isBiography ? `${labels.aliasBiography} Mode` : isGlossary ? `${labels.aliasGlossary} Mode` : isLibrary ? `${labels.aliasLibrary} Mode` : "Paste Mode"}</span>
+                                        <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{isBiography ? `${labels.aliasBiography} Mode` : isGlossary ? `${labels.aliasGlossary} Mode` : isLogs ? `${labels.aliasLogs} Mode` : isNotes ? `${labels.aliasNotes} Mode` : isLibrary ? `${labels.aliasLibrary} Mode` : "Paste Mode"}</span>
                                         <p className="text-[12px] text-gray-300">
-                                            {isBiography ? `Filter ${labels.aliasBiography.toLowerCase()} by name, by what their bio says, or by the Drive their videos are in.` : isGlossary ? "Filter your glossary terms." : isLibrary ? "Filter your saved videos using facets." : "Paste any YouTube URL directly into the search bar."}
+                                            {isBiography ? `Filter ${labels.aliasBiography.toLowerCase()} by name, by what their bio says, or by the Drive their videos are in.` : isGlossary ? "Filter your glossary terms." : isLogs ? "Filter the open log by what its descriptions say. Use a facet to find a log by its title, or rows by their entry or date (a date as written, 2026-10-10, or as shown, Oct 10)." : isNotes ? "Filter your notes by their titles and what they say." : isLibrary ? "Filter your saved videos using facets." : "Paste any YouTube URL directly into the search bar."}
                                         </p>
                                     </div>
                                     <div className="flex flex-col gap-1">
@@ -859,6 +905,21 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                                         <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!#</span>/ Untagged</span>
                                                     </code>
                                                 </>
+                                            ) : isLogs ? (
+                                                <>
+                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                    <span>title_search:</span>
+                                                    <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!n</span>/ Logs by Title</span>
+                                                </code>
+                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                    <span>entry_search:</span>
+                                                    <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!e</span>/ Entry Filter</span>
+                                                </code>
+                                                <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
+                                                    <span>date_search:</span>
+                                                    <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!r</span>/ Date Filter</span>
+                                                </code>
+                                                </>
                                             ) : (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>title_search:</span>
@@ -871,13 +932,13 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">!p</span>/ ID / URL</span>
                                                 </code>
                                             )}
-                                            {!isGlossary && !isBiography && (
+                                            {!isGlossary && !isBiography && !isNotes && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>video:</span>
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">{'>'}</span>/ ID / URL</span>
                                                 </code>
                                             )}
-                                            {!isGlossary && !isBiography && (
+                                            {!isGlossary && !isBiography && !isNotes && (
                                                 <code className="bg-black/40 px-2 py-1 rounded text-white flex justify-between group/code transition-colors">
                                                     <span>handle:</span>
                                                     <span className="text-gray-500 group-hover/code:text-gray-300"><span className="text-orange-400 font-bold mr-1">@</span>/ ID / URL</span>

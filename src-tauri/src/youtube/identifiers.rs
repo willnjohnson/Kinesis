@@ -96,13 +96,41 @@ pub(crate) fn extract_handle_from_text(text: &str) -> Option<String> {
 
 /// What a channel calls itself now: its @handle and name, by its channel ID (which never changes, unlike both of these).
 /// Asked of YouTube's own page-data endpoint (the one the app lists a channel's videos from), so no API key is needed.
-/// None when the answer doesn't say (no handle, an error) — the caller then leaves what it has alone.
-pub async fn fetch_channel_identity(channel_id: &str) -> Result<Option<(String, String)>, String> {
+/// None when the answer doesn't say (no handle, an error) — the caller then leaves what it has alone. With them, the
+/// channel's subscriber count as that same page shows it (parse_channel_subscribers), when it shows one.
+pub async fn fetch_channel_identity(channel_id: &str) -> Result<Option<(String, String, Option<i64>)>, String> {
     if !channel_id.starts_with("UC") || channel_id.len() != 24 {
         return Ok(None);
     }
     let data = super::YouTubeClient::new(super::ClientType::Web).browse(Some(channel_id.to_string()), None).await?;
-    Ok(parse_channel_identity(&data, channel_id))
+    Ok(parse_channel_identity(&data, channel_id).map(|(handle, name)| (handle, name, parse_channel_subscribers(&data))))
+}
+
+/// A channel's subscriber count, from the line under its name in its page's header ("2.68M subscribers", among the
+/// header's metadata rows; asked for in English, see YouTubeClient's context). It's the rounded figure the page shows
+/// (three figures: 2.68M is 2,680,000), which is as exact as YouTube gives anyone, its Data API included. None when
+/// the header has no such line: a channel that hides its count, or a page laid out some other way.
+pub(crate) fn parse_channel_subscribers(data: &serde_json::Value) -> Option<i64> {
+    let rows = data["header"]["pageHeaderRenderer"]["content"]["pageHeaderViewModel"]["metadata"]["contentMetadataViewModel"]["metadataRows"].as_array()?;
+    rows.iter()
+        .filter_map(|row| row["metadataParts"].as_array())
+        .flatten()
+        .filter_map(|part| part["text"]["content"].as_str())
+        .find_map(subscribers_in)
+}
+
+/// The number in "2.68M subscribers" (or "915K", "1.2B", "843", "1 subscriber"); None for any other text.
+fn subscribers_in(text: &str) -> Option<i64> {
+    let re = regex::Regex::new(r"^\s*([0-9][0-9.,]*)\s*([KMB]?)\s+subscribers?\s*$").unwrap();
+    let found = re.captures(text)?;
+    let number: f64 = found[1].replace(',', "").parse().ok()?;
+    let scale = match &found[2] {
+        "K" => 1e3,
+        "M" => 1e6,
+        "B" => 1e9,
+        _ => 1.0,
+    };
+    Some((number * scale).round() as i64)
 }
 
 /// The handle and name in a channel's browse response (see fetch_channel_identity): its `channelMetadataRenderer`'s
@@ -156,7 +184,24 @@ mod tests {
     async fn live_channel_identity() {
         let found = fetch_channel_identity("UC_x5XG1OV2P6uZZ5FSM9Ttw").await.unwrap();
         println!("live: {found:?}");
-        assert!(found.is_some_and(|(handle, name)| handle.starts_with('@') && !name.is_empty()));
+        assert!(found.is_some_and(|(handle, name, subscribers)| handle.starts_with('@') && !name.is_empty() && subscribers.is_some_and(|n| n > 0)));
+    }
+
+    #[test]
+    fn reads_the_subscriber_count_from_the_header() {
+        // The shape of a real answer (the header's rows: the handle, then subscribers and videos).
+        let header = |text: &str| json!({ "header": { "pageHeaderRenderer": { "content": { "pageHeaderViewModel": { "metadata": { "contentMetadataViewModel": { "metadataRows": [
+            { "metadataParts": [{ "text": { "content": "@GoogleDevelopers" } }] },
+            { "metadataParts": [{ "text": { "content": text }, "accessibilityLabel": "x" }, { "text": { "content": "6.9K videos" } }] },
+        ] } } } } } } });
+        assert_eq!(parse_channel_subscribers(&header("2.68M subscribers")), Some(2_680_000));
+        assert_eq!(parse_channel_subscribers(&header("915K subscribers")), Some(915_000));
+        assert_eq!(parse_channel_subscribers(&header("1.2B subscribers")), Some(1_200_000_000));
+        assert_eq!(parse_channel_subscribers(&header("843 subscribers")), Some(843));
+        assert_eq!(parse_channel_subscribers(&header("1 subscriber")), Some(1));
+        // A channel that hides its count has no such line; nor does a page with another layout.
+        assert_eq!(parse_channel_subscribers(&header("6.9K videos")), None);
+        assert_eq!(parse_channel_subscribers(&json!({ "header": {} })), None);
     }
 
     /// What the player endpoint says about a removed video and a normal one (needs the network; prints only).

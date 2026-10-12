@@ -3,12 +3,15 @@ import { Check, Copy } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { markdownUrlTransform, openInternalLink } from '../lib/internal-links';
-import { getBiography, type GlossaryTerm } from '../api';
+import { getBiography, type BiographyEntry, type GlossaryTerm } from '../api';
 import { glossaryPreview } from '../lib/glossary-preview';
 import { inlineMarkdown } from '../lib/preview-markdown';
 import { remarkHighlight } from '../lib/remark-highlight';
+import { remarkCallouts } from '../lib/remark-callouts';
 import { remarkTimestamps } from '../lib/remark-timestamps';
 import { FloatingCard, type Side } from './FloatingCard';
+import { InfoCard } from './HoverDates';
+import { useHoverCard } from './VideoPreview';
 
 const HOVER_MS = 350;
 /** How long the pointer can be off both the element and an interactive card before it closes (crossing the gap between
@@ -21,7 +24,7 @@ const LEAVE_MS = 250;
 function PreviewMarkdown({ children }: { children: string }) {
     return (
         <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }]]}
+            remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, [remarkTimestamps, { chips: false }]]}
             urlTransform={markdownUrlTransform}
             components={{
                 p: ({ children }) => <>{children}</>,
@@ -218,6 +221,39 @@ export function useBioPreview(person: { handle: string; displayName: string; bio
     return usePreviewCard(async () => (
         person.bio.trim() === '' ? null : { title: person.displayName.trim() || person.handle, markdown: inlineMarkdown(person.bio, person.displayName), copyText: person.bio, onOpen }
     ), { side: 'right' });
+}
+
+/** A channel's links that a biography can hold, as the card names them. */
+const BIO_LINKS = [
+    ['website', 'Website'], ['wikipedia', 'Wikipedia'], ['youtube', 'YouTube'], ['twitter', 'X'], ['instagram', 'Instagram'], ['facebook', 'Facebook'],
+    ['threads', 'Threads'], ['tiktok', 'TikTok'], ['twitch', 'Twitch'], ['reddit', 'Reddit'], ['discord', 'Discord'],
+] as const;
+
+/**
+ * The hover card for the creator in a summary's "Channel Info:" line: who the channel is, laid out as the side panels'
+ * cards are (HoverDates.tsx's InfoCard: a name, then labelled rows), to the right of the link. Its handle, the reader's
+ * alias for it, and which links its biography has. Not its description: clicking the link opens the biography, where
+ * that is.
+ */
+export function useChannelCard(handle: string) {
+    return useHoverCard<BiographyEntry>(
+        async () => (handle ? await getBiography(handle) : null),
+        (rect, person) => {
+            const at = person.handle.startsWith('@') ? person.handle : `@${person.handle}`;
+            const links = BIO_LINKS.filter(([key]) => person[key].trim() !== '').map(([, name]) => name);
+            return (
+                <InfoCard
+                    anchor={rect}
+                    title={person.displayName.trim() || at}
+                    rows={[
+                        { label: 'Handle', value: at },
+                        ...(person.alias.trim() ? [{ label: 'Alias', value: person.alias.trim() }] : []),
+                        ...(links.length > 0 ? [{ label: 'Links', value: links.join(', ') }] : []),
+                    ]}
+                />
+            );
+        },
+    );
 }
 
 /** Like useBioPreview, for a link to a person (`kinesis://bio/handle`), which only has the handle: the biography is looked

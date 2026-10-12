@@ -9,13 +9,14 @@ import { selectionToMarkdown } from '../lib/selection-markdown';
  * SELECTABLE_CLASS too, and render `menu`.
  *
  *  - Right-clicking with text selected in it opens a menu: Copy as Plain Text, Copy as Markdown (the selection turned back
- *    into markdown, links and [1:23] timestamps included: lib/selection-markdown.ts). With nothing selected, a right-click
- *    does whatever it did before (a biography link's own menu, saving an image).
+ *    into markdown, links and [1:23] timestamps included: lib/selection-markdown.ts), then whatever `extraItems` adds (the
+ *    Sidebar's Cite in note). With nothing selected, a right-click does whatever it did before (a biography link's own
+ *    menu, saving an image).
  *  - Ctrl+A selects just this view's text, once it's been clicked, not every bit of selectable text in the window.
  */
-export function useSelectableText() {
+export function useSelectableText(extraItems?: (selection: SelectedText) => ContextMenuItem[]) {
     const ref = useRef<HTMLDivElement>(null);
-    const [menu, setMenu] = useState<{ x: number; y: number; plain: string; markdown: string } | null>(null);
+    const [menu, setMenu] = useState<{ x: number; y: number } & SelectedText | null>(null);
 
     const onContextMenu = useCallback((e: MouseEvent<HTMLDivElement>) => {
         const root = ref.current;
@@ -26,7 +27,10 @@ export function useSelectableText() {
         e.preventDefault();
         e.stopPropagation();
         // Read now: clicking the menu could change the selection before an item runs.
-        setMenu({ x: e.clientX, y: e.clientY, plain: sel.toString().trim(), markdown: selectionToMarkdown(range, root) });
+        const before = document.createRange();
+        before.selectNodeContents(root);
+        before.setEnd(range.startContainer, range.startOffset);
+        setMenu({ x: e.clientX, y: e.clientY, plain: sel.toString().trim(), markdown: selectionToMarkdown(range, root), before: before.toString() });
     }, []);
 
     const onMouseDown = useCallback(() => { activePane = ref.current; }, []);
@@ -35,6 +39,7 @@ export function useSelectableText() {
     const items: ContextMenuItem[] = menu ? [
         { label: 'Copy as Plain Text', icon: ClipboardCopy, onClick: () => copy(menu.plain) },
         { label: 'Copy as Markdown', icon: FileCode, onClick: () => copy(menu.markdown) },
+        ...(extraItems ? extraItems(menu) : []),
     ] : [];
 
     installGlobalListeners();
@@ -43,6 +48,10 @@ export function useSelectableText() {
         menu: menu && <ContextMenu x={menu.x} y={menu.y} items={items} onClose={() => setMenu(null)} />,
     };
 }
+
+/** What was selected when the menu opened: as plain text, as Markdown, and the view's text before it (a transcript's
+ *  last timestamp before the selection is where it was said: lib/notes.ts's lastTimeBefore). */
+export interface SelectedText { plain: string; markdown: string; before: string }
 
 /** The class that opts an element's text back into selection (see index.css). */
 export const SELECTABLE_CLASS = 'k-selectable';

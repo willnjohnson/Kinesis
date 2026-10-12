@@ -7,7 +7,7 @@ fn kind_of(kind: &str) -> Result<TrashKind, String> {
     TrashKind::parse(kind).ok_or_else(|| format!("Unknown trash kind: {kind}"))
 }
 
-/// What was deleted from this workspace during this run of the app, newest first ("video" or "glossary").
+/// What was deleted from this workspace during this run of the app, newest first ("video", "glossary" or "note").
 #[command]
 pub fn trash_list(app: tauri::AppHandle, kind: String) -> Result<Vec<TrashEntry>, String> {
     Ok(trash::list(trash::store(&app), &get_db_path(&app), kind_of(&kind)?))

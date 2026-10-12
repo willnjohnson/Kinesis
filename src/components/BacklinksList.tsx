@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
-import { BookA, FileText, NotebookPen, Sparkles, UserSearch } from 'lucide-react';
+import { BookA, FileText, NotebookPen, Paperclip, Sparkles, UserSearch } from 'lucide-react';
 import { getBacklinks, type Backlink } from '../api';
 import { openInternalLink, type LinkKind } from '../lib/internal-links';
+import { formatClock, parseClock } from '../lib/remark-timestamps';
+
+/** A link's time as a clock: one written as plain seconds ("?t=87") reads "1:27", like the rest. */
+const asClock = (time: string) => {
+    const seconds = parseClock(time);
+    return seconds === null ? time : formatClock(seconds);
+};
 import { useWorkspace } from '../hooks/useWorkspace';
 
 interface Props {
@@ -18,7 +25,7 @@ interface Props {
 /**
  * Backlinks: every text that links to a video or a person (src-tauri/src/db/links.rs's find_backlinks), one row
  * per text, saying where it is, the moments its links start at, and the words around its first link. A row opens
- * where the text lives: the other video, the person, the term. Loaded when shown, so it's always current.
+ * where the text lives: the other video, the person, the term, the note. Loaded when shown, so it's always current.
  */
 export function BacklinksList({ kind, targetKey, onTime, onCount }: Props) {
     const { labels } = useWorkspace();
@@ -43,7 +50,9 @@ export function BacklinksList({ kind, targetKey, onTime, onCount }: Props) {
     const where: Record<Backlink['source'], { label: string; Icon: typeof FileText }> = {
         summary: { label: 'AI Summary', Icon: Sparkles },
         transcript: { label: 'Transcript', Icon: FileText },
-        note: { label: 'Notes', Icon: NotebookPen },
+        // The video's own note (the Attachments tab), not one of the Notes section's.
+        note: { label: 'Video Note', Icon: Paperclip },
+        notePage: { label: labels.aliasNotes, Icon: NotebookPen },
         bio: { label: labels.aliasBiography, Icon: UserSearch },
         definition: { label: labels.aliasGlossary, Icon: BookA },
     };
@@ -51,6 +60,7 @@ export function BacklinksList({ kind, targetKey, onTime, onCount }: Props) {
         if (row.videoId) openInternalLink('video', row.videoId);
         else if (row.source === 'bio' && row.key) openInternalLink('bio', row.key);
         else if (row.source === 'definition' && row.key) openInternalLink('glossary', row.key);
+        else if (row.source === 'notePage' && row.key) openInternalLink('note', row.key);
     };
 
     if (error) return <p className="text-[11px] text-red-400 py-2">{error}</p>;
@@ -87,13 +97,13 @@ export function BacklinksList({ kind, targetKey, onTime, onCount }: Props) {
                                         key={time}
                                         type="button"
                                         onClick={e => { e.stopPropagation(); onTime(time); }}
-                                        title={`Jump to ${time}`}
+                                        title={`Jump to ${asClock(time)}`}
                                         className="px-1 rounded font-mono text-[10px] bg-[var(--k-accent)]/15 text-[var(--k-accent)] hover:bg-[var(--k-accent)]/25 transition-colors cursor-pointer"
                                     >
-                                        {time}
+                                        {asClock(time)}
                                     </button>
                                 ) : (
-                                    <span key={time} className="px-1 rounded font-mono text-[10px] bg-white/5 text-[#aaaaaa]">{time}</span>
+                                    <span key={time} className="px-1 rounded font-mono text-[10px] bg-white/5 text-[#aaaaaa]">{asClock(time)}</span>
                                 ))}
                             </div>
                         )}

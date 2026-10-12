@@ -143,6 +143,13 @@ export function useLibrary(
         setReloadNonce(n => n + 1);
     }, []);
 
+    // A video's view count caught up with YouTube's as it was opened (sidebar/useVideoIdentity.ts): its card says the
+    // new one, where it's listed. In place, not a reload: this happens on most openings, and a reload would start
+    // the list over each time.
+    const setVideoViewCount = useCallback((videoId: string, viewCount: string) => {
+        setLibraryVideos(prev => (prev.some(v => v.id === videoId && v.viewCount !== viewCount) ? prev.map(v => (v.id === videoId ? { ...v, viewCount } : v)) : prev));
+    }, []);
+
     // Fetches the plain Library's page 1 for the sorts one click away (the other two sort fields and
     // the reversed order, under the current filter) into the cache, one at a time, so those clicks
     // show at once. Stops as soon as the user changes anything. Only when the current filter is
@@ -413,6 +420,7 @@ export function useLibrary(
         setConfirmDelete,
         enterLibrary,
         refreshLibrary,
+        setVideoViewCount,
         refreshSummarizedCount,
         handleSaveVideo,
         handleDeleteVideo,
@@ -424,7 +432,7 @@ export function useLibrary(
         libraryVideos, totalCount, hasMore, librarySearch, setLibrarySearch, wdbsFilter, setWdbsFilter,
         sortField, sortOrder, toggleSortOrder,
         filterKind, loading, loadingMore, loadMore, saveProgress, summarizeProgress, summarizedCount,
-        confirmDelete, enterLibrary, refreshLibrary, refreshSummarizedCount, handleSaveVideo,
+        confirmDelete, enterLibrary, refreshLibrary, setVideoViewCount, refreshSummarizedCount, handleSaveVideo,
         handleDeleteVideo, handleDeleteFromSidebar, confirmDeleteAction, handleSaveAll, handleSummarizeAll,
     ]);
 }

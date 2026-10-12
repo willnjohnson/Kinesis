@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import { remarkHighlight } from '../lib/remark-highlight';
+import { remarkCallouts } from '../lib/remark-callouts';
 import { remarkTimestamps } from '../lib/remark-timestamps';
 import { remarkEmbeds } from '../lib/remark-embeds';
 import { markdownUrlTransform } from '../lib/internal-links';
@@ -46,7 +48,8 @@ export function MarkdownField({ label, value, onChange, rows, placeholder, requi
                     {value.trim() ? (
                         <div className="leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400">
                             <ReactMarkdown
-                                remarkPlugins={[remarkGfm, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                                remarkPlugins={[remarkGfm, remarkCallouts, remarkHighlight, [remarkTimestamps, { chips: false }], remarkEmbeds]}
+                                rehypePlugins={CODE_HIGHLIGHT}
                                 urlTransform={markdownUrlTransform}
                                 components={{
                                     a: MarkdownLink,

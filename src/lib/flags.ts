@@ -20,6 +20,8 @@ export const FLAG_DEFAULTS = {
     showGlossary: true,
     showBiography: true,
     showCalendar: true,
+    showNotes: true,
+    showLogs: true,
     showDrive: true,
     defaultView: 'search',
     // Library and search results
@@ -67,6 +69,13 @@ export const FLAG_DEFAULTS = {
     // transcripts after summarizing: setTranscriptAfterSummarizeToNA). On by default; turning it off (Settings > Workspace >
     // Permissions) asks for a second confirmation. Read-only turns editing off, so it is greyed out then.
     confirmBeforeEditingTranscript: true,
+    // A channel renamed on YouTube: its new name is taken either way. Off (the default), the reader is asked whether
+    // to keep the old name as the channel's alias. On, nothing is asked: the rename is only said, and an alias the
+    // channel already has is left as it is. (Settings > Workspace > Permissions.)
+    doNotAskToAlias: false,
+    // When a saved video's title has changed on YouTube, show a "Video Title Renamed" modal. Off (the default)
+    // shows the modal. On silently accepts the new title without notifying. (Settings > Workspace > Permissions.)
+    doNotNotifyVideoTitleChange: false,
     // AI summarize and image tools
     showSummarizeButton: false,
     // Off by default: Ollama needs a local install the average user won't have, so it's meant for a technical
@@ -91,6 +100,8 @@ export const FLAG_DEFAULTS = {
     showGlossarySearchByTag: true,
     showGlossarySearchInLibrary: true,
     allowEditBio: true,
+    // Notes: writing, editing and deleting shared notes. Personal notes are each reader's own, so Read-only leaves them open.
+    allowEditSharedNotes: true,
     // Workspace names
     showWorkspaceAdvanced: true,
     allowWorkspaceRename: true,
@@ -116,7 +127,7 @@ export const FLAG_DEFAULTS = {
 } as const;
 
 export type FlagKey = keyof typeof FLAG_DEFAULTS;
-export type ViewName = 'search' | 'library' | 'glossary' | 'biography' | 'calendar';
+export type ViewName = 'search' | 'library' | 'glossary' | 'biography' | 'calendar' | 'notes' | 'logs';
 export type SettingsTabId = 'api' | 'db' | 'workspace' | 'display' | 'theme' | 'history' | 'plugins' | 'sync' | 'export';
 
 export type Flags = { [K in Exclude<FlagKey, 'defaultView'>]: boolean } & { defaultView: ViewName };
@@ -124,7 +135,7 @@ export type Flags = { [K in Exclude<FlagKey, 'defaultView'>]: boolean } & { defa
 /** Every flag key, for reading them all from the settings table in one call. */
 export const FLAG_KEYS = Object.keys(FLAG_DEFAULTS) as FlagKey[];
 
-const VIEW_ORDER: ViewName[] = ['search', 'library', 'glossary', 'biography', 'calendar'];
+const VIEW_ORDER: ViewName[] = ['search', 'library', 'glossary', 'biography', 'calendar', 'notes', 'logs'];
 
 // Every flag `workspaceReadOnly` forces off — everything that changes the workspace's saved
 // content. Also exactly what settings/PermissionsPanel.tsx lists as individually toggleable
@@ -136,7 +147,7 @@ export const READ_ONLY_OVERRIDE_KEYS: readonly FlagKey[] = [
     'editAttachments', 'allowEditTermsAndTags', 'allowEditSummary', 'allowEditTranscript',
     'allowEditWDBS', 'allowEditDriveLinking', 'allowEditSequences', 'allowEditVideosInSequenceList',
     // Last: it sits just above the "Confirm Before ..." rows in Settings, next to the transcript question they end with.
-    'allowModificationGlossary', 'allowEditBio', 'allowEditTranscriptOnNA',
+    'allowModificationGlossary', 'allowEditBio', 'allowEditSharedNotes', 'allowEditTranscriptOnNA',
 ];
 
 export function parseBool(value: string | null | undefined, fallback: boolean): boolean {
@@ -194,6 +205,8 @@ export function applyRules(f: Flags): ResolvedFlags {
         glossary: f.showGlossary,
         biography: f.showBiography,
         calendar: f.showCalendar,
+        notes: f.showNotes,
+        logs: f.showLogs,
     };
     const exportObsidianVisible = f.showExportObsidian;
     const exportSyncDataVisible = f.showExportSyncData && f.showTabSync;

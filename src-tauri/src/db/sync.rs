@@ -309,8 +309,8 @@ fn apply_glossary(conn: &Connection, item: &Item) -> R<bool> {
     if !drives.is_empty() && d.definition.as_deref().is_some_and(|def| def.trim().is_empty()) {
         return Err("a Quick Tag can't be filed under a Drive".into());
     }
-    for root in &drives {
-        ensure_wdbs_path_exists_with_conn(conn, root).map_err(db)?;
+    for drive in &drives {
+        ensure_wdbs_path_exists_with_conn(conn, drive).map_err(db)?;
     }
     let encoded = super::glossary::encode_drives(&drives);
     // A Drive belongs to one definition of a term: another local row claiming one of these Drives
@@ -928,12 +928,22 @@ mod tests {
     }
 
     #[test]
-    fn a_deeper_drive_level_from_a_server_is_refused_and_nothing_is_half_applied() {
+    fn a_sub_drive_from_a_server_is_kept_but_a_malformed_one_is_refused() {
         let db_path = temp_db("gdeep");
         let mut conn = open_sync_conn(&db_path).unwrap();
         let stats = apply_page(
             &mut conn,
-            &[item("glossary", &glossary_key(":CRYPTO-DOAC", "Bad"), json!({"definition": "d"}))],
+            &[item("glossary", &glossary_key(":CRYPTO-DOAC", "Good"), json!({"definition": "d"}))],
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(stats.upserted, 1, "{:?}", stats.errors);
+        assert_eq!(text(&conn, "SELECT drives FROM Glossary WHERE term = 'Good'").as_deref(), Some(":CRYPTO-DOAC"));
+
+        let stats = apply_page(
+            &mut conn,
+            &[item("glossary", &glossary_key(":CRYPTO_DOAC", "Bad"), json!({"definition": "d"}))],
             &[],
             false,
         )

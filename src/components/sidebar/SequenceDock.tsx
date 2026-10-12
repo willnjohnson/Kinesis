@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronDown, ChevronLeft, ChevronRight, ExternalLink, ListOrdered, Pencil, X } from 'lucide-react';
-import { decodeWdbs, encodeWdbs, getVideoSequences, type DriveSequenceState } from '../../api';
+import { decodeWdbs, encodeWdbs, getDriveSequence, getVideoSequences, SEQUENCES_CHANGED_EVENT, type DriveSequenceState } from '../../api';
+import { handlePlainContextMenu } from '../../lib/markdown-editor';
 import { driveSegmentLabel } from '../../lib/utils';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { SequenceModal } from './SequenceModal';
@@ -56,10 +57,11 @@ function ancestorsOf(path: string): string[] {
 
 const GROUP_TITLES: Record<Group, string> = { home: 'Primary Drive', also: 'Also In', parent: 'Parent Drives' };
 
-// The bar's content width (px) the navigation row needs at each label level: the count and the
-// Previous / Next pair, with their gap. Below the second, only chevrons are shown.
-const NAV_FULL_MIN_WIDTH = 400;  // "Previous Video", "Next Video"
-const NAV_SHORT_MIN_WIDTH = 330; // "Previous", "Next"
+// The bar's content width (px) the navigation row needs at each label level: the count, the
+// Previous / Next pair and Jump To, with their gaps. Below the second, only chevrons are shown (and
+// Jump To is just its box).
+const NAV_FULL_MIN_WIDTH = 520;  // "Previous Video", "Next Video", "Jump To"
+const NAV_SHORT_MIN_WIDTH = 420; // "Previous", "Next", "Jump To"
 
 /** The pinned bar at the bottom of the video panel's left side: which Drive the video is being
  *  viewed through (its home, an "Also in" Drive, or a parent that has a sequence) and that Drive's
@@ -174,6 +176,26 @@ export function SequenceDock({
         if (!id || !currentDrive) return;
         setActiveDrive(currentDrive);
         onOpenVideo(id);
+    };
+
+    // Jump To: a place in the sequence, typed, and Enter opens the video there. What's typed is kept within the sequence
+    // as it's typed: anything under 1 becomes 1, anything past the last place becomes the last place. Like Previous and
+    // Next, it's only for a video that's in the sequence: off for one that isn't ("No Sequence"), and when there is none.
+    const [jumpText, setJumpText] = useState('');
+    const total = nav?.total ?? 0;
+    const typeJump = (typed: string) => {
+        const digits = typed.replace(/[^0-9]/g, '');
+        setJumpText(digits && total > 0 ? String(Math.min(Math.max(Number(digits), 1), total)) : '');
+    };
+    const jumpTo = jumpText ? Number(jumpText) : null;
+    useEffect(() => { setJumpText(''); }, [videoId, currentDrive]);
+    const jump = async () => {
+        if (jumpTo === null || !currentDrive) return;
+        try {
+            const target = (await getDriveSequence(currentDrive))[jumpTo - 1];
+            setJumpText('');
+            if (target && target.videoId !== videoId) go(target.videoId);
+        } catch { /* the list couldn't be read: nothing to jump to */ }
     };
 
     // Previous and Next sit in one bordered box, so they have no border or rounding of their own.
@@ -319,6 +341,7 @@ export function SequenceDock({
                         </button>
                     </div>
 
+                    <div className="flex shrink-0 items-center gap-2">
                     <div className="flex shrink-0 rounded-lg overflow-hidden border border-[#333]">
                         <button className={`${navPairButton} ${pairMinWidth}`} title="Previous Video" aria-label="Previous Video" disabled={!nav?.prev} onClick={() => go(nav?.prev)}>
                             <ChevronLeft className="w-3.5 h-3.5 shrink-0" /> {navLabel('Previous Video', 'Previous')}
@@ -326,6 +349,21 @@ export function SequenceDock({
                         <button className={`${navPairButton} ${pairMinWidth} border-l border-[#333]`} title="Next Video" aria-label="Next Video" disabled={!nav?.next} onClick={() => go(nav?.next)}>
                             {navLabel('Next Video', 'Next')} <ChevronRight className="w-3.5 h-3.5 shrink-0" />
                         </button>
+                    </div>
+                    {/* Jump To: straight to any place in the sequence, by its number. */}
+                    <label className={`flex shrink-0 items-center gap-1.5 text-[11px] font-bold ${total === 0 ? 'opacity-30' : 'text-[#aaaaaa]'}`} title={total === 0 ? undefined : `Type a number from 1 to ${total} and press Enter to open that video`}>
+                        {labelMode !== 'icon' && <span className="whitespace-nowrap">Jump To</span>}
+                        <input
+                            value={jumpText}
+                            onChange={e => typeJump(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void jump(); } }}
+                            onContextMenu={handlePlainContextMenu}
+                            disabled={total === 0}
+                            inputMode="numeric"
+                            aria-label={`Jump to a video in this ${sequenceLower}, by its number`}
+                            className="w-14 px-1.5 py-1 rounded-md bg-[#1a1a1a] border border-[#333] focus:border-[#555] text-[11px] text-white text-center tabular-nums outline-none disabled:cursor-default"
+                        />
+                    </label>
                     </div>
                 </div>
             )}
@@ -346,7 +384,7 @@ export function SequenceDock({
                     // The bar follows the Drive the video was opened from, which may be another one
                     // than it started on if the header's breadcrumb or Browse was used.
                     onOpenVideo={(id, fromDrive) => { setActiveDrive(fromDrive); onOpenVideo(id); }}
-                    onChanged={refresh}
+                    onChanged={() => { refresh(); window.dispatchEvent(new Event(SEQUENCES_CHANGED_EVENT)); }}
                 />
             )}
         </div>

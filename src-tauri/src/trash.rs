@@ -6,7 +6,9 @@
 //! A delete takes more than its own row with it, so what's kept is enough to put everything back:
 //! - a video: its row, its Drive links, its place in Drive sequences, its note, its attachments (and the
 //!   stored files only it used), and the links to it that were removed from other texts;
-//! - a glossary entry: its row, and the links to the term that were removed from other texts.
+//! - a glossary entry: its row, and the links to the term that were removed from other texts;
+//! - a note (the Notes section): the note, and the links to it that were removed from other texts. Its places on
+//!   Calendar tracks wait for it as tasks and take it back by themselves (db/calendar.rs's triggers).
 //!
 //! Deleting the same thing again replaces the older copy of it in the Trash (only the latest one is kept),
 //! since the two could never both be restored. Restoring something that has since been made again is refused.
@@ -29,6 +31,7 @@ const MAX_TRASH_BYTES: usize = 512 * 1024 * 1024;
 pub enum TrashKind {
     Video,
     Glossary,
+    Note,
 }
 
 impl TrashKind {
@@ -36,6 +39,7 @@ impl TrashKind {
         match s {
             "video" => Some(TrashKind::Video),
             "glossary" => Some(TrashKind::Glossary),
+            "note" => Some(TrashKind::Note),
             _ => None,
         }
     }
@@ -53,6 +57,7 @@ struct TableRows {
 enum Payload {
     Video(Vec<TableRows>),
     Glossary { term: String, definition: String, drives: Vec<String> },
+    Note(db::Note),
 }
 
 pub struct TrashItem {
@@ -297,6 +302,28 @@ pub fn delete_glossary(trash: &Mutex<TrashStore>, db_path: &str, term: &str, dri
     Ok(None)
 }
 
+/// Deletes a note (shared or personal), keeping it and the links to it that went with it.
+pub fn delete_note(trash: &Mutex<TrashStore>, db_path: &str, id: &str) -> Result<Option<u64>, String> {
+    let Some((note, changes)) = db::delete_note_recorded(db_path, id).map_err(|e| e.to_string())? else { return Ok(None) };
+    let bytes = note.title.len() + note.body.len() + changes.iter().map(|c| c.before.len() + c.after.len()).sum::<usize>();
+    let detail = if note.shared { "Shared note" } else { "Personal note" }.to_string();
+    Ok(Some(push(
+        trash,
+        TrashItem {
+            id: 0,
+            kind: TrashKind::Note,
+            key: note.id.clone(),
+            label: db::note_title(&note.title),
+            detail,
+            deleted_at: now_ms(),
+            db_path: db_path.to_string(),
+            payload: Payload::Note(note),
+            changes,
+            bytes,
+        },
+    )))
+}
+
 /// The items of `kind` deleted from this workspace, newest first.
 pub fn list(trash: &Mutex<TrashStore>, db_path: &str, kind: TrashKind) -> Vec<TrashEntry> {
     let store = lock(trash);
@@ -348,6 +375,7 @@ pub fn restore(trash: &Mutex<TrashStore>, db_path: &str, id: u64) -> Result<(), 
             Payload::Glossary { term, definition, drives } => {
                 db::save_glossary_group(db_path, None, term, definition, drives).map_err(|e| e.to_string())?;
             }
+            Payload::Note(note) => db::restore_note(db_path, note).map_err(|e| e.to_string())?,
         }
         if !item.changes.is_empty() {
             if let Ok(conn) = Connection::open(db_path) {

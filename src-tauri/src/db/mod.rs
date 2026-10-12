@@ -20,6 +20,9 @@ pub mod pins;
 pub mod orphans;
 pub mod positions;
 pub mod graph;
+pub mod logs;
+pub mod notes;
+pub mod workbooks;
 
 pub use schema::*;
 pub use videos::*;
@@ -39,6 +42,9 @@ pub use pins::*;
 pub use orphans::*;
 pub use positions::*;
 pub use graph::*;
+pub use logs::*;
+pub use notes::*;
+pub use workbooks::*;
 
 #[cfg(test)]
 mod production_tests;

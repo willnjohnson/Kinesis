@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
-import { Video as VideoIcon } from 'lucide-react';
-import { getSummary, getTranscript, type CalendarAdvanceMode, type CalendarEntry, type CalendarTrack, type CalendarTrackSummary, type WdbsNode } from '../../api';
+import { openCalendarNote } from '../../lib/notes';
+import { NotebookPen, Video as VideoIcon } from 'lucide-react';
+import { getNote, getSummary, getTranscript, type CalendarAdvanceMode, type CalendarEntry, type CalendarRepeat, type CalendarTrack, type CalendarTrackSummary, type WdbsNode } from '../../api';
 import { usableText } from '../../lib/utils';
 import { splitMatches } from '../../lib/calendar-filter';
 import { useTextPreview } from '../GlossaryPreview';
@@ -19,6 +20,46 @@ export const WEEKDAYS = [
     { day: 5, short: 'Fri' }, { day: 6, short: 'Sat' }, { day: 7, short: 'Sun' },
 ];
 
+/** A track's days every week: what a new track has, and what every `completion` track is saved with. */
+export const DEFAULT_REPEAT: CalendarRepeat = { kind: 'weekly', every: 1, ordinal: 1 };
+/** A monthly pattern's `ordinal`, 1 to 5, in words. */
+export const ORDINALS = ['First', 'Second', 'Third', 'Fourth', 'Last'];
+
+/** A track's pattern in a few words: "Mon/Wed/Fri", "Mon/Wed/Fri, every other week", "Every 3 days", "First Mon of the
+ *  month" (Repeat::label in db/calendar.rs says the same in its messages). */
+export function repeatLabel(repeat: CalendarRepeat, weekdays: number[]): string {
+    const days = WEEKDAYS.filter(w => weekdays.includes(w.day)).map(w => w.short).join('/');
+    if (repeat.kind === 'interval') return repeat.every <= 1 ? 'Every day' : repeat.every === 2 ? 'Every other day' : `Every ${repeat.every} days`;
+    if (repeat.kind === 'monthly') return `${ORDINALS[Math.min(Math.max(repeat.ordinal, 1), 5) - 1]} ${days} of the month`;
+    if (repeat.every === 2) return `${days}, every other week`;
+    if (repeat.every > 2) return `${days}, every ${repeat.every} weeks`;
+    return weekdays.length === 7 ? 'Every day' : days;
+}
+
+// Days as whole numbers (days since 1970, worked out in UTC so a clock change never shifts one), for counting between them.
+const dayNumber = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return Math.round(Date.UTC(y, m - 1, d) / 86_400_000);
+};
+const mod = (a: number, b: number) => ((a % b) + b) % b;
+
+/** Whether `day` is one of a pattern's days, for a schedule starting on `start`: the same rule as Repeat::lands_on in
+ *  db/calendar.rs, which is the one that decides. This one only previews a pattern while it's being set, so it knows
+ *  nothing of terms or holidays. */
+export function repeatLandsOn(repeat: CalendarRepeat, start: string, weekdays: number[], day: string): boolean {
+    const n = dayNumber(day), s = dayNumber(start);
+    if (repeat.kind === 'interval') return mod(n - s, Math.max(1, repeat.every)) === 0;
+    if (!weekdays.includes(mod(n + 3, 7) + 1)) return false; // day 0 was a Thursday
+    if (repeat.kind === 'monthly') {
+        const date = new Date(n * 86_400_000);
+        // The last one: a week later is in the next month.
+        if (repeat.ordinal >= 5) return new Date((n + 7) * 86_400_000).getUTCMonth() !== date.getUTCMonth();
+        return Math.floor((date.getUTCDate() - 1) / 7) + 1 === repeat.ordinal;
+    }
+    const monday = (x: number) => x - mod(x + 3, 7);
+    return mod((monday(n) - monday(s)) / 7, Math.max(1, repeat.every)) === 0;
+}
+
 /** Each track's color, picked from its id so it stays the same: distinct hues that read on dark and light themes. */
 export const TRACK_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#f59e0b', '#a855f7', '#14b8a6', '#ec4899', '#84cc16'];
 export const trackColor = (id: number) => TRACK_COLORS[id % TRACK_COLORS.length];
@@ -34,6 +75,20 @@ export function addDays(iso: string, n: number): string {
     const d = parseDay(iso);
     d.setDate(d.getDate() + n);
     return isoDay(d);
+}
+/** The first `count` days of a pattern, from `start` on (see repeatLandsOn). */
+export function firstDays(repeat: CalendarRepeat, start: string, weekdays: number[], count: number): string[] {
+    const days: string[] = [];
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) return days;
+    for (let i = 0; i < 800 && days.length < count; i++) {
+        const day = addDays(start, i);
+        if (repeatLandsOn(repeat, start, weekdays, day)) days.push(day);
+    }
+    return days;
+}
+/** A day's place in the week, 1 (Monday) to 7 (Sunday). */
+export function weekdayOf(iso: string): number {
+    return ((parseDay(iso).getDay() + 6) % 7) + 1;
 }
 /** The Monday of the week `iso` is in. */
 export function weekStartOf(iso: string): string {
@@ -113,7 +168,7 @@ export function flattenDrives(nodes: WdbsNode[], out: WdbsNode[] = []): WdbsNode
 /** A track's one-line status in the panel: how far along, or what needs doing. */
 export function statusLine({ track, state }: CalendarTrackSummary): { text: string; tone: 'muted' | 'overdue' | 'done' } {
     if (state.total === 0) return { text: 'Empty', tone: 'muted' };
-    if (state.finished) return { text: `Finished: all ${state.total} done`, tone: 'done' };
+    if (state.finished) return { text: `Finished: All ${state.total} done`, tone: 'done' };
     const current = state.current !== null ? state.entries[state.current] : null;
     if (state.currentOverdue && current) return { text: `Overdue: ${current.title}`, tone: 'overdue' };
     const round = track.loopEntries ? `Round ${state.round + 1} · ` : '';
@@ -148,7 +203,8 @@ export function Marked({ text, of }: { text: string; of: 'item' | 'track' }) {
 }
 
 /** An entry's name, with its icon. Resting the pointer on the name previews it, in the app's usual hover card: a video's
- *  summary (or its transcript, without one), a task's description. Nothing to preview, no card. */
+ *  summary (or its transcript, without one), a note's text, a task's description. Nothing to preview, no card. A video
+ *  or a note opens from its name. */
 export function EntryTitle({ entry, onOpenVideo, className }: { entry: CalendarEntry; onOpenVideo: (videoId: string) => void; className: string }) {
     const preview = useTextPreview(async () => {
         if (entry.videoId) {
@@ -158,8 +214,25 @@ export function EntryTitle({ entry, onOpenVideo, className }: { entry: CalendarE
             if (transcript) return { title: `Transcript: ${entry.title}`, markdown: inlineMarkdown(transcript.slice(0, 2500)), copyText: transcript };
             return null;
         }
+        if (entry.noteId) {
+            const body = usableText((await getNote(entry.noteId).catch(() => null))?.body ?? null);
+            if (body) return { title: entry.title, markdown: inlineMarkdown(body.slice(0, 2500)), copyText: body };
+        }
         return entry.description ? { title: entry.title, markdown: inlineMarkdown(entry.description), copyText: entry.description } : null;
     }, { side: 'right' });
+
+    if (entry.noteId) {
+        const noteId = entry.noteId;
+        return (
+            <>
+                <button onClick={() => openCalendarNote(noteId, entry.workbookId)} className={`${className} flex items-center gap-1.5 text-left hover:text-[var(--k-accent)] hover:underline hover:decoration-dotted hover:underline-offset-4 transition-colors cursor-pointer`}>
+                    <NotebookPen className="w-3.5 h-3.5 shrink-0 text-gray-500" />
+                    <span {...preview.handlers} className="truncate"><Marked text={entry.title} of="item" /></span>
+                </button>
+                {preview.card}
+            </>
+        );
+    }
 
     if (!entry.videoId) {
         // A task: its own icon (the default task icon if none was picked).

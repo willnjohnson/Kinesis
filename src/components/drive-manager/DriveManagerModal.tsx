@@ -119,7 +119,6 @@ export function DriveManagerModal({ onClose, onChanged, onRelocated, onOpenVideo
     const sequenceLabel = labels.aliasSequence;
     const sequenceLower = sequenceLabel.toLowerCase();
     const sequencesLabel = `${sequenceLabel}s`;
-    const sequencesLower = sequencesLabel.toLowerCase();
     const [tree, setTree] = useState<ManageNode[] | null>(null);
     const [sequences, setSequences] = useState<SequenceSummary[]>([]);
     const [unsortedCount, setUnsortedCount] = useState(0);
@@ -304,7 +303,7 @@ function NavRow({ icon: Icon, label, hint, count, selected, onClick, italic }: {
 
 /** Nothing filed in it or beneath it (Primary or Also In), no sequence, no glossary entries. */
 function isEmptyDrive(node: ManageNode): boolean {
-    return node.total === 0 && node.terms === 0 && node.sequence === 0;
+    return node.total === 0 && node.terms === 0 && node.sequence === 0 && node.children.every(isEmptyDrive);
 }
 
 /** Whether `node` or anything beneath it matches the filter (by name, path or alias). */
@@ -889,16 +888,13 @@ function NodePane(props: {
 }) {
     const { labels } = useWorkspace();
     const { node } = props;
-    const sequenceLabel = labels.aliasSequence;
-    const sequenceLower = sequenceLabel.toLowerCase();
     const [tab, setTab] = useState<NodeTab>('details');
-    const isRoot = !node.display.includes('-');
     const segments = node.display.slice(1).split('-');
     const tabs: { key: NodeTab; label: string; count?: number; icon: typeof Film; hint: string }[] = [
         { key: 'details', label: 'Details', icon: Pencil, hint: 'Counts, looks, and changing where this Drive sits' },
         { key: 'videos', label: 'Videos', count: node.filed + node.linked, icon: Film, hint: 'Videos filed here (Primary or Also In), to move or unfile' },
         { key: 'sequence', label: labels.aliasSequence, count: node.sequence, icon: ListOrdered, hint: "This Drive's watch-through order" },
-        ...(isRoot ? [{ key: 'terms' as const, label: 'Terms', count: node.terms, icon: BookA, hint: 'Glossary entries filed under this Drive' }] : []),
+        { key: 'terms', label: 'Terms', count: node.terms, icon: BookA, hint: 'Glossary entries filed under this Drive' },
     ];
     return (
         <div className="flex flex-col min-h-full">
@@ -945,7 +941,7 @@ function NodePane(props: {
                 {tab === 'details' && <DetailsTab {...props} />}
                 {tab === 'videos' && <VideosTab {...props} />}
                 {tab === 'sequence' && <SequenceTab {...props} />}
-                {tab === 'terms' && isRoot && <TermsTab node={node} />}
+                {tab === 'terms' && <TermsTab node={node} />}
             </div>
         </div>
     );
@@ -1015,11 +1011,12 @@ function DetailsTab({ node, byDisplay, suggestions, onChanged, onRelocated, onDe
                 r.videos ? `${plural(r.videos, 'video')} filed there` : null,
                 r.links ? `${plural(r.links, '"Also in" link')}` : null,
                 r.sequences ? plural(r.sequences, sequenceLower) : null,
-                r.terms ? `${plural(r.terms, 'glossary entry', 'glossary entries')}${r.termsMovedTo ? ` (refiled under ${r.termsMovedTo}, since terms are only filed at the top level)` : ''}` : null,
+                r.terms ? plural(r.terms, 'glossary entry', 'glossary entries') : null,
+                r.notes ? plural(r.notes, 'note') : null,
                 r.texts ? `${plural(r.texts, 'text')} with links to it (summaries, notes, definitions)` : null,
             ].filter(Boolean);
             const headline = r.merged
-                ? `${r.from} will be merged into ${r.to}, which already exists: everything in it joins ${r.to}, and ${r.from} goes away. Where ${r.to} has its own alias or markers, they're kept.`
+                ? `${r.from} will be merged into ${r.to}, which already exists: Everything in it joins ${r.to}, and ${r.from} goes away. Where ${r.to} has its own alias or markers, they're kept.`
                 : `${r.from} will become ${r.to}.`;
             setPending({
                 title: r.merged ? 'Merge Drives' : `${verb} Drive`,
@@ -1148,7 +1145,7 @@ function DetailsTab({ node, byDisplay, suggestions, onChanged, onRelocated, onDe
                     </div>
                 </StructureRow>
 
-                <StructureRow title="Delete" hint="Only an empty Drive can be deleted: move, unfile or merge what's in it first.">
+                <StructureRow title="Delete" hint="Only an empty Drive can be deleted: Move, unfile or merge what's in it first.">
                     <div className="flex items-center gap-3">
                         <button onClick={() => void remove()} disabled={busy} className={deleteButton} title="Delete this Drive and the empty Drives beneath it">
                             {verbIcon('Delete', <Trash2 className="w-3.5 h-3.5 shrink-0" />)}
