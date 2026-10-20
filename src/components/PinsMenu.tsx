@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { BellRing, CalendarClock, CalendarDays, CheckCheck, ChevronLeft, History, Library, NotebookText, Pin, PinOff } from 'lucide-react';
-import { CALENDAR_CHANGED_EVENT, calendarToday, clearPins, listCalendarDays, listCalendarTracks, listLogEntries, listLogs, listLogsDue, listPins, listVideosWithTag, LOGS_CHANGED_EVENT, setPinned, videoThumbnail, writeLogDay, type CalendarDayItem, type Log, type MenuVideo } from '../api';
+import { BellRing, CalendarClock, CalendarDays, CheckCheck, ChevronLeft, Copy, ExternalLink, History, Library, Link, MoreVertical, NotebookText, Pin, PinOff } from 'lucide-react';
+import { CALENDAR_CHANGED_EVENT, calendarToday, clearPins, listCalendarDays, listCalendarTracks, listLogEntries, listLogs, listLogsDue, listPins, listVideosWithTag, LOGS_CHANGED_EVENT, openExternalUrl, setPinned, videoThumbnail, writeLogDay, type CalendarDayItem, type Log, type MenuVideo } from '../api';
 import { BUILT_IN_TAGS } from '../lib/glossary';
 import { entryTemplateFor } from '../lib/logs';
 import { builtInTagIcon } from '../lib/built-in-tags';
+import { buildVideoLink } from '../lib/internal-links';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { MENU_DIVIDER, MENU_PANEL, MENU_ROW } from './ContextMenu';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -12,15 +13,100 @@ import { barButton } from './TitleBar';
 import { addDays } from './calendar/shared';
 import { useWatchList, WatchListsModal, type WatchList } from './WatchListsModal';
 
-/** One video in the menu: its thumbnail, title and channel. `onUnpin` adds an unpin button that shows on hover. */
-function VideoRow({ video, onOpen, onUnpin }: { video: MenuVideo; onOpen: () => void; onUnpin?: () => void }) {
+// ---------------------------------------------------------------------------
+// VideoRow context menu
+// ---------------------------------------------------------------------------
+
+interface PinContextMenu {
+    videoId: string;
+    title: string;
+    x: number;
+    y: number;
+}
+
+function PinRowContextMenu({ menu, onCopyMarkdown, onCopyYouTubeUrl, onOpenInYouTube, onUnpin, onClose }: {
+    menu: PinContextMenu;
+    onCopyMarkdown: () => void;
+    onCopyYouTubeUrl: () => void;
+    onOpenInYouTube: () => void;
+    onUnpin: () => void;
+    onClose: () => void;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState({ x: menu.x, y: menu.y });
+
+    // Keep inside the viewport.
+    useLayoutEffect(() => {
+        if (!ref.current) return;
+        const { offsetWidth: w, offsetHeight: h } = ref.current;
+        setPos({
+            x: Math.min(menu.x, window.innerWidth - w - 8),
+            y: Math.min(menu.y, window.innerHeight - h - 8),
+        });
+    }, [menu.x, menu.y]);
+
+    // Close on click outside or Escape.
+    useEffect(() => {
+        const down = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) onClose(); };
+        const key = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('mousedown', down, true);
+        document.addEventListener('keydown', key);
+        return () => {
+            document.removeEventListener('mousedown', down, true);
+            document.removeEventListener('keydown', key);
+        };
+    }, [onClose]);
+
+    return createPortal(
+        <div
+            ref={ref}
+            role="menu"
+            style={{ left: pos.x, top: pos.y }}
+            className={`fixed z-[400] w-56 ${MENU_PANEL}`}
+            onContextMenu={e => e.preventDefault()}
+        >
+            <button role="menuitem" onClick={onCopyMarkdown} className={`${MENU_ROW} text-gray-200`}>
+                <Link className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" />
+                <span className="flex-1">Copy Link as Markdown</span>
+            </button>
+            <button role="menuitem" onClick={onCopyYouTubeUrl} className={`${MENU_ROW} text-gray-200`}>
+                <Copy className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" />
+                <span className="flex-1">Copy YouTube URL</span>
+            </button>
+            <button role="menuitem" onClick={onOpenInYouTube} className={`${MENU_ROW} text-gray-200`}>
+                <ExternalLink className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" />
+                <span className="flex-1">Open in YouTube</span>
+            </button>
+            <div className={MENU_DIVIDER} />
+            <button role="menuitem" onClick={onUnpin} className={`${MENU_ROW} text-red-400`}>
+                <PinOff className="w-3.5 h-3.5 shrink-0" />
+                <span className="flex-1">Unpin</span>
+            </button>
+        </div>,
+        document.body,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// VideoRow
+// ---------------------------------------------------------------------------
+
+/** One video in the menu: its thumbnail, title and channel. `onUnpin` adds an unpin button that shows on hover.
+ *  Right-clicking (or the triple-dot menu beside Unpin) opens a context menu with Copy Link as Markdown and Unpin. */
+function VideoRow({ video, onOpen, onUnpin, onContextMenu, onMoreMenu }: {
+    video: MenuVideo;
+    onOpen: () => void;
+    onUnpin?: () => void;
+    onContextMenu?: (e: React.MouseEvent) => void;
+    onMoreMenu?: (e: React.MouseEvent) => void;
+}) {
     return (
-        <div className="group relative">
+        <div className="group relative" onContextMenu={onContextMenu}>
             {/* MENU_ROW's look, but as tall as its thumbnail. */}
             <button
                 role="menuitem"
                 onClick={onOpen}
-                className={`w-full flex items-center gap-2.5 pl-3 py-1.5 rounded-lg text-xs text-left text-gray-200 hover:bg-[#272727] transition-colors cursor-pointer ${onUnpin ? 'pr-8' : 'pr-3'}`}
+                className={`w-full flex items-center gap-2.5 pl-3 py-1.5 rounded-lg text-xs text-left text-gray-200 hover:bg-[#272727] transition-colors cursor-pointer ${onUnpin ? (onMoreMenu ? 'pr-14' : 'pr-10') : 'pr-3'}`}
                 title={video.title}
             >
                 <img src={videoThumbnail(video.videoId)} alt="" className="w-12 h-[27px] object-cover rounded shrink-0" />
@@ -30,22 +116,42 @@ function VideoRow({ video, onOpen, onUnpin }: { video: MenuVideo; onOpen: () => 
                 </span>
             </button>
             {onUnpin && (
-                <button
-                    onClick={onUnpin}
-                    title="Unpin"
-                    aria-label={`Unpin ${video.title}`}
-                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded text-[#666666] hover:text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-                >
-                    <PinOff className="w-3.5 h-3.5" />
-                </button>
+                <div className="absolute right-1.5 top-1/2 -translate-y-1/2 flex gap-1">
+                    <button
+                        onClick={onUnpin}
+                        title="Unpin"
+                        aria-label={`Unpin ${video.title}`}
+                        className="p-1 rounded text-[#666666] hover:text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                    >
+                        <PinOff className="w-3.5 h-3.5" />
+                    </button>
+                    {onMoreMenu && (
+                        <button
+                            onClick={onMoreMenu}
+                            title="More options"
+                            aria-label={`More options for ${video.title}`}
+                            className="p-1 rounded text-[#666666] hover:text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+                        >
+                            <MoreVertical className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
             )}
         </div>
     );
 }
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /** The submenu that isn't an Essential tag's: the logs, to write today's entry in one. */
 const LOG_SUB = '\u0000logs';
 const ENTRY_FIELD = 'w-full bg-[#121212] border border-[#333] text-white rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-[var(--k-accent)] placeholder-gray-600 disabled:opacity-50';
+
+// ---------------------------------------------------------------------------
+// PinsMenu
+// ---------------------------------------------------------------------------
 
 /**
  * The title bar's pin menu: the pinned videos (newest pin first), then the Essential tags (Watch Later, Favorite, ...),
@@ -143,8 +249,12 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
     const [at, setAt] = useState<{ right: number; top: number }>({ right: 6, top: 0 });
     const [subAt, setSubAt] = useState<{ right: number; top: number } | null>(null);
 
+    // Right-click context menu for pinned video rows.
+    const [pinCtx, setPinCtx] = useState<PinContextMenu | null>(null);
+    const [copiedId, setCopiedId] = useState<string | null>(null);
+
     const refresh = useCallback(() => { listPins().then(setPins).catch(() => setPins([])); }, []);
-    const close = useCallback(() => { setOpen(false); setSub(null); setWriting(null); setSavedLog(null); }, []);
+    const close = useCallback(() => { setOpen(false); setSub(null); setWriting(null); setSavedLog(null); setPinCtx(null); }, []);
     // Log Entry: the log whose today is being written in the submenu (its two cells, as they'll be saved), and the one
     // just saved. While one is being written the submenu stays, wherever the pointer goes in the menu beside it:
     // words half typed aren't dropped for brushing another row.
@@ -209,7 +319,14 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
         const away = (e: MouseEvent) => {
             const t = e.target as Node;
             if (boxRef.current?.contains(t) || subRef.current?.contains(t) || buttonRef.current?.contains(t)) return;
-            close();
+            // Close the pins menu, but don't clear pinCtx here: the context menu is a separate document.body
+            // portal, and clearing pinCtx on mousedown unmounts its items before their click handlers run,
+            // so Copy / Open in YouTube / Unpin never fire and the menu just closes. The context menu closes
+            // itself via its own click-outside / Escape handler, and each action clears pinCtx when it runs.
+            setOpen(false);
+            setSub(null);
+            setWriting(null);
+            setSavedLog(null);
         };
         const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
         document.addEventListener('mousedown', away, true);
@@ -232,6 +349,35 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
     const unpin = (id: string) => {
         setPins(prev => prev.filter(p => p.videoId !== id));
         setPinned(id, false).catch(() => {}).finally(() => { refresh(); onPinsChanged(); });
+    };
+
+    const openPinMenu = (video: MenuVideo, x: number, y: number) => {
+        setPinCtx({ videoId: video.videoId, title: video.title || video.videoId, x, y });
+    };
+
+    const handlePinContextMenu = (e: React.MouseEvent, video: MenuVideo) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openPinMenu(video, e.clientX, e.clientY);
+    };
+
+    const flashCopied = (videoId: string) => {
+        setCopiedId(videoId);
+        window.setTimeout(() => setCopiedId(id => id === videoId ? null : id), 2000);
+    };
+    const copyMarkdown = (video: MenuVideo) => {
+        navigator.clipboard.writeText(buildVideoLink(video.title || video.videoId, video.videoId)).catch(() => {});
+        flashCopied(video.videoId);
+        setPinCtx(null);
+    };
+    const copyYouTubeUrl = (video: MenuVideo) => {
+        navigator.clipboard.writeText(`https://www.youtube.com/watch?v=${video.videoId}`).catch(() => {});
+        flashCopied(video.videoId);
+        setPinCtx(null);
+    };
+    const openInYouTube = (video: MenuVideo) => {
+        void openExternalUrl(`https://www.youtube.com/watch?v=${video.videoId}`);
+        setPinCtx(null);
     };
 
     return (
@@ -268,7 +414,26 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
                                 <p className="px-3 py-2 text-[11px] text-[#888888] leading-relaxed">
                                     Pin videos you're working on now, to reach them from anywhere. The pin is beside the video sidebar's close button.
                                 </p>
-                            ) : pins.map(v => <VideoRow key={v.videoId} video={v} onOpen={() => openVideo(v.videoId)} onUnpin={() => unpin(v.videoId)} />)}
+                            ) : pins.map(v => (
+                                <div key={v.videoId} className="relative">
+                                    <VideoRow
+                                        video={v}
+                                        onOpen={() => openVideo(v.videoId)}
+                                        onUnpin={() => unpin(v.videoId)}
+                                        onContextMenu={e => handlePinContextMenu(e, v)}
+                                        onMoreMenu={e => {
+                                            e.preventDefault();
+                                            const r = e.currentTarget.getBoundingClientRect();
+                                            openPinMenu(v, r.left, r.bottom);
+                                        }}
+                                    />
+                                    {copiedId === v.videoId && (
+                                        <span className="absolute right-[56px] top-1/2 -translate-y-1/2 text-[10px] text-[var(--k-accent)] font-semibold pointer-events-none">
+                                            Copied!
+                                        </span>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                         {/* What's due today on the Calendar, as a count: clicking it goes there. */}
                         {onOpenCalendar && today && (
@@ -482,6 +647,22 @@ export function PinsMenu({ locked, onOpenVideo, onShowTag, onPinsChanged, onOpen
                 </>,
                 document.body,
             )}
+
+            {/* Right-click context menu for a pinned video row */}
+            {pinCtx && (() => {
+                const video = pins.find(p => p.videoId === pinCtx.videoId);
+                if (!video) return null;
+                return (
+                    <PinRowContextMenu
+                        menu={pinCtx}
+                        onCopyMarkdown={() => copyMarkdown(video)}
+                        onCopyYouTubeUrl={() => copyYouTubeUrl(video)}
+                        onOpenInYouTube={() => openInYouTube(video)}
+                        onUnpin={() => { unpin(pinCtx.videoId); setPinCtx(null); }}
+                        onClose={() => setPinCtx(null)}
+                    />
+                );
+            })()}
 
             {watchList && <WatchListsModal list={watchList} onClose={() => setWatchList(null)} onOpenVideo={onOpenVideo} />}
 

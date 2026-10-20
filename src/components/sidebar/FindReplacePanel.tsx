@@ -142,7 +142,7 @@ export function FindReplacePanel({
                         onClick={handleReplaceAll}
                         disabled={!findText || matchCount === 0}
                         tabIndex={-1}
-                        className="h-7 px-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-white text-[9px] font-bold uppercase tracking-widest rounded-md transition-all cursor-pointer active:scale-95"
+                        className="h-7 px-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-30 text-[var(--k-text-on-accent)] text-[9px] font-bold uppercase tracking-widest rounded-md transition-all cursor-pointer active:scale-95"
                     >
                         Replace All
                     </button>

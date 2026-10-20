@@ -215,34 +215,67 @@ export function tableFromTabs(text: string): string | null {
 export function blockInsertion(value: string, lineEnd: number, block: string): { insert: string; blockStart: number } {
     const lineStart = value.lastIndexOf('\n', lineEnd - 1) + 1;
     const lineIsEmpty = value.slice(lineStart, lineEnd).trim() === '';
-    // Under a line of text it takes a blank line. On an empty line the block goes on that line, and
-    // that is only blank enough if the line above it is blank too.
     const previousLine = lineStart === 0 ? '' : value.slice(value.lastIndexOf('\n', lineStart - 2) + 1, lineStart - 1);
-    const before = !lineIsEmpty ? '\n\n' : previousLine.trim() === '' ? '' : '\n';
     const rest = value.slice(lineEnd);
-    const after = rest === '' || rest === '\n' || rest.startsWith('\n\n') ? '' : '\n';
-    return { insert: before + block + after, blockStart: before.length };
+    const restIsEmpty = rest === '' || rest === '\n' || rest.startsWith('\n\n') || rest.trim() === '';
+    
+    if (lineIsEmpty) {
+        // On an empty line: if there's content after, we want newline after block to separate from next content
+        if (!restIsEmpty) {
+            return { insert: block + '\n', blockStart: 0 };
+        } else {
+            // End of document or next is empty - follow original logic but cleaner
+            const before = previousLine.trim() === '' ? '' : '\n';
+            return { insert: before + block + '', blockStart: before.length };
+        }
+    } else {
+        // Under a line of text, it takes blank lines
+        const before = '\n\n';
+        const after = restIsEmpty ? '' : '\n';
+        return { insert: before + block + after, blockStart: before.length };
+    }
 }
 
-/** An empty question and answer, as a note draws them (lib/remark-qa.ts): a "Q:" line with an "A:" line under it. */
-export const QA_TEMPLATE = 'Q: \nA: ';
-/** Where the caret goes in it: after "Q: ", ready for the question. */
-export const QA_QUESTION = { start: 3, length: 0 };
+// ── Questions and answers ────────────────────────────────────────────────────
 
 /**
- * What to write in place of the selection [start, end) to make it a question and answer: its first line is the
- * question and the rest the answer (none yet, when only one line is selected), with `caret` where the answer ends,
- * ready to carry on. The pair has to start a line, and its answer runs on until a blank line, so it's set on lines of
- * its own: off the text it was selected out of, and with a blank line before whatever follows. Null when nothing but
- * space is selected.
+ * An empty question and answer, as a note draws them (lib/remark-qa.ts): the "[!QA]" callout with the question
+ * on the line under the mark, a rule, and the answer under that.
+ */
+export const QA_TEMPLATE = '> [!QA]\n> \n> ---\n> ';
+/** Where the caret goes in it: on the second line, after "> ", ready for the question. */
+export const QA_QUESTION = { start: '> [!QA]\n> '.length, length: 0 };
+
+/** A line without a quote mark ("> ") in front of it, so selecting text out of a quote doesn't double it. */
+const unquote = (line: string) => line.replace(/^\s*>[ \t]?/, '');
+
+/**
+ * What to write in place of the selection [start, end) to make it a question and answer, as a callout:
+ *
+ *      > [!QA] first selected line (the question)
+ *      > the rest, line by line (the answer; none yet when only one line is selected)
+ *
+ * with `caret` where the answer ends, ready to carry on. Blank lines inside the answer stay (as a bare ">"), so
+ * paragraphs and lists survive; indentation does too. Blank lines around the selection are dropped. A callout
+ * ends at the first line without ">" only if a blank line comes before it, so it's set on lines of its own: off
+ * the text it was selected out of, and with a blank line before whatever follows (a line straight after would be
+ * read as part of the answer). Null when nothing but space is selected.
  */
 export function qaFromSelection(value: string, start: number, end: number): { insert: string; caret: number } | null {
-    const lines = value.slice(start, end).split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length === 0) return null;
-    // Marks already written (a "Q:" typed by hand) aren't doubled.
-    const question = lines[0].replace(/^\**Q:\**\s*/i, '');
-    const answer = lines.slice(1).join('\n').replace(/^\**A:\**\s*/i, '');
-    const card = `Q: ${question}\nA: ${answer}`;
+    const lines = value.slice(start, end).split('\n').map(l => unquote(l.replace(/\r$/, '')));
+    const first = lines.findIndex(l => l.trim() !== '');
+    if (first === -1) return null;
+    // Marks already written (a "[!QA]" or a "Q:" typed by hand) aren't doubled.
+    const question = lines[first]
+        .trim()
+        .replace(/^\[!QA\]\s*/i, '')
+        .replace(/^\**Q:\**\s*/i, '');
+    const answerLines = lines.slice(first + 1).map(l => l.trimEnd());
+    while (answerLines.length > 0 && answerLines[0].trim() === '') answerLines.shift();
+    while (answerLines.length > 0 && answerLines[answerLines.length - 1].trim() === '') answerLines.pop();
+    if (answerLines.length > 0) answerLines[0] = answerLines[0].replace(/^\**A:\**\s*/i, '');
+    const quoted = (l: string) => (l.trim() === '' ? '>' : `> ${l}`);
+    const card = [`> [!QA] ${question}`, ...(answerLines.length > 0 ? answerLines.map(quoted) : ['> '])].join('\n');
     const lineStart = value.lastIndexOf('\n', start - 1) + 1;
     const nextBreak = value.indexOf('\n', end);
     const lineEnd = nextBreak === -1 ? value.length : nextBreak;

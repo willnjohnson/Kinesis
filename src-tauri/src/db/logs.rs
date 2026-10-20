@@ -80,7 +80,7 @@ pub fn ensure_logs_schema(conn: &Connection) -> Result<()> {
 /// What a day's Entry starts as in a log, before anything is written for that day: `all` for any day, and `days`
 /// (seven, Sunday first) for a weekday that has its own; a weekday left empty uses `all`. So a training log can say
 /// "Push" on Mondays and "Rest" on Sundays without it being typed each week. Only what the sheet shows in a day with
-/// no row: nothing is stored for a day until it's written in. `{{weekday}}` and `{{date}}` in a text are filled in
+/// no row: nothing is stored for a day until it's written in. `{{weekday}}`, `{{monthName}}`, `{{year}}`, and `{{season}}` are supported.
 /// by the sheet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]

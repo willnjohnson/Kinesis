@@ -26,6 +26,7 @@ export function CreateWorkspacePanel({ defaultLocation, onBack }: Props) {
         setError(null);
         try {
             await createWorkspace(name, location);
+            window.dispatchEvent(new CustomEvent('kinesis:workspace-switch'));
             reloadApp(name);
         } catch (e) {
             setError(errText(e));

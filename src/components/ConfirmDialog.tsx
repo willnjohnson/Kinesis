@@ -7,13 +7,15 @@ interface ConfirmDialogProps {
     message: ReactNode;
     onConfirm: () => void;
     onCancel: () => void;
+    /** The cancel button's text; "Cancel" unless the action's wording says otherwise. */
+    cancelLabel?: string;
     /** The confirm button's text; "Delete" unless the action is something else (e.g. "Remove"). */
     confirmLabel?: string;
     /** The heading; a generic "Please Confirm" unless the caller says what is being confirmed. */
     title?: string;
 }
 
-export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = "Delete", title = "Please Confirm" }: ConfirmDialogProps) {
+export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = "Delete", cancelLabel = "Cancel", title = "Please Confirm" }: ConfirmDialogProps) {
     return (
         <Modal
             onClose={onCancel}
@@ -24,7 +26,7 @@ export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = "De
                     <SecondaryButton
                         onClick={onCancel}
                     >
-                        Cancel
+                        {cancelLabel}
                     </SecondaryButton>
                     <button
                         onClick={onConfirm}

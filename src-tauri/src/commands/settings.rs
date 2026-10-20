@@ -150,15 +150,33 @@ pub fn get_db_details(app: tauri::AppHandle) -> Result<DbDetails, String> {
 pub fn get_display_settings(app: tauri::AppHandle) -> Result<DisplaySettings, String> {
     let db_path = get_db_path(&app);
     let global = crate::global_settings::load(&app);
+    let content_theme_inherit = db::get_setting(&db_path, "content_theme_inherit")
+        .unwrap_or(None)
+        .map(|v| v == "true")
+        .or(Some(true));
     Ok(DisplaySettings {
         resolution: global.resolution,
         fullscreen: global.fullscreen,
         theme: db::get_setting(&db_path, "theme").unwrap_or(None).unwrap_or_else(|| "dark".to_string()),
         video_list_mode: global.video_list_mode,
         navigation_orientation: global.navigation_orientation,
+        content_theme_inherit,
+        content_theme_calendar_enabled: db::get_setting(&db_path, "content_theme_calendar_enabled")
+            .unwrap_or(None)
+            .map(|v| v == "true"),
+        content_theme_notes_enabled: db::get_setting(&db_path, "content_theme_notes_enabled")
+            .unwrap_or(None)
+            .map(|v| v == "true"),
+        content_theme_logs_enabled: db::get_setting(&db_path, "content_theme_logs_enabled")
+            .unwrap_or(None)
+            .map(|v| v == "true"),
+        content_theme: db::get_setting(&db_path, "content_theme").unwrap_or(None),
+        blockquote_accent_enabled: db::get_setting(&db_path, "blockquote_accent_enabled")
+            .unwrap_or(None)
+            .map(|v| v == "true"),
+        blockquote_accent_color: db::get_setting(&db_path, "blockquote_accent_color").unwrap_or(None),
     })
 }
-
 #[command]
 pub fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) -> Result<(), String> {
     use tauri::Manager;
@@ -167,8 +185,6 @@ pub fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) ->
     let current = crate::global_settings::load(&app);
     let resolution_changed = current.resolution != settings.resolution;
 
-    // update(), not a whole-struct save: the window's remembered position isn't part of what the
-    // Settings screen edits, and must survive this write.
     crate::global_settings::update(&app, |g| {
         g.resolution = settings.resolution.clone();
         g.fullscreen = settings.fullscreen;
@@ -176,7 +192,13 @@ pub fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) ->
         g.navigation_orientation = settings.navigation_orientation.clone();
     });
     db::set_setting(&db_path, "theme", &settings.theme).map_err(|e| e.to_string())?;
-
+    if let Some(v) = settings.content_theme_inherit { db::set_setting(&db_path, "content_theme_inherit", if v { "true" } else { "false" }).map_err(|e| e.to_string())?; }
+    if let Some(v) = settings.content_theme_calendar_enabled { db::set_setting(&db_path, "content_theme_calendar_enabled", if v { "true" } else { "false" }).map_err(|e| e.to_string())?; }
+    if let Some(v) = settings.content_theme_notes_enabled { db::set_setting(&db_path, "content_theme_notes_enabled", if v { "true" } else { "false" }).map_err(|e| e.to_string())?; }
+    if let Some(v) = settings.content_theme_logs_enabled { db::set_setting(&db_path, "content_theme_logs_enabled", if v { "true" } else { "false" }).map_err(|e| e.to_string())?; }
+    if let Some(ref v) = settings.content_theme { db::set_setting(&db_path, "content_theme", v).map_err(|e| e.to_string())?; }
+    if let Some(v) = settings.blockquote_accent_enabled { db::set_setting(&db_path, "blockquote_accent_enabled", if v { "true" } else { "false" }).map_err(|e| e.to_string())?; }
+    if let Some(ref v) = settings.blockquote_accent_color { db::set_setting(&db_path, "blockquote_accent_color", v).map_err(|e| e.to_string())?; }
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.set_fullscreen(settings.fullscreen);
         if !settings.fullscreen && resolution_changed {
@@ -190,7 +212,6 @@ pub fn set_display_settings(app: tauri::AppHandle, settings: DisplaySettings) ->
     }
     Ok(())
 }
-
 #[command]
 pub async fn get_setting(app: tauri::AppHandle, key: String) -> Result<Option<String>, String> {
     // The sync access token is write-only from the webview's point of view.

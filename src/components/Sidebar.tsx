@@ -356,8 +356,10 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     // before it's dropped (the box's own Cancel and Esc below; leaving the video, in the unsaved-changes guard).
     const [momentThought, setMomentThought] = useState('');
     const [confirmDropThought, setConfirmDropThought] = useState(false);
+    // Whether this cite is the viewer's own reaction ('thought') or words from the video ('quote').
+    const [momentCiteAs, setMomentCiteAs] = useState<'thought' | 'quote'>('thought');
     const thoughtUnsaved = moment !== null && momentThought.trim() !== '';
-    useEffect(() => { setMoment(null); setMomentThought(''); setPickingMomentNote(false); setConfirmDropThought(false); }, [videoId, isOpen]);
+    useEffect(() => { setMoment(null); setMomentThought(''); setMomentCiteAs('thought'); setPickingMomentNote(false); setConfirmDropThought(false); }, [videoId, isOpen]);
     const citeMoment = async () => {
         if (!videoId || moment) return;
         const answer = await askPlayer();
@@ -368,7 +370,14 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
         setPlayerPlaying(false);
         setMomentInNew(false);
         setMomentThought('');
+        setMomentCiteAs('thought');
         setMoment({ at: answer.seconds, wasPlaying: answer.playing });
+    };
+    // Refresh the timestamp in an open Cite Moment panel to the player's current position.
+    const refreshMomentAt = async () => {
+        if (!moment) return;
+        const answer = await askPlayer();
+        if (answer !== null) setMoment(prev => prev ? { ...prev, at: answer.seconds } : prev);
     };
     // `resume`: the video plays on if it was playing (not when the video is being left).
     const closeMoment = (resume = true) => {
@@ -379,7 +388,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
     };
     const addMoment = (resume = true) => {
         if (!videoId || !moment) return;
-        const text = buildMomentNote(title || videoId, videoId, moment.at, momentThought);
+        const text = buildMomentNote(title || videoId, videoId, moment.at, momentThought, momentCiteAs);
         if (momentNote) citeIn(momentNote, text);
         else citeInNew(text);
         closeMoment(resume);
@@ -1426,12 +1435,14 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                             )}
                                             {flags.showVideoPlayer && moment && (
                                                 <MomentComposer
-                                                    key={moment.at}
                                                     at={moment.at}
                                                     noteName={momentNote ? noteDisplayTitle(momentNote) : null}
                                                     thought={momentThought}
+                                                    citeAs={momentCiteAs}
                                                     onThought={setMomentThought}
+                                                    onCiteAs={setMomentCiteAs}
                                                     onChangeNote={() => setPickingMomentNote(true)}
+                                                    onRefreshAt={refreshMomentAt}
                                                     onAdd={() => addMoment()}
                                                     onCancel={cancelMoment}
                                                 />

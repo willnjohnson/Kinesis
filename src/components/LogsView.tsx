@@ -10,13 +10,15 @@ import { useWorkspace } from '../hooks/useWorkspace';
 import { handleMarkdownContextMenu, handlePlainContextMenu } from '../lib/markdown-editor';
 import { EMPHASIS_ONLY_ATTR } from './MarkdownContextMenu';
 import {
-    entryTemplateFor, formatLogDate, hasEntryTemplate, loadLogDateFormat, LOG_DATE_FORMAT_LABEL, LOG_DATE_FORMATS, OPEN_LOG_EVENT, saveLogDateFormat, takeRequestedLog, TEMPLATE_WEEKDAYS,
+    entryTemplateFor, formatLogDate, hasEntryTemplate, loadLogDateFormat, loadLogDateFormatCustom, LOG_DATE_FORMAT_LABEL, LOG_DATE_FORMATS, OPEN_LOG_EVENT,
+    NUMERIC_PLACEHOLDER_KEYS, PLACEHOLDER_KEYS, placeholderValues, saveLogDateFormat, saveLogDateFormatCustom, takeRequestedLog, TEMPLATE_WEEKDAYS,
     type LogDateFormat,
 } from '../lib/logs';
 import { exportLog } from '../lib/log-export';
 import { Modal } from './Modal';
 import { SecondaryButton } from './ui/Button';
 import { Segmented } from './ui/Segmented';
+import { Select } from './ui/Select';
 import { normalizeText } from '../lib/utils';
 import { BottomBar } from './BottomBar';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -128,13 +130,15 @@ const CELL = 'w-full h-full min-h-9 bg-transparent px-3 py-2 text-sm text-white 
  * The description shows its emphasis drawn until it's clicked into, when it shows the marks as typed. A day is one
  * row: more to say about it is another line in its description (Enter).
  */
-function SheetRow({ logId, date, dateFormat, entry, template, today, showDate, onChanged, onFailed }: {
+function SheetRow({ logId, date, dateFormat, customPattern, entry, template, today, showDate, onChanged, onFailed }: {
     logId: string;
     date: string;
     /** How this log writes its dates (lib/logs.ts). */
     dateFormat: LogDateFormat;
+    /** The format used when `dateFormat` is 'custom'. */
+    customPattern: string;
     entry: LogEntry | null;
-    /** What the Entry starts as on a day with nothing written (the log's entry template, for this day); '' for none.
+    /** What the Entry starts as on a day with nothing written (the log's entry placeholder, for this day); '' for none.
      *  It's shown dimmed, and isn't saved by itself: the day is written when something is typed in the row. */
     template: string;
     today: string;
@@ -162,7 +166,7 @@ function SheetRow({ logId, date, dateFormat, entry, template, today, showDate, o
         setWriting(false);
         const t = title.trim(), d = description.trim();
         // Nothing to write: a blank day left blank, or a day left as it was.
-        // Nor a blank day whose Entry is only what the template put there.
+        // Nor a blank day whose Entry is only what the placeholder put there.
         if (entry ? t === entry.title && d === entry.description : !d && (!t || t === template.trim())) return;
         try {
             await writeLogDay(logId, date, t, d);
@@ -175,7 +179,7 @@ function SheetRow({ logId, date, dateFormat, entry, template, today, showDate, o
     return (
         <div ref={rowRef} {...(isToday ? { 'data-today': '' } : {})} onBlur={e => void leave(e)} className={`group ${COLUMNS} border-b border-[#222] divide-x divide-[#222] ${isToday ? 'bg-[var(--k-accent)]/[0.06]' : ''}`}>
             <div className={`px-3 py-2 text-sm tabular-nums select-none whitespace-nowrap overflow-hidden text-ellipsis ${isToday ? 'text-white font-semibold' : later ? 'text-gray-600' : 'text-gray-400'}`} title={isToday ? 'Today' : undefined}>
-                {showDate ? formatLogDate(date, dateFormat) : ''}
+                {showDate ? formatLogDate(date, dateFormat, customPattern) : ''}
             </div>
             <input
                 value={title}
@@ -184,7 +188,7 @@ function SheetRow({ logId, date, dateFormat, entry, template, today, showDate, o
                 onContextMenu={handlePlainContextMenu}
                 maxLength={200}
                 aria-label={`Entry for ${niceDate(date)}`}
-                title={!entry && template && title === template ? "From this log's entry template: not saved until you write in this row" : undefined}
+                title={!entry && template && title === template ? "From this log's entry placeholder: not saved until you write in this row" : undefined}
                 className={`${CELL} font-semibold ${!entry && template && title === template ? 'text-gray-500!' : ''}`}
             />
             {writing || !description ? (
@@ -218,28 +222,58 @@ function SheetRow({ logId, date, dateFormat, entry, template, today, showDate, o
     );
 }
 
+/** The placeholders and what each is today, for the two places they're explained. */
+function PlaceholderList({ today }: { today: string }) {
+    const values = placeholderValues(today);
+    return (
+        <>
+            <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-0.5 text-[11px] text-gray-500">
+                {PLACEHOLDER_KEYS.map(k => (
+                    <li key={k} className="truncate"><code className="text-gray-300">{`{{${k}}}`}</code> {values[k]}</li>
+                ))}
+            </ul>
+            <p className="text-[11px] text-gray-500 leading-relaxed mt-2">
+                The numbers ({NUMERIC_PLACEHOLDER_KEYS.map((k, i) => <span key={k}>{i > 0 && ', '}<code className="text-gray-300">{k}</code></span>)}) also work
+                in math, e.g.: <code className="text-gray-300">{'{{1 + day % totalDays}}'}</code>.<br/>(NOTE: Use + - * / % ^ and ( ), and floor, ceil, round, abs, min, max.)
+            </p>
+        </>
+    );
+}
+
+const TEMPLATE_SUB_TABS: { id: 'dates' | 'placeholder'; label: string }[] = [
+    { id: 'dates', label: 'Date Format' },
+    { id: 'placeholder', label: 'Entry Text' },
+];
+
 /**
- * A log's entry template, set: what a day's Entry starts as. Three tabs, one of which is in effect: None; Every Day
- * (one text for any day); By Weekday (a text for each weekday that should have one; a weekday left empty starts
- * empty). What's typed under a tab is kept while the window is open, but only the open tab's is saved.
+ * A log's entry template, set. Two tabs: Date Format (how the log writes its dates, in its Date column: one of the
+ * usual formats, or Custom, built from {{placeholders}}), and Entry Placeholder (what a day's Entry starts as). Of the
+ * placeholder's three modes one is in effect: None; Every Day (one text for any day); By Weekday (a text for each
+ * weekday that should have one; a weekday left empty starts empty). What's typed under a mode is kept while the window
+ * is open, but only the open mode's is saved. Both tabs share one state, so switching loses nothing and Save writes both.
  */
-function EntryTemplateModal({ log, onClose, onSave }: { log: Log; onClose: () => void; onSave: (template: LogEntryTemplate, dateFormat: LogDateFormat) => void }) {
+function EntryTemplateModal({ log, onClose, onSave }: {
+    log: Log;
+    onClose: () => void;
+    onSave: (template: LogEntryTemplate, dateFormat: LogDateFormat, customPattern: string) => void;
+}) {
     const had = log.entryTemplate;
-    // How this log writes its dates: its Date column, and `{{date}}` in the texts below.
+    const [subTab, setSubTab] = useState<'dates' | 'placeholder'>('dates');
     const [dateFormat, setDateFormat] = useState<LogDateFormat>(() => loadLogDateFormat(log.id));
-    const [tab, setTab] = useState<'none' | 'all' | 'days'>(had.days.some(d => d.trim()) ? 'days' : had.all.trim() ? 'all' : 'none');
+    const [textTab, setTextTab] = useState<'none' | 'all' | 'days'>(had.days.some(d => d.trim()) ? 'days' : had.all.trim() ? 'all' : 'none');
+    const [customPattern, setCustomPattern] = useState<string>(() => loadLogDateFormatCustom());
     const [all, setAll] = useState(had.all);
     const [days, setDays] = useState<string[]>(() => TEMPLATE_WEEKDAYS.map((_, i) => had.days[i] ?? ''));
     const today = calendarToday();
     const none = TEMPLATE_WEEKDAYS.map(() => '');
-    const draft: LogEntryTemplate = tab === 'all' ? { all, days: none } : tab === 'days' ? { all: '', days } : { all: '', days: none };
+    const draft: LogEntryTemplate = textTab === 'all' ? { all, days: none } : textTab === 'days' ? { all: '', days } : { all: '', days: none };
     return (
         <Modal
             onClose={onClose}
             icon={LayoutTemplate}
             title="Entry Template"
             subtitle={log.name}
-            onSubmit={e => { e.preventDefault(); onSave(draft, dateFormat); }}
+            onSubmit={e => { e.preventDefault(); onSave(draft, dateFormat, customPattern); }}
             footer={
                 <>
                     <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
@@ -247,76 +281,122 @@ function EntryTemplateModal({ log, onClose, onSave }: { log: Log; onClose: () =>
                 </>
             }
         >
-            <Segmented
-                options={[
-                    { value: 'none', label: 'None', title: "No template: A day's Entry starts empty" },
-                    { value: 'all', label: 'Every Day', title: 'One text that every day starts with' },
-                    { value: 'days', label: 'By Weekday', title: 'A text for each weekday that should have one' },
-                ]}
-                value={tab}
-                onPick={setTab}
-                className="w-fit mb-4"
-            />
+            {/* Sub-tabs, as in Settings > Theme. type="button" so they don't submit the form. */}
+            <div className="flex items-center gap-4 pb-1 mb-4">
+                {TEMPLATE_SUB_TABS.map(tab => (
+                    <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setSubTab(tab.id)}
+                        className={`pb-1.5 text-[10px] font-bold uppercase tracking-wider transition-colors cursor-pointer relative ${subTab === tab.id ? 'text-white' : 'text-[#666666] hover:text-[#aaaaaa]'}`}
+                    >
+                        {tab.label}
+                        {subTab === tab.id && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--k-accent)]" />}
+                    </button>
+                ))}
+            </div>
+
             {/* The same height whichever tab is open, so the window doesn't jump as they're switched. */}
-            <div className="min-h-[17.5rem]">
-                {tab === 'none' && (
-                    <p className="text-xs text-gray-400 leading-relaxed">
-                        No template. Each day's Entry starts empty, and you type it yourself.
-                    </p>
-                )}
-                {tab === 'all' && (
+            <div className="min-h-[20rem]">
+                {subTab === 'dates' && (
                     <>
-                        <p className="text-xs text-gray-400 leading-relaxed mb-3">Every day's Entry starts as this, so it needn't be typed.</p>
-                        <input autoFocus value={all} onChange={e => setAll(e.target.value)} onContextMenu={handlePlainContextMenu} maxLength={200} placeholder='e.g. "Training" or "{{weekday}} session"' className={INPUT} />
-                    </>
-                )}
-                {tab === 'days' && (
-                    <>
-                        <p className="text-xs text-gray-400 leading-relaxed mb-3">Each weekday's Entry starts as its own text. A weekday left empty starts empty.</p>
-                        <div className="space-y-1.5">
-                            {TEMPLATE_WEEKDAYS.map((name, i) => (
-                                <div key={name} className="flex items-center gap-3">
-                                    <span className="w-24 shrink-0 text-xs text-gray-400">{name}</span>
-                                    <input
-                                        autoFocus={i === 0}
-                                        value={days[i]}
-                                        onChange={e => setDays(d => d.map((x, j) => (j === i ? e.target.value : x)))}
-                                        onContextMenu={handlePlainContextMenu}
-                                        maxLength={200}
-                                        placeholder="Nothing"
-                                        className={INPUT}
-                                    />
-                                </div>
+                        <p className="text-xs text-gray-400 leading-relaxed mb-3">
+                            How this log writes its dates in its Date column. Each choice shows today written that way.
+                        </p>
+                        <Select
+                            look="setting"
+                            value={dateFormat}
+                            onValueChange={v => setDateFormat(v as LogDateFormat)}
+                            wrapperClassName="w-full"
+                            className="w-full"
+                        >
+                            {LOG_DATE_FORMATS.map(f => (
+                                <option key={f} value={f}>{formatLogDate(today, f, customPattern)}{'   ·   '}{LOG_DATE_FORMAT_LABEL[f]}</option>
                             ))}
-                        </div>
+                        </Select>
+                        {dateFormat === 'custom' && (
+                            <div className="mt-3">
+                                <input
+                                    autoFocus
+                                    value={customPattern}
+                                    onChange={e => setCustomPattern(e.target.value)}
+                                    onContextMenu={handlePlainContextMenu}
+                                    maxLength={100}
+                                    placeholder="{{weekday}}, {{monthName}} {{day}}, {{year}}"
+                                    aria-label="Custom date format"
+                                    className={INPUT}
+                                />
+                                <p className="text-[11px] text-gray-500 leading-relaxed mt-1.5">
+                                    Combine these placeholders with your own text. The format is shared by every log that uses Custom.
+                                </p>
+                                <PlaceholderList today={today} />
+                            </div>
+                        )}
+                        <p className="text-[11px] text-gray-500 leading-relaxed mt-4">
+                            Today is written <span className="text-gray-200 font-semibold">{formatLogDate(today, dateFormat, customPattern)}</span>.
+                        </p>
                     </>
                 )}
-                {tab !== 'none' && (
+
+                {subTab === 'placeholder' && (
                     <>
-                        <p className="text-[11px] text-gray-500 leading-relaxed mt-4">
-                            <code className="text-gray-300">{'{{weekday}}'}</code> and <code className="text-gray-300">{'{{date}}'}</code> are filled in for the day.
-                            {hasEntryTemplate(draft) && <> Today would start as <span className="text-gray-200 font-semibold">{entryTemplateFor(draft, today, dateFormat) || 'nothing'}</span>.</>}
-                        </p>
-                        <p className="text-[11px] text-gray-500 leading-relaxed mt-2">
-                            It shows dimmed in a day with nothing written, and is saved with the day once you write its description. With a template, the bell's reminder is answered by a day's description, since its Entry is already there.
-                        </p>
+                        <Segmented
+                            options={[
+                                { value: 'none', label: 'None', title: "No placeholder: A day's Entry starts empty" },
+                                { value: 'all', label: 'Every Day', title: 'One text that every day starts with' },
+                                { value: 'days', label: 'By Weekday', title: 'A text for each weekday that should have one' },
+                            ]}
+                            value={textTab}
+                            onPick={setTextTab}
+                            className="w-fit mb-4"
+                        />
+                        {textTab === 'none' && (
+                            <p className="text-xs text-gray-400 leading-relaxed">
+                                No placeholder. Each day's Entry starts empty, and you type it yourself.
+                            </p>
+                        )}
+                        {textTab === 'all' && (
+                            <>
+                                <p className="text-xs text-gray-400 leading-relaxed mb-3">Every day's Entry starts as this, so it needn't be typed.</p>
+                                <input autoFocus value={all} onChange={e => setAll(e.target.value)} onContextMenu={handlePlainContextMenu} maxLength={200} placeholder='e.g. "Training" or "{{weekday}} session"' className={INPUT} />
+                            </>
+                        )}
+                        {textTab === 'days' && (
+                            <>
+                                <p className="text-xs text-gray-400 leading-relaxed mb-3">Each weekday's Entry starts as its own text. A weekday left empty starts empty.</p>
+                                <div className="space-y-1.5">
+                                    {TEMPLATE_WEEKDAYS.map((name, i) => (
+                                        <div key={name} className="flex items-center gap-3">
+                                            <span className="w-24 shrink-0 text-xs text-gray-400">{name}</span>
+                                            <input
+                                                autoFocus={i === 0}
+                                                value={days[i]}
+                                                onChange={e => setDays(d => d.map((x, j) => (j === i ? e.target.value : x)))}
+                                                onContextMenu={handlePlainContextMenu}
+                                                maxLength={200}
+                                                placeholder="Nothing"
+                                                className={INPUT}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                        {textTab !== 'none' && (
+                            <>
+                                <p className="text-[11px] text-gray-500 leading-relaxed mt-4">
+                                    Placeholders work in the text.
+                                    {hasEntryTemplate(draft) && <> Today would start as <span className="text-gray-200 font-semibold">{entryTemplateFor(draft, today) || 'nothing'}</span>.</>}
+                                </p>
+                                <PlaceholderList today={today} />
+                                <p className="text-[11px] text-gray-500 leading-relaxed mt-3">
+                                    It shows dimmed in a day with nothing written, and is saved with the day once you write its description. With a placeholder, the bell's reminder is answered by a day's description, since its Entry is already there.
+                                </p>
+                            </>
+                        )}
                     </>
                 )}
             </div>
-            {/* Under every tab: it's the log's, with or without a template. Each choice shows today written that way. */}
-            <label className="mt-4 pt-4 border-t border-[#272727] flex items-center gap-3">
-                <span className="w-24 shrink-0 text-xs text-gray-400">Dates</span>
-                <select
-                    value={dateFormat}
-                    onChange={e => setDateFormat(e.target.value as LogDateFormat)}
-                    title="How this log writes its dates: in its Date column, and for {{date}} in a template"
-                    className={`${INPUT} cursor-pointer`}
-                >
-                    {LOG_DATE_FORMATS.map(f => (
-                        <option key={f} value={f}>{formatLogDate(today, f)}{'   ·   '}{LOG_DATE_FORMAT_LABEL[f]}</option>
-                    ))}
-                </select>
-            </label>
         </Modal>
     );
 }
@@ -357,8 +437,9 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
     const nameRef = useRef<HTMLInputElement>(null);
     // The open log's column widths: dragged by the grips between the headings, and kept for that log. Null: the usual.
     const [columns, setColumns] = useState<ColumnWidths | null>(() => loadColumns(openId));
-    // And how it writes its dates (chosen in its Entry Template window).
+    // And how it writes its dates (chosen in its Entry Template window), with the custom format for 'custom'.
     const [dateFormat, setDateFormat] = useState<LogDateFormat>(() => loadLogDateFormat(openId));
+    const [customPattern, setCustomPattern] = useState<string>(() => loadLogDateFormatCustom());
     useEffect(() => { setColumns(loadColumns(openId)); setDateFormat(loadLogDateFormat(openId)); }, [openId]);
     const dateHeadRef = useRef<HTMLSpanElement>(null);
     const entryHeadRef = useRef<HTMLSpanElement>(null);
@@ -518,10 +599,10 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
         const oldestFirst = [...entries].sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
         if (words.length === 0) return oldestFirst;
         return oldestFirst.filter(e => {
-            const text = normalizeText(where === 'title' ? e.title : where === 'date' ? `${e.date} ${niceDate(e.date)} ${formatLogDate(e.date, dateFormat)}` : e.description);
+            const text = normalizeText(where === 'title' ? e.title : where === 'date' ? `${e.date} ${niceDate(e.date)} ${formatLogDate(e.date, dateFormat, customPattern)}` : e.description);
             return words.every(w => text.includes(w));
         });
-    }, [entries, words, where]);
+    }, [entries, words, where, dateFormat, customPattern]);
 
     const today = calendarToday();
     // The sheet's rows, the oldest day first: a row a day, blank until it's written in. (A day that has more than one
@@ -656,8 +737,8 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
                             </span>
                             <button
                                 onClick={() => setTemplateFor(open)}
-                                className={`p-1.5 rounded-md hover:bg-[#272727] transition-colors cursor-pointer ${hasEntryTemplate(open.entryTemplate) ? 'text-[var(--k-accent)]' : 'text-gray-500 hover:text-white'}`}
-                                title="Entry template: What each day's Entry starts as, the same every day or by weekday"
+                                className="p-1.5 rounded-md text-gray-500 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                                title="Entry template: The date format, and what each day's Entry starts as (the same every day or by weekday)"
                             >
                                 <LayoutTemplate className="w-4 h-4" />
                             </button>
@@ -706,13 +787,14 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
                                 <p className="py-8 text-center text-sm text-gray-500">No rows match.</p>
                             ) : rows.map(r => (
                                 <SheetRow
-                                    // A blank day is drawn again when the template changes what it starts as.
-                                    key={r.entry ? r.key : `${r.key}:${entryTemplateFor(open.entryTemplate, r.date, dateFormat)}`}
+                                    // A blank day is drawn again when the placeholder changes what it starts as.
+                                    key={r.entry ? r.key : `${r.key}:${entryTemplateFor(open.entryTemplate, r.date)}`}
                                     logId={open.id}
                                     date={r.date}
                                     dateFormat={dateFormat}
+                                    customPattern={customPattern}
                                     entry={r.entry}
-                                    template={r.entry ? '' : entryTemplateFor(open.entryTemplate, r.date, dateFormat)}
+                                    template={r.entry ? '' : entryTemplateFor(open.entryTemplate, r.date)}
                                     today={today}
                                     showDate={r.first}
                                     onChanged={() => {}}
@@ -731,15 +813,17 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
 
             <BottomBar>
                 <div className="flex items-center gap-6 flex-1 min-w-0 text-[11px] font-semibold text-gray-400">
-                    <span className="shrink-0 whitespace-nowrap">
-                        <span className="text-white">{logs?.length ?? 0}</span> log{(logs?.length ?? 0) === 1 ? '' : 's'}
-                        {' · '}<span className="text-white">{(logs ?? []).filter(l => l.entries > 0).length}</span> in use
-                    </span>
-                    {open && (
-                        <span className="min-w-0 truncate">
-                            <span className="text-white">{shown.length}</span>{shown.length !== entries.length ? ` of ${entries.length}` : ''} {entries.length === 1 ? 'entry' : 'entries'}
+                    <div className="flex items-center gap-6 min-w-0 w-72 shrink-0">
+                        <span className="shrink-0 whitespace-nowrap">
+                            <span className="text-white">{logs?.length ?? 0}</span> log{(logs?.length ?? 0) === 1 ? '' : 's'}
+                            {' ('}<span className="text-white">{(logs ?? []).filter(l => l.entries > 0).length}</span> in use{')'}
                         </span>
-                    )}
+                        {open && (
+                            <span className="ml-auto min-w-0 truncate">
+                                <span className="text-white">{shown.length}</span>{shown.length !== entries.length ? ` of ${entries.length}` : ''} {entries.length === 1 ? 'entry' : 'entries'}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </BottomBar>
 
@@ -747,17 +831,19 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
                 <EntryTemplateModal
                     log={templateFor}
                     onClose={() => setTemplateFor(null)}
-                    onSave={(template, format) => {
+                    onSave={(template, format, pattern) => {
                         const log = templateFor;
                         setTemplateFor(null);
+                        saveLogDateFormatCustom(pattern);
+                        setCustomPattern(pattern);
                         saveLogDateFormat(log.id, format);
                         if (log.id === openId) setDateFormat(format);
                         // Only the date format changed: the template is left as it is, and nothing is said of it.
                         const was = log.entryTemplate;
                         if (template.all === was.all && template.days.every((d, i) => d === (was.days[i] ?? ''))) return;
                         setLogEntryTemplate(log.id, template)
-                            .then(() => onNotify({ message: hasEntryTemplate(template) ? `Entry template set for "${log.name}"` : `Entry template cleared for "${log.name}"`, type: 'success' }))
-                            .catch(e => failed("Couldn't save the entry template", e));
+                            .then(() => onNotify({ message: hasEntryTemplate(template) ? `Entry placeholder set for "${log.name}"` : `Entry placeholder cleared for "${log.name}"`, type: 'success' }))
+                            .catch(e => failed("Couldn't save the entry placeholder", e));
                     }}
                 />
             )}

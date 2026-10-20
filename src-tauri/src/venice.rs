@@ -96,6 +96,11 @@ pub async fn summarize_transcript(app: AppHandle, transcript: String, handle: Op
         prompt_template = prompt_template.replace("${handle}", h);
     }
 
+    let alias_prefix = alias_awareness_prefix(&db_path, handle.as_deref());
+    if !alias_prefix.is_empty() {
+        prompt_template = format!("{alias_prefix}{prompt_template}");
+    }
+
     let prompt = if prompt_template.contains("{}") {
         prompt_template.replace("{}", &transcript)
     } else {
@@ -113,6 +118,31 @@ pub async fn summarize_transcript(app: AppHandle, transcript: String, handle: Op
     let client = reqwest::Client::new();
     let result = call_venice_api(&client, &route, &model, &prompt).await?;
     Ok(post_process(&db_path, result))
+}
+
+/// When "Enable Alias Awareness" is on (Settings > Plugins > Venice), prepends a short note to the
+/// cloud prompt if the channel's biography row has a non-empty `alias` — skipped when the setting
+/// is off, there's no handle, or no alias is stored.
+fn alias_awareness_prefix(db_path: &str, handle: Option<&str>) -> String {
+    let Ok(conn) = rusqlite::Connection::open(db_path) else {
+        return String::new();
+    };
+    if !db::get_setting_bool(&conn, "aliasAwarenessEnabled") {
+        return String::new();
+    }
+    let Some(h) = handle else {
+        return String::new();
+    };
+    let Ok(Some(bio)) = db::get_biography_by_handle(db_path, h) else {
+        return String::new();
+    };
+    let alias = bio.14.trim();
+    if alias.is_empty() {
+        return String::new();
+    }
+    format!(
+        "This channel is also known by {alias}\n Use this alias to help identify and correctly spell names mentioned in the transcript.\n\n"
+    )
 }
 
 /// Applies whichever "Post-Processing Options" (Settings > API Key > Venice) are turned on to a
@@ -222,4 +252,63 @@ pub async fn generate_image(app: AppHandle, prompt: String) -> Result<String, St
     }
 
     Err("No image generated in response".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::alias_awareness_prefix;
+    use rusqlite::{params, Connection};
+
+    fn db_with_bio(alias: &str) -> String {
+        let path = std::env::temp_dir()
+            .join(format!(
+                "kinesis_venice_alias_{}_{}.db",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+            .to_string_lossy()
+            .to_string();
+        crate::db::init_db(&path).unwrap();
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO Biographies (handle, display_name, alias) VALUES ('@Creator', 'Current Name', ?1)",
+            params![alias],
+        )
+        .unwrap();
+        path
+    }
+
+    fn set_alias_awareness(path: &str, on: bool) {
+        Connection::open(path)
+            .unwrap()
+            .execute(
+                "INSERT INTO Settings (key, value) VALUES ('aliasAwarenessEnabled', ?1) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![if on { "true" } else { "false" }],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn alias_prefix_when_enabled_and_alias_present() {
+        let path = db_with_bio("Former Name");
+        set_alias_awareness(&path, true);
+        let msg = alias_awareness_prefix(&path, Some("@Creator"));
+        assert!(msg.contains("Former Name"));
+        assert!(msg.contains("also known by"));
+    }
+
+    #[test]
+    fn alias_prefix_empty_when_disabled_or_missing_alias() {
+        let path = db_with_bio("");
+        set_alias_awareness(&path, true);
+        assert!(alias_awareness_prefix(&path, Some("@Creator")).is_empty());
+
+        let path2 = db_with_bio("Former Name");
+        set_alias_awareness(&path2, false);
+        assert!(alias_awareness_prefix(&path2, Some("@Creator")).is_empty());
+        assert!(alias_awareness_prefix(&path2, None).is_empty());
+    }
 }

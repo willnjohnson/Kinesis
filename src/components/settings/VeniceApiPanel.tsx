@@ -29,10 +29,12 @@ export function VeniceApiPanel() {
     // unset instead of its documented default.
     const [stripQuotes, setStripQuotes] = useState<boolean | null>(null);
     const [stripEmojis, setStripEmojis] = useState<boolean | null>(null);
+    const [aliasAwarenessEnabled, setAliasAwarenessEnabled] = useState<boolean | null>(null);
     const isLocked = useLockedSettings();
     const modelLocked = isLocked("venice_model");
     const stripQuotesLocked = isLocked("stripQuoteblockQuotes");
     const stripEmojisLocked = isLocked("stripHeaderEmojis");
+    const aliasAwarenessLocked = isLocked("aliasAwarenessEnabled");
 
     useEffect(() => {
         getKeyStatus().then(setKeyStatus).catch(() => {});
@@ -45,9 +47,14 @@ export function VeniceApiPanel() {
         });
         getSetting("stripQuoteblockQuotes").then(v => setStripQuotes(v == null ? true : v === "true"));
         getSetting("stripHeaderEmojis").then(v => setStripEmojis(v === "true"));
+        getSetting("aliasAwarenessEnabled").then(v => setAliasAwarenessEnabled(v === "true"));
     }, []);
 
-    const toggle = async (key: "stripQuoteblockQuotes" | "stripHeaderEmojis", next: boolean, apply: (v: boolean) => void) => {
+    const toggle = async (
+        key: "stripQuoteblockQuotes" | "stripHeaderEmojis" | "aliasAwarenessEnabled",
+        next: boolean,
+        apply: (v: boolean) => void,
+    ) => {
         apply(next); // Shown at once; reverted below if the write fails.
         setOptionsError(null);
         try {
@@ -145,6 +152,33 @@ export function VeniceApiPanel() {
                 dirty={promptDirty}
                 hint={<TooltipLightbulb />}
             />
+
+            <div className="bg-black/20 p-4 rounded-lg border border-[#303030]">
+                <div className="flex items-center gap-2 mb-3">
+                    <span className="text-xs font-bold text-white">Pre-Processing Options</span>
+                </div>
+                <div className="space-y-3">
+                    <label
+                        className={`flex items-start gap-3 ${aliasAwarenessLocked ? 'opacity-50' : 'cursor-pointer'}`}
+                        title={aliasAwarenessLocked ? LOCKED_TITLE : undefined}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={aliasAwarenessEnabled ?? false}
+                            disabled={aliasAwarenessLocked || aliasAwarenessEnabled === null}
+                            onChange={(e) => void toggle("aliasAwarenessEnabled", e.target.checked, setAliasAwarenessEnabled)}
+                            className="mt-0.5 shrink-0 cursor-pointer"
+                        />
+                        <span>
+                            <span className="block text-xs font-bold text-white">Enable Alias Awareness</span>
+                            <span className="block text-[11px] text-[#888888] mt-0.5 leading-relaxed">
+                                Includes an alias to the channel name in the cloud prompt (when applicable) to help the AI identify names more accurately.
+                            </span>
+                        </span>
+                    </label>
+                </div>
+                {optionsError && <SaveError message={optionsError} />}
+            </div>
 
             <div className="bg-black/20 p-4 rounded-lg border border-[#303030]">
                 <div className="flex items-center gap-2 mb-3">

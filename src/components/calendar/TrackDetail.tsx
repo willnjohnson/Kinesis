@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Archive, ArchiveRestore, ArrowLeft, BookOpenText, ChevronDown, ChevronRight, Folder, FolderPlus, GripVertical, ListPlus, NotebookPen, Pencil, Repeat, RotateCcw, Trash2, Undo2, Video as VideoIcon, X } from 'lucide-react';
-import { getSavedVideos, listNotes, listPins, listWorkbooks, searchLibrary, videoThumbnail, type CalendarEntry, type CalendarTrackSummary } from '../../api';
+import { getSavedVideos, listNotes, listPins, listWorkbooks, searchLibrary, videoThumbnail, calendarToday, type CalendarEntry, type CalendarTrackSummary } from '../../api';
 import { noteDisplayTitle } from '../../lib/notes';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { handlePlainContextMenu } from '../../lib/markdown-editor';
 import { useDragReorder, DropIndicator, type DropPlace } from '../../hooks/useDragReorder';
 import { InProgressIcon } from '../ui/MarkIcons';
 import { MODE_LABEL, repeatLabel, trackColor, niceDate, trackTime, statusLine, PriorityMark, Marked, EntryTitle } from './shared';
+import { ConfirmDialog } from '../ConfirmDialog';
 
 /**
  * Where a drag leaves a track's entries (each folder followed by what's in it), or null when the drop changes nothing.
@@ -105,6 +106,18 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
         onLayout(next.map(e => ({ id: e.id, folderId: e.folderId })));
     };
     const countIn = (folderId: number) => entries.filter(e => e.folderId === folderId);
+    // Checking off an item for a day after today: ask first, so a stray click doesn't mark a future item.
+    const [marking, setMarking] = useState<CalendarEntry | null>(null);
+    const today = calendarToday();
+    const requestMark = (entry: CalendarEntry, done: boolean) => {
+        if (done && entry.dueDate && entry.dueDate > today) setMarking(entry);
+        else onMark(entry, done);
+    };
+    const confirmMark = () => {
+        const entry = marking;
+        setMarking(null);
+        if (entry) onMark(entry, true);
+    };
     // Which entry is up, by identity: the dragged order can differ from the saved one for a moment.
     const currentEntry = state.current !== null ? state.entries[state.current] : null;
     const status = statusLine(summary);
@@ -166,8 +179,8 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                                 <input
                                     type="checkbox"
                                     checked={entry.done}
-                                    disabled={countIn(entry.id).length === 0}
-                                    onChange={e => onMark(entry, e.target.checked)}
+disabled={countIn(entry.id).length === 0}
+                                    onChange={e => requestMark(entry, e.target.checked)}
                                     className="cursor-pointer shrink-0 disabled:cursor-default"
                                     title={entry.done ? 'Mark everything in it not done' : 'Mark everything in it done'}
                                 />
@@ -216,7 +229,7 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                             {/* A visual cue only: the whole row is what's dragged (as in the Attachments list). -mr-1.5 keeps the
                                 checkbox snug to it. */}
                             {canReorder && <GripVertical className="w-3 h-3 shrink-0 -ml-1 -mr-1.5 text-[#555555] cursor-grab active:cursor-grabbing opacity-0 group-hover:opacity-100 transition-opacity" />}
-                            <input type="checkbox" checked={entry.done} onChange={e => onMark(entry, e.target.checked)} className="cursor-pointer shrink-0" title={entry.done ? 'Mark not done' : 'Mark done'} />
+                            <input type="checkbox" checked={entry.done} onChange={e => requestMark(entry, e.target.checked)} className="cursor-pointer shrink-0" title={entry.done ? 'Mark not done' : 'Mark done'} />
                             <EntryTitle entry={entry} onOpenVideo={onOpenVideo} className={`text-xs min-w-0 truncate flex-1 ${entry.done ? 'text-gray-500 line-through' : 'text-gray-200'}`} />
                             {/* Everything after the name sits in fixed-width slots, kept even when empty (no priority, no date,
                                 a video with no edit button), so the dates line up in one column down the list. */}
@@ -267,6 +280,23 @@ export function TrackDetail({ summary, canEdit, fits, onBack, onOpenVideo, onMar
                 <div className="shrink-0 px-2 pb-2 border-t border-[#222]">
                     <AddEntry onAddVideo={onAddVideo} onAddNote={onAddNote} onAddWorkbook={onAddWorkbook} onNewTask={() => onTask(null)} onNewFolder={onNewFolder} />
                 </div>
+            )}
+            {marking && (
+                <ConfirmDialog
+                    title="Checking Future Due Date Action"
+                    confirmLabel="Yes"
+                    cancelLabel="No"
+                    message={
+                        <>
+                            You are checking off "{marking.title}" for{" "}
+                            {niceDate(marking.dueDate)}, which is a <strong>future due date</strong>.
+                            <br /><br />
+                            Are you sure you want to complete this action?
+                        </>
+                    }
+                    onConfirm={confirmMark}
+                    onCancel={() => setMarking(null)}
+                />
             )}
         </div>
     );

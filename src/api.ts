@@ -75,6 +75,13 @@ export interface DisplaySettings {
     theme: string;
     videoListMode: 'grid' | 'compact';
     navigationOrientation: 'horizontal' | 'vertical' | 'titlebar';
+    contentThemeInherit?: boolean;
+    contentThemeCalendarEnabled?: boolean;
+    contentThemeNotesEnabled?: boolean;
+    contentThemeLogsEnabled?: boolean;
+    contentTheme?: string;
+    blockquoteAccentEnabled?: boolean;
+    blockquoteAccentColor?: string;
 }
 
 export interface HistoryEntry {
@@ -1175,7 +1182,7 @@ export interface Log {
 }
 
 /** A log's entry template: `all` for any day, `days` (seven, Sunday first) for a weekday with its own. All empty for
- *  none. `{{weekday}}` and `{{date}}` in a text are filled in for the day. */
+ *  none. `{{weekday}}`, `{{monthName}}`, `{{year}}`, and `{{season}}` are supported. */
 export interface LogEntryTemplate {
     all: string;
     days: string[];

@@ -80,6 +80,8 @@ export function WorkspaceSwitcher({ variant, name, showName = false }: Props) {
         setSwitching(folder);
         try {
             await openWorkspace(folder);
+            // Notify any open modals/dialogs that a workspace switch is happening
+            window.dispatchEvent(new CustomEvent('kinesis:workspace-switch'));
             reloadApp(status?.recents.find(r => r.folder === folder)?.name);
         } catch (e) {
             setError(errText(e));

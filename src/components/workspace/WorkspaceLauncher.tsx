@@ -90,6 +90,7 @@ export function WorkspaceLauncher({ status: initial, onClose }: Props) {
         setBusyFolder(w.folder);
         try {
             await openWorkspace(w.folder);
+            window.dispatchEvent(new CustomEvent('kinesis:workspace-switch'));
             reloadApp(w.name);
         } catch (e) {
             setError(errText(e));
@@ -107,6 +108,7 @@ export function WorkspaceLauncher({ status: initial, onClose }: Props) {
             if (!folder) return;
             setBusyFolder("*");
             await openExistingWorkspace(folder);
+            window.dispatchEvent(new CustomEvent('kinesis:workspace-switch'));
             reloadApp();
         } catch (e) {
             setError(errText(e));

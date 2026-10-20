@@ -18,7 +18,8 @@ export type MarkdownAction =
     | 'bold' | 'italic' | 'strikethrough' | 'highlight' | 'code' | 'link' | 'image'
     | 'linkToApp' | 'blockquote' | 'blockquoteSingle' | 'blockquoteMulti' | 'bulletList' | 'numberedList' | 'taskList' | 'table' | 'horizontalRule'
     | 'clearFormatting' | 'questionAnswer' | 'linkFlashcards' | 'makeTerm'
-    | 'calloutNote' | 'calloutTip' | 'calloutImportant' | 'calloutWarning' | 'calloutCaution';
+    | 'calloutNote' | 'calloutTip' | 'calloutImportant' | 'calloutWarning' | 'calloutCaution'
+    | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
 
 const patterns: Record<string, { prefix: string; suffix: string; detect?: RegExp; defaultText?: string }> = {
     bold: { prefix: '**', suffix: '**', detect: /^\*\*(.*)\*\*$/s },
@@ -94,10 +95,17 @@ function wrapSelection(target: HTMLTextAreaElement, type: string) {
         newSelectionStart = newSelectionEnd = start + prefix.length;
     }
 
+    // Preserve scroll position of nearest scrollable ancestor before focus/selection changes
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
     target.focus();
     document.execCommand('insertText', false, replacement);
     setTimeout(() => {
         target.setSelectionRange(newSelectionStart, newSelectionEnd);
+        if (scrollable) {
+            scrollable.scrollTop = scrollTop;
+            requestAnimationFrame(() => { scrollable.scrollTop = scrollTop; });
+        }
     }, 0);
 }
 
@@ -124,6 +132,8 @@ function prependLines(target: HTMLTextAreaElement, getPrefix: (index: number) =>
     const modifiedText = modifiedLines.join('\n');
 
     // Replace the full line range with modified text
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
     target.focus();
     target.setSelectionRange(lineStart, lineEnd);
     document.execCommand('insertText', false, modifiedText);
@@ -135,6 +145,9 @@ function prependLines(target: HTMLTextAreaElement, getPrefix: (index: number) =>
             target.setSelectionRange(caret, caret);
         } else {
             target.setSelectionRange(lineStart, lineStart + modifiedText.length);
+        }
+        if (scrollable) {
+            scrollable.scrollTop = scrollTop;
         }
     }, 0);
 }
@@ -148,13 +161,54 @@ function lineBounds(value: string, pos: number): { start: number; end: number } 
     return { start, end: end === -1 ? value.length : end };
 }
 
+/** For a caret on a blank line between two texts: the newlines to add so a block placed there has a blank line
+ *  above and below it. `null` when it isn't that case (a selection, a line with text, or nothing after it). */
+function blankLinePadding(value: string, start: number, end: number): { before: string; after: string } | null {
+    if (start !== end) return null;
+    const { start: lineStartPos, end: lineEndPos } = lineBounds(value, start);
+    if (value.substring(lineStartPos, lineEndPos).trim() !== '') return null;
+    const above = value.substring(0, lineStartPos);
+    const below = value.substring(lineEndPos);
+    if (below.trim() === '') return null;
+
+    let trailing = 0;
+    while (trailing < above.length && above[above.length - 1 - trailing] === '\n') trailing++;
+    let leading = 0;
+    while (leading < below.length && below[leading] === '\n') leading++;
+
+    // Above: the previous line must be followed by one empty line. Below: this line's own break plus one empty line.
+    const before = above.trim() === '' ? 0 : Math.max(0, 2 - trailing);
+    const after = Math.max(0, 2 - leading);
+    return { before: '\n'.repeat(before), after: '\n'.repeat(after) };
+}
+
+/** Puts the padding around the caret and leaves the caret on the line between, where the block goes.
+ *  Synchronous, so a following wrapSelection / link picker sees the new position. */
+function padAtCaret(target: HTMLTextAreaElement, pad: { before: string; after: string }): number {
+    const at = target.selectionStart + pad.before.length;
+    const text = pad.before + pad.after;
+    if (text) {
+        target.focus();
+        document.execCommand('insertText', false, text);
+        target.setSelectionRange(at, at);
+    }
+    return at;
+}
+
 /** Replaces text[from, to) with `text` the way typing would (keeping undo history), then puts the
  *  caret at `caret` when given. */
 function replaceRange(target: HTMLTextAreaElement, from: number, to: number, text: string, caret?: number) {
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
     target.focus();
     target.setSelectionRange(from, to);
     document.execCommand('insertText', false, text);
-    if (caret !== undefined) setTimeout(() => target.setSelectionRange(caret, caret), 0);
+    setTimeout(() => {
+        if (caret !== undefined) target.setSelectionRange(caret, caret);
+        if (scrollable) {
+            scrollable.scrollTop = scrollTop;
+        }
+    }, 0);
 }
 
 /** Ctrl+T: turns the selected lines into a task list, or back into plain lines. */
@@ -180,13 +234,33 @@ function toggleTaskList(target: HTMLTextAreaElement) {
 /** Inserts a block (table or rule) after the selected lines with a blank line on each side. */
 function insertBlock(target: HTMLTextAreaElement, block: string, select?: { start: number; length: number }) {
     const value = target.value;
-    const lineEnd = lineBounds(value, target.selectionEnd).end;
-    const { insert, blockStart } = blockInsertion(value, lineEnd, block);
-    replaceRange(target, lineEnd, lineEnd, insert);
-    const at = lineEnd + blockStart;
+    const selectionStart = target.selectionStart;
+    const selectionEnd = target.selectionEnd;
+
+    let insert: string;
+    let blockStartInInsert: number;
+
+    const pad = blankLinePadding(value, selectionStart, selectionEnd);
+    if (pad) {
+        // Blank line between two texts: the block takes it, with a blank line kept on each side.
+        insert = pad.before + block + pad.after;
+        blockStartInInsert = pad.before.length;
+    } else {
+        const { insert: ins, blockStart: bs } = blockInsertion(value, selectionEnd, block);
+        insert = ins;
+        blockStartInInsert = bs;
+    }
+
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
+    replaceRange(target, selectionStart, selectionEnd, insert);
+    const at = selectionStart + blockStartInInsert;
     setTimeout(() => {
         if (select) target.setSelectionRange(at + select.start, at + select.start + select.length);
         else target.setSelectionRange(at + block.length, at + block.length);
+        if (scrollable) {
+            scrollable.scrollTop = scrollTop;
+        }
     }, 0);
 }
 
@@ -196,8 +270,15 @@ function insertTable(target: HTMLTextAreaElement) {
     const start = target.selectionStart;
     const converted = tableFromTabs(target.value.substring(start, target.selectionEnd));
     if (converted) {
+        const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+        const scrollTop = scrollable?.scrollTop ?? 0;
         replaceRange(target, start, target.selectionEnd, converted);
-        setTimeout(() => target.setSelectionRange(start, start + converted.length), 0);
+        setTimeout(() => {
+            target.setSelectionRange(start, start + converted.length);
+            if (scrollable) {
+                scrollable.scrollTop = scrollTop;
+            }
+        }, 0);
         return;
     }
     insertBlock(target, TABLE_TEMPLATE, TABLE_FIRST_CELL);
@@ -253,31 +334,46 @@ function insideMath(value: string, pos: number): boolean {
 export function insertMath(target: HTMLTextAreaElement, latex: string, { select, wrap }: { select?: string; wrap?: 'inline' | 'block' } = {}) {
     const value = target.value;
     const start = target.selectionStart, end = target.selectionEnd;
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
+    const restoreScroll = () => { if (scrollable) scrollable.scrollTop = scrollTop; };
+    const bare = insideMath(value, start);
+    // On a blank line between two texts the formula gets a blank line above and below (not inside maths already).
+    const pad = bare ? null : blankLinePadding(value, start, end);
+    const before = pad?.before ?? '';
+    const after = pad?.after ?? '';
+
     if (wrap) {
         const inner = value.substring(start, end);
         if (wrap === 'inline') {
-            replaceRange(target, start, end, `$${inner}$`);
-            // Text made a formula stays selected (inside its dollars); an empty one has the caret inside.
-            setTimeout(() => target.setSelectionRange(start + 1, start + 1 + inner.length), 0);
+            replaceRange(target, start, end, `${before}$${inner}$${after}`);
+            setTimeout(() => {
+                target.setSelectionRange(start + before.length + 1, start + before.length + 1 + inner.length);
+                restoreScroll();
+            }, 0);
             return;
         }
         // On lines of its own: a break before where the line has text already, and after where more follows.
-        const lead = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
-        const tail = end < value.length && value[end] !== '\n' ? '\n' : '';
+        const lead = pad ? before : (start > 0 && value[start - 1] !== '\n' ? '\n' : '');
+        const tail = pad ? after : (end < value.length && value[end] !== '\n' ? '\n' : '');
         replaceRange(target, start, end, `${lead}$$\n${inner}\n$$${tail}`);
         const at = start + lead.length + 3;
-        setTimeout(() => target.setSelectionRange(at, at + inner.length), 0);
+        setTimeout(() => {
+            target.setSelectionRange(at, at + inner.length);
+            restoreScroll();
+        }, 0);
         return;
     }
-    const bare = insideMath(value, start);
-    const text = bare ? latex : `$${latex}$`;
+
+    const text = bare ? latex : `${before}$${latex}$${after}`;
     replaceRange(target, start, end, text);
-    const offset = bare ? 0 : 1;
+    const offset = bare ? 0 : before.length + 1;
     const found = select ? latex.indexOf(select) : -1;
     setTimeout(() => {
         if (select && found !== -1) target.setSelectionRange(start + offset + found, start + offset + found + select.length);
         // After the piece, still inside the formula: more of it can be typed or picked.
         else target.setSelectionRange(start + offset + latex.length, start + offset + latex.length);
+        restoreScroll();
     }, 0);
 }
 
@@ -286,8 +382,19 @@ export function insertMath(target: HTMLTextAreaElement, latex: string, { select,
 function insertQuestionAnswer(target: HTMLTextAreaElement) {
     const start = target.selectionStart;
     const made = qaFromSelection(target.value, start, target.selectionEnd);
-    if (made) replaceRange(target, start, target.selectionEnd, made.insert, made.caret);
-    else insertBlock(target, QA_TEMPLATE, QA_QUESTION);
+    const scrollable = (target as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+    const scrollTop = scrollable?.scrollTop ?? 0;
+    if (made) {
+        replaceRange(target, start, target.selectionEnd, made.insert, made.caret);
+        if (scrollable) {
+            setTimeout(() => { scrollable.scrollTop = scrollTop; }, 0);
+        }
+    } else {
+        insertBlock(target, QA_TEMPLATE, QA_QUESTION);
+        if (scrollable) {
+            setTimeout(() => { scrollable.scrollTop = scrollTop; }, 0);
+        }
+    }
 }
 
 /** The lines above `pos`, nearest last (a bounded number of them: nesting only looks a little way up). */
@@ -451,9 +558,73 @@ function clearFormatting(target: HTMLTextAreaElement) {
 
 /** Runs a formatting action on the textarea's current selection. */
 export function applyMarkdownAction(target: HTMLTextAreaElement, action: MarkdownAction) {
+    const value = target.value;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+
+    // Caret on a blank line between two texts: the newlines that give the inserted block a blank line each side.
+    const pad = blankLinePadding(value, start, end);
+
+    // Actions that get that spacing here (table and horizontal rule do it in insertBlock, math in insertMath)
+    const needsSpacingOnEmptyLine = [
+        'blockquote', 'blockquoteSingle', 'blockquoteMulti',
+        'bulletList', 'numberedList', 'taskList',
+        'calloutNote', 'calloutTip', 'calloutImportant', 'calloutWarning', 'calloutCaution',
+        'questionAnswer', 'linkFlashcards', 'link', 'linkToApp', 'image',
+    ];
+
+    if (pad && needsSpacingOnEmptyLine.includes(action)) {
+        const insertBefore = pad.before;
+        const insertAfter = pad.after;
+
+        if (action === 'linkToApp') {
+            const at = padAtCaret(target, pad);
+            requestLinkPicker({ textarea: target, start: at, end: at });
+            return;
+        } else if (action === 'linkFlashcards') {
+            const at = padAtCaret(target, pad);
+            requestLinkPicker({ textarea: target, start: at, end: at, tab: 'flashcards' });
+            return;
+        } else if (action === 'link' || action === 'image') {
+            padAtCaret(target, pad);
+            wrapSelection(target, action);
+            return;
+        } else if (action === 'blockquote' || action === 'blockquoteSingle') {
+            replaceRange(target, start, end, insertBefore + '> ' + insertAfter, start + insertBefore.length + 2);
+            return;
+        } else if (action === 'bulletList') {
+            replaceRange(target, start, end, insertBefore + '- ' + insertAfter, start + insertBefore.length + 2);
+            return;
+        } else if (action === 'numberedList') {
+            replaceRange(target, start, end, insertBefore + '1. ' + insertAfter, start + insertBefore.length + 3);
+            return;
+        } else if (action === 'taskList') {
+            replaceRange(target, start, end, insertBefore + '- [ ] ' + insertAfter, start + insertBefore.length + 6);
+            return;
+        } else if (action === 'blockquoteMulti') {
+            const text = '> QUOTE\n> \n> — SOURCE';
+            replaceRange(target, start, end, insertBefore + text + insertAfter, start + insertBefore.length + text.length);
+            return;
+        } else if (action === 'questionAnswer') {
+            replaceRange(target, start, end, insertBefore + QA_TEMPLATE + insertAfter, start + insertBefore.length + QA_QUESTION.start);
+            return;
+        } else if (action.startsWith('callout')) {
+            const kind = action === 'calloutNote' ? 'NOTE' : action === 'calloutTip' ? 'TIP' : action === 'calloutImportant' ? 'IMPORTANT' : action === 'calloutWarning' ? 'WARNING' : 'CAUTION';
+            const text = `> [!${kind}]\n> `;
+            replaceRange(target, start, end, insertBefore + text + insertAfter, start + insertBefore.length + text.length);
+            return;
+        }
+    }
+
+    // Headings on a blank line between two texts
+    if (pad && /^h[1-6]$/.test(action)) {
+        const prefix = '#'.repeat(Number(action[1])) + ' ';
+        replaceRange(target, start, end, pad.before + prefix + pad.after, start + pad.before.length + prefix.length);
+        return;
+    }
+
     switch (action) {
         case 'linkToApp':
-            // The picker pane in App asks what to link to and writes the link back into this editor.
             requestLinkPicker({ textarea: target, start: target.selectionStart, end: target.selectionEnd });
             return;
         case 'blockquote':
@@ -481,14 +652,16 @@ export function applyMarkdownAction(target: HTMLTextAreaElement, action: Markdow
         case 'calloutWarning': return insertCallout(target, 'WARNING');
         case 'calloutCaution': return insertCallout(target, 'CAUTION');
         case 'makeTerm':
-            // The Notes section answers (components/MakeTermModal.tsx): a Glossary term out of what's selected.
             window.dispatchEvent(new CustomEvent('kinesis:make-term', { detail: { textarea: target, start: target.selectionStart, end: target.selectionEnd } }));
             return;
         case 'linkFlashcards':
-            // The same pane as Link to, opened on its Flashcards tab: pick the Drive whose terms the link studies.
             requestLinkPicker({ textarea: target, start: target.selectionStart, end: target.selectionEnd, tab: 'flashcards' });
             return;
         default:
+            if (action.startsWith('h') && action.length === 2) {
+                const level = parseInt(action[1]);
+                return applyHeading(target, level);
+            }
             return wrapSelection(target, action);
     }
 }

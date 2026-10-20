@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateAction } from 'react';
-import { ChevronRight, ChevronDown, FolderTree, Inbox, ListVideo, Search, X } from 'lucide-react';
+import { ChevronRight, ChevronDown, FolderTree, Inbox, ListVideo, MoreVertical, Search, X } from 'lucide-react';
 import {
     decodeWdbs, encodeWdbs, getWdbsAliases, listDriveSequences, setWdbsAlias, setWdbsIcon, setWdbsColor, setWdbsShape, SEQUENCES_CHANGED_EVENT, UNSORTED_WDBS_FILTER,
     type SequenceSummary, type WdbsNode,
@@ -586,6 +586,8 @@ function UnsortedRow({ count, selected, onSelect }: { count: number; selected: b
             <Inbox className={`w-3.5 h-3.5 shrink-0 mr-1 ${selected ? 'text-white/80' : 'text-gray-500'}`} />
             <span className="flex-1 min-w-0 text-sm py-1.5 truncate italic">Unsorted</span>
             <span className={`text-[11px] font-medium px-2 shrink-0 ${selected ? 'text-white/80' : 'text-gray-500'}`}>{count}</span>
+            {/* Invisible twin of TreeRow's edit button, so this row's number lines up with the real nodes' numbers. */}
+            <span className="shrink-0 w-[22px]" />
         </div>
     );
 }
@@ -655,6 +657,16 @@ function TreeRow({ label, path, childCount, alias, icon, color, shape, count, de
                 {label}
             </span>
             <span className={`text-[11px] font-medium px-2 shrink-0 ${selected ? 'text-white/80' : 'text-gray-500'}`}>{count}</span>
+            {editable && (
+                <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); onContextMenu(e.clientX, e.clientY); }}
+                    className="shrink-0 p-1 rounded text-gray-500 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                    title="Edit alias, marker or decoration"
+                >
+                    <MoreVertical className="w-3.5 h-3.5" />
+                </button>
+            )}
         </div>
         )}</HoverDates>
     );

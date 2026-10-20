@@ -25,7 +25,7 @@ import type { Blockquote, Paragraph, Parent, RootContent } from 'mdast';
 
 export const CALLOUT_KINDS = ['note', 'tip', 'important', 'warning', 'caution'] as const;
 export type CalloutKind = typeof CALLOUT_KINDS[number];
-export const CALLOUT_TITLE: Record<CalloutKind, string> = { note: 'Note', tip: 'Tip', important: 'Important', warning: 'Warning', caution: 'Caution' };
+export const CALLOUT_TITLE: Record<CalloutKind, string> = { note: 'NOTE', tip: 'TIP', important: 'IMPORTANT', warning: 'WARNING', caution: 'CAUTION' };
 
 const MARK = /^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:\n|$)/;
 // The foldable form: the mark, a sign or none, then spaces. What follows on the line is its title.

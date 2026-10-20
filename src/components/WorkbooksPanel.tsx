@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BookOpenText, CalendarPlus, FileArchive, FileDown, GripVertical, NotebookPen, Pencil, Plus, Trash2, User, Users, X } from 'lucide-react';
+import { BookOpenText, CalendarPlus, FileArchive, FileDown, GripVertical, MoreVertical, NotebookPen, Pencil, Plus, Trash2, User, Users, X } from 'lucide-react';
 import {
     addCalendarNoteEntry, addCalendarWorkbook, createWorkbook, deleteWorkbook, removeNoteFromWorkbook, renameWorkbook, reorderWorkbook, setWorkbookShared,
     type CalendarTrackSummary, type Note, type Workbook,
@@ -9,13 +9,13 @@ import { handlePlainContextMenu } from '../lib/markdown-editor';
 import { exportNote, exportWorkbook } from '../lib/note-export';
 import { noteDisplayTitle } from '../lib/notes';
 import { normalizeText } from '../lib/utils';
+import { errorText } from '../lib/error-text';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ContextMenu, type ContextMenuItem } from './ContextMenu';
 import { editedAndCreated, HoverDates } from './HoverDates';
 import type { NotificationContent } from './Notification';
 
-/** What the backend says, without the prefix rusqlite puts on a refusal of ours. */
-export const errorText = (e: unknown) => (typeof e === 'string' ? e : (e as Error)?.message ?? String(e)).replace(/^Invalid parameter: /, '');
+
 
 const INPUT = 'w-full bg-[#121212] border border-[#333] text-white rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-red-600 placeholder-gray-600';
 const ICON_BUTTON = 'p-1 rounded-md text-gray-500 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-gray-500';
@@ -215,14 +215,17 @@ You can share them again later.`}
                         return (
                             // Resting the pointer on it says when it was last edited and when it was made.
                             <HoverDates key={b.id} title={b.title} rows={editedAndCreated(b)}>{hover => (
-                            <button {...hover} type="button" onClick={() => onOpenBook(b.id)} onContextMenu={e => openMenu(e, b, null)} className="w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left hover:bg-[#1e1e1e] transition-colors cursor-pointer">
+                            <div {...hover} role="button" tabIndex={0} onClick={() => onOpenBook(b.id)} onKeyDown={e => { if (e.key === 'Enter') onOpenBook(b.id); }} onContextMenu={e => openMenu(e, b, null)} className="group w-full flex items-center gap-2.5 rounded-lg px-3 py-2 text-left hover:bg-[#1e1e1e] transition-colors cursor-pointer">
                                 <BookOpenText className="w-4 h-4 shrink-0 text-[var(--k-accent)]" />
                                 <span className="min-w-0 flex-1">
                                     <span className="block text-sm font-semibold text-white truncate">{b.title}</span>
                                     <span className="block text-[11px] text-gray-500">{b.noteIds.length} {b.noteIds.length === 1 ? 'note' : 'notes'}</span>
                                 </span>
                                 <Mark className="w-3 h-3 shrink-0 text-gray-500" aria-label={b.shared ? 'Shared' : 'Personal'} />
-                            </button>
+                                <button type="button" onClick={e => { e.stopPropagation(); openMenu(e, b, null); }} className="shrink-0 p-1 rounded text-gray-500 transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100" title="More actions">
+                                    <MoreVertical className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
                             )}</HoverDates>
                         );
                     })}
@@ -276,20 +279,22 @@ You can share them again later.`}
     return (
         <>
             <div className="shrink-0 mb-2">
-                <button type="button" onClick={() => onOpenBook(null)} className="flex items-center gap-1.5 text-[11px] font-semibold text-[#888888] hover:text-white transition-colors cursor-pointer">
-                    <ArrowLeft className="w-3.5 h-3.5" /> All workbooks
-                </button>
-                {naming?.id === book.id ? <div className="mt-2">{nameBox}</div> : (
-                    <div className="mt-2 flex items-center gap-1">
-                        <span className="min-w-0 flex-1 truncate text-sm font-bold text-white" title={book.title}>{book.title}</span>
-                        {editable && (
-                            <>
-                                <button type="button" onClick={() => setNaming({ id: book.id, text: book.title })} className={ICON_BUTTON} title="Rename this workbook"><Pencil className="w-3.5 h-3.5" /></button>
-                                <button type="button" onClick={() => setToDelete(book)} className={`${ICON_BUTTON} hover:text-red-400`} title="Delete this workbook (its notes stay)"><Trash2 className="w-3.5 h-3.5" /></button>
-                            </>
-                        )}
-                    </div>
-                )}
+                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#888888] min-w-0">
+                    <button type="button" onClick={() => onOpenBook(null)} className="hover:text-white transition-colors cursor-pointer shrink-0">Workbooks</button>
+                    <span className="shrink-0">/</span>
+                    {!naming?.id ? (
+                        <span className="min-w-0 truncate text-white" title={book.title}>{book.title}</span>
+                    ) : (
+                        <div className="flex-1 min-w-0">{nameBox}</div>
+                    )}
+                    {!naming?.id && editable && (
+                        <>
+                            <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setNaming({ id: book.id, text: book.title })} className={`${ICON_BUTTON} shrink-0`} title="Rename this workbook"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button type="button" onClick={() => setToDelete(book)} className={`${ICON_BUTTON} hover:text-red-400`} title="Delete this workbook (its notes stay)"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </>
+                    )}
+                </div>
+
                 <button
                     type="button"
                     disabled={!canShare}
@@ -341,11 +346,12 @@ You can share them again later.`}
                             ) : <span className="w-[18px] shrink-0" />}
                             <span className="w-5 shrink-0 text-[11px] font-semibold text-gray-500 tabular-nums text-right">{i + 1}</span>
                             <span className={`min-w-0 flex-1 truncate text-sm ${open ? 'text-white font-semibold' : 'text-gray-200'}`}>{titleOf(id)}</span>
-                            {editable && (
-                                <span className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                                    <button type="button" onClick={() => removeNoteFromWorkbook(book.id, id).catch(failed)} className={ICON_BUTTON} title="Take it out of this workbook (the note stays)"><X className="w-3 h-3" /></button>
-                                </span>
-                            )}
+                            <span className="shrink-0 flex items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                                        <button type="button" onClick={e => { e.stopPropagation(); openMenu(e, book, i); }} className={ICON_BUTTON} title="More actions"><MoreVertical className="w-3.5 h-3.5" /></button>
+                                        {editable && (
+                                            <button type="button" onClick={() => removeNoteFromWorkbook(book.id, id).catch(failed)} className={ICON_BUTTON} title="Take it out of this workbook (the note stays)"><X className="w-3 h-3" /></button>
+                                        )}
+                                    </span>
                         </div>
                         )}</HoverDates>
                     );

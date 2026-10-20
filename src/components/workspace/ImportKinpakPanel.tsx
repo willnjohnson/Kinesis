@@ -72,6 +72,7 @@ export function ImportKinpakPanel({ defaultLocation, onBack }: Props) {
                 setResult(done);
                 setBusy(false);
             } else {
+                window.dispatchEvent(new CustomEvent('kinesis:workspace-switch'));
                 reloadApp(name);
             }
         } catch (e) {
@@ -109,7 +110,7 @@ export function ImportKinpakPanel({ defaultLocation, onBack }: Props) {
                         </div>
                     )}
                 </div>
-                <button onClick={() => reloadApp(name)} className={`w-full ${primaryBtn}`}>Open the workspace</button>
+                <button onClick={() => { window.dispatchEvent(new CustomEvent('kinesis:workspace-switch')); reloadApp(name); }} className={`w-full ${primaryBtn}`}>Open the workspace</button>
             </div>
         );
     }

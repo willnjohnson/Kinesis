@@ -5,7 +5,7 @@ import {
     getApiKey, getKeyStatus, getSetting, openExternalUrl,
     type Video, type BiographyEntry, saveTags, getBiography,
     getVideoById, getGlossaryTerms, getWdbsTree, decodeWdbs, getSequenceSummary, type WdbsNode, type GlossaryTerm,
-    UNSORTED_WDBS_FILTER, TRASH_RESTORED_EVENT, TRASH_CHANGED_EVENT, type TrashKind,
+    UNSORTED_WDBS_FILTER, TRASH_RESTORED_EVENT, TRASH_CHANGED_EVENT, type TrashKind, type DisplaySettings,
 } from "./api";
 import { useTrash } from "./hooks/useTrash";
 import { useNavHistory } from "./hooks/useNavHistory";
@@ -24,7 +24,7 @@ import { MarkdownContextMenu } from "./components/MarkdownContextMenu";
 import { MentionGhost } from "./components/MentionGhost";
 import { TermDefinitionModal } from "./components/TermDefinitionModal";
 import { saveImageAs } from "./lib/save-image-as";
-import { applyTheme, resolveTheme, loadCustomThemes } from "./lib/themes";
+import { applyTheme, resolveTheme, loadCustomThemes, BUILTIN_THEMES, type Theme } from "./lib/themes";
 import { SearchBar, type Facet } from "./components/SearchBar";
 import { VideoList, type SortField, type SortOrder, type FilterType } from "./components/VideoList";
 import { Sidebar, type SidebarHandle } from "./components/Sidebar";
@@ -51,6 +51,7 @@ import { BiographyModal } from "./components/BiographyView";
 import { CalendarView } from "./components/CalendarView";
 import { NotesView } from "./components/NotesView";
 import { LogsView } from "./components/LogsView";
+import { StartupNotificationModal } from "./components/StartupNotificationModal";
 import { SectionNav } from "./components/SectionNav";
 import { createNote, getWorkbook } from "./api";
 import { ACTIVE_NOTE_EVENT, getActiveNoteId, requestWorkbook } from "./lib/notes";
@@ -141,6 +142,8 @@ function App() {
         try { localStorage.setItem('kinesis.notes.panelOpen', String(open)); } catch { /* just not remembered */ }
     }, []);
     const [notification, setNotification] = useState<NotificationContent | null>(null);
+    // Startup notification modal: shows once per workspace per session when there are logs/calendar items due.
+    const [showStartupNotification, setShowStartupNotification] = useState(false);
     // External link pending confirmation: the dialog asks before leaving Kinesis.
     const [pendingExternal, setPendingExternal] = useState<{ url: string; title: string } | null>(null);
     const [showScrollTop, setShowScrollTop] = useState(false);
@@ -152,6 +155,8 @@ function App() {
     // Where Settings should open when a link elsewhere sends you to a particular page of it.
     const [settingsTarget, setSettingsTarget] = useState<SettingsTarget | undefined>(undefined);
     const [hasApiKey, setHasApiKey] = useState(false);
+    const [displaySettings, setDisplaySettingsState] = useState<DisplaySettings | null>(null);
+    const [customThemes, setCustomThemes] = useState<Theme[]>([]);
     const [videoListMode, setVideoListMode] = useState<'grid' | 'compact'>('grid');
     const [navigationOrientation, setNavigationOrientation] = useState<'horizontal' | 'vertical' | 'titlebar'>('horizontal');
     const [searchSortField, setSearchSortField] = useState<SortField>('date');
@@ -338,6 +343,8 @@ function App() {
         if (!appliedDefaultView.current) {
             appliedDefaultView.current = true;
             setViewMode(flags.pickView());
+            // Show startup notification modal after a brief delay to let UI settle
+            setTimeout(() => setShowStartupNotification(true), 500);
             return;
         }
         setViewMode(v => (flags.viewVisible[v] ? v : flags.pickView()));
@@ -407,13 +414,22 @@ function App() {
     // ── Theme / display settings ─────────────────────────────────────────────
     // Also re-run after a sync: a server can enforce the theme, list mode and orientation.
     const loadDisplay = useCallback(() => {
-        return Promise.all([getDisplaySettings(), loadCustomThemes()]).then(([settings, customThemes]) => {
-            applyTheme(resolveTheme(settings.theme, customThemes));
+        return Promise.all([getDisplaySettings(), loadCustomThemes()]).then(([settings, themes]) => {
+            setDisplaySettingsState(settings);
+            setCustomThemes(themes);
+            const activeTheme = resolveTheme(settings.theme, themes);
+            applyTheme(activeTheme, settings.blockquoteAccentEnabled ? settings.blockquoteAccentColor : null);
             setVideoListMode((settings.videoListMode as 'grid' | 'compact') || 'grid');
             // A value from before the layout was called "title bar" is not one of the three: fall back to horizontal.
             setNavigationOrientation(['horizontal', 'vertical', 'titlebar'].includes(settings.navigationOrientation) ? settings.navigationOrientation : 'horizontal');
         }).catch(() => applyTheme(resolveTheme(undefined, [])));
     }, []);
+
+    const handleDisplaySettingsChange = useCallback((newSettings: DisplaySettings) => {
+        setDisplaySettingsState(newSettings);
+        const activeTheme = resolveTheme(newSettings.theme, customThemes);
+        applyTheme(activeTheme, newSettings.blockquoteAccentEnabled ? newSettings.blockquoteAccentColor : null);
+    }, [customThemes]);
 
     // Startup, in one place: flags, workspace labels and the real theme/layout settings, all read
     // from the database asynchronously. Taking down the launch screen (public/k-life.js's cold-
@@ -470,10 +486,15 @@ function App() {
     // ── Scroll-to-top ────────────────────────────────────────────────────────
     // Re-attached whenever the view changes: Library renders its own scroll pane (beside the Drive
     // panel), a different element from the one Search/Glossary/Biography share, so a listener put
-    // on the first pane never hears the Library's scrolling.
+    // on the first pane never hears the Library's scrolling. Notes/Logs/Calendar have their own
+    // scroll panes too, so this ref isn't attached then — reset the button rather than leaving it
+    // lit from the last time it was.
     useEffect(() => {
         const el = scrollContainerRef.current;
-        if (!el) return;
+        if (!el) {
+            setShowScrollTop(false);
+            return;
+        }
         const onScroll = () => setShowScrollTop(el.scrollTop > 400);
         onScroll();
         el.addEventListener("scroll", onScroll);
@@ -1028,9 +1049,30 @@ function App() {
         if (flags.showListModeToggle) {
             cmds.push({ id: 'layout', label: videoListMode === 'grid' ? 'Switch to compact layout' : 'Switch to grid layout', icon: videoListMode === 'grid' ? List : LayoutGrid, keywords: 'layout list grid compact view', run: () => { void toggleVideoListMode(); } });
         }
+        // Typing "theme" lists every workspace theme and picking one applies it right away,
+        // instead of opening the Settings modal.
+        if (flags.settingsVisible && displaySettings) {
+            const allThemes = [...BUILTIN_THEMES, ...customThemes];
+            for (const theme of allThemes) {
+                cmds.push({
+                    id: `use-theme:${theme.name}`,
+                    label: `Use workspace theme: ${theme.label}`,
+                    group: 'Themes',
+                    icon: Palette,
+                    keywords: theme.name,
+                    run: () => {
+                        if (!displaySettings) return;
+                        applyTheme(theme, displaySettings.blockquoteAccentEnabled ? displaySettings.blockquoteAccentColor : null);
+                        const next = { ...displaySettings, theme: theme.name };
+                        setDisplaySettingsState(next);
+                        void setDisplaySettings(next).catch(() => {});
+                    },
+                });
+            }
+        }
         return cmds;
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [flags, labels, videoListMode, videoTrash.count, glossaryTrash.count, notesTrash.count, nav.canBack, nav.canForward, guardedBack, guardedForward]);
+    }, [flags, labels, videoListMode, videoTrash.count, glossaryTrash.count, notesTrash.count, nav.canBack, nav.canForward, guardedBack, guardedForward, displaySettings, customThemes]);
 
 
     const handleAddTag = async (term: string) => {
@@ -1630,12 +1672,31 @@ function App() {
                         onNotify={setNotification}
                         onOpenTrash={() => setTrashOpen('note')}
                         reloadSignal={notesReload}
+                        displaySettings={displaySettings}
+                        customThemes={customThemes}
                     />
                 ) : viewMode === 'logs' ? (
-                    <LogsView searchQuery={logsSearchQuery} onNotify={setNotification} />
+                    <LogsView
+                        searchQuery={logsSearchQuery}
+                        onNotify={setNotification}
+                        displaySettings={displaySettings}
+                        customThemes={customThemes}
+                    />
                 ) : viewMode === 'calendar' ? (
                     // Like the Library: its tracks panel and its week each scroll on their own (CalendarView lays them out).
-                    <CalendarView focusTrack={calendarFocus} focusDate={calendarDate} pinnedIds={pinnedIds} onSetPin={(id, on) => { void setPin(id, on); }} searchQuery={calendarSearchQuery} onVideoSelect={handleSelectVideo} panelOpen={showTracksPanel} onOpenPanel={() => setTracksPanel(true)} onNotify={setNotification} />
+                    <CalendarView
+                        focusTrack={calendarFocus}
+                        focusDate={calendarDate}
+                        pinnedIds={pinnedIds}
+                        onSetPin={(id, on) => { void setPin(id, on); }}
+                        searchQuery={calendarSearchQuery}
+                        onVideoSelect={handleSelectVideo}
+                        panelOpen={showTracksPanel}
+                        onOpenPanel={() => setTracksPanel(true)}
+                        onNotify={setNotification}
+                        displaySettings={displaySettings}
+                        customThemes={customThemes}
+                    />
                 ) : (
                     // Glossary/Biography/Search share the one scroll pane directly — no Drive
                     // panel to keep independent of it. position: relative, see the comment above.
@@ -1811,6 +1872,7 @@ function App() {
                     reloadWorkspace();
                 }}
                 onStatusChange={setHasApiKey}
+                onDisplaySettingsChange={handleDisplaySettingsChange}
                 onVideoListModeChange={setVideoListMode}
                 currentVideoListMode={videoListMode}
                 onNavigationOrientationChange={setNavigationOrientation}
@@ -1894,6 +1956,23 @@ function App() {
                     type={notification.type}
                     action={notification.action}
                     onClose={() => setNotification(null)}
+                />
+            )}
+
+            {showStartupNotification && (
+                <StartupNotificationModal
+                    isOpen={showStartupNotification}
+                    onClose={() => setShowStartupNotification(false)}
+                    onOpenLogs={() => {
+                        setShowStartupNotification(false);
+                        setLogsSearchQuery("");
+                        setViewMode('logs');
+                    }}
+                    onOpenCalendar={() => {
+                        setShowStartupNotification(false);
+                        setCalendarSearchQuery("");
+                        setViewMode('calendar');
+                    }}
                 />
             )}
 

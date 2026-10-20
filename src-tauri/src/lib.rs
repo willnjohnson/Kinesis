@@ -5,7 +5,7 @@ mod http_server;
 
 const APP_NAME: &str = "Kinesis";
 
-const VERSION: &str = "0.5.4";
+const VERSION: &str = "0.5.5";
 
 /// The smallest the window can be dragged to (logical pixels): 800x600, the smallest of the sizes
 /// Settings > Display offers, so the window can't be made smaller by hand than it can be set to

@@ -340,6 +340,84 @@ export const BUILTIN_THEMES: Theme[] = [
 
 export const DEFAULT_THEME = BUILTIN_THEMES[0];
 
+export const BLOCKQUOTE_ACCENT_COLORS: Record<string, string> = {
+    red: '#ef4444',
+    darkRed: '#991b1b',
+    lightRed: '#fca5a5',
+    orange: '#f97316',
+    darkOrange: '#c2410c',
+    lightOrange: '#fdba74',
+    yellow: '#eab308',
+    gold: '#d97706',
+    lightYellow: '#fef08a',
+    green: '#22c55e',
+    darkGreen: '#15803d',
+    lightGreen: '#86efac',
+    blue: '#3b82f6',
+    darkBlue: '#1d4ed8',
+    lightBlue: '#93c5fd',
+    purple: '#a855f7',
+    violet: '#8b5cf6',
+    lavender: '#c4b5fd',
+    teal: '#14b8a6',
+    cyan: '#06b6d4',
+    turquoise: '#2dd4bf',
+    pink: '#ec4899',
+    magneta: '#d946ef',
+    rose: '#f43f5e',
+    brown: '#854d0e',
+    tan: '#d2b48c',
+    beige: '#f5f5dc',
+    gray: '#6b7280',
+    darkGray: '#374151',
+    lightGray: '#d1d5db',
+    slate: '#64748b',
+    charcoal: '#334155',
+    white: '#ffffff',
+    ivory: '#fffff0',
+    snow: '#fffafa',
+    offWhite: '#f8fafc',
+    black: '#000000',
+    nearBlack: '#111827',
+    jetBlack: '#0a0a0a',
+};
+
+export const BLOCKQUOTE_ACCENT_COLOR_KEYS = Object.keys(BLOCKQUOTE_ACCENT_COLORS);
+
+export function detectSystemAccentColor(): string | null {
+    if (typeof navigator === 'undefined') return null;
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    if (/Win/i.test(platform) || /Windows/i.test(ua)) return '#0078D4';
+    if (/Mac/i.test(platform) || /Macintosh/i.test(ua)) return '#007AFF';
+    const lower = (ua + ' ' + platform).toLowerCase();
+    if (lower.includes('ubuntu')) return '#E95420';
+    if (lower.includes('fedora')) return '#3C6EB4';
+    if (lower.includes('red hat') || lower.includes('rhel')) return '#EE0000';
+    if (lower.includes('debian')) return '#CE0058';
+    if (lower.includes('arch')) return '#1793D1';
+    if (lower.includes('mint')) return '#87CF3E';
+    if (lower.includes('opensuse') || lower.includes('suse')) return '#73BA25';
+    if (lower.includes('manjaro')) return '#35BF5C';
+    if (lower.includes('kali')) return '#557C94';
+    if (lower.includes('pop')) return '#48B9C7';
+    if (lower.includes('zorin')) return '#15A6F0';
+    if (lower.includes('nixos') || lower.includes('nix')) return '#5277C3';
+    if (lower.includes('gentoo')) return '#54487A';
+    if (lower.includes('elementary')) return '#64BAFF';
+    return null;
+}
+
+export function resolveBlockquoteColor(nameOrColor: string | undefined | null, fallbackAccent?: string): string {
+    if (nameOrColor === 'system') {
+        const detected = detectSystemAccentColor();
+        return detected || fallbackAccent || BLOCKQUOTE_ACCENT_COLORS.blue;
+    }
+    if (!nameOrColor) return BLOCKQUOTE_ACCENT_COLORS.blue;
+    if (BLOCKQUOTE_ACCENT_COLORS[nameOrColor]) return BLOCKQUOTE_ACCENT_COLORS[nameOrColor];
+    return nameOrColor;
+}
+
 // Applies a theme by setting every raw CSS custom property on <html>, plus `color-scheme` (native
 // scrollbar/form-control rendering). Dark/Light use their exact hardcoded raw tokens; everything
 // else is fanned out from its small `colors` palette via deriveRawTokens.
@@ -352,7 +430,7 @@ export const DEFAULT_THEME = BUILTIN_THEMES[0];
 // themes.ts's own module comment) — but they still need `.dark` present for every dark-scheme
 // theme (not just literally "Dark") to keep looking the way they always have, rather than
 // silently reverting to their light styling under Dracula/Nord/etc.
-export function applyTheme(theme: Theme) {
+export function applyTheme(theme: Theme, blockquoteAccent?: string | null) {
     const root = document.documentElement;
     const raw = theme.name === 'dark' ? RAW_TOKENS_DARK : theme.name === 'light' ? RAW_TOKENS_LIGHT : deriveRawTokens(theme.colors);
     for (const key of RAW_TOKEN_KEYS) {
@@ -363,8 +441,41 @@ export function applyTheme(theme: Theme) {
     for (const key of SYNTAX_KEYS) {
         root.style.setProperty(`--k-code-${key}`, syntax[key]);
     }
+    if (blockquoteAccent) {
+        root.style.setProperty('--k-blockquote-accent', resolveBlockquoteColor(blockquoteAccent, theme.colors.accent));
+    } else {
+        root.style.removeProperty('--k-blockquote-accent');
+    }
     root.style.colorScheme = theme.scheme;
     root.classList.toggle('dark', theme.scheme === 'dark');
+}
+
+export function getThemeCssVariables(theme: Theme, blockquoteAccent?: string | null): Record<string, string> {
+    const raw = theme.name === 'dark' ? RAW_TOKENS_DARK : theme.name === 'light' ? RAW_TOKENS_LIGHT : deriveRawTokens(theme.colors);
+    const vars: Record<string, string> = {};
+    for (const key of RAW_TOKEN_KEYS) {
+        vars[`--k-${key}`] = raw[key] ?? '';
+    }
+    const syntax = syntaxOf(theme);
+    for (const key of SYNTAX_KEYS) {
+        vars[`--k-code-${key}`] = syntax[key];
+    }
+    if (blockquoteAccent) {
+        vars['--k-blockquote-accent'] = resolveBlockquoteColor(blockquoteAccent);
+    }
+    return vars;
+}
+
+export function resolveContentTheme(
+    displaySettings: { theme?: string; contentThemeInherit?: boolean; contentTheme?: string } | null | undefined,
+    customThemes: Theme[]
+): Theme {
+    if (!displaySettings) return DEFAULT_THEME;
+    const inherit = displaySettings.contentThemeInherit !== false;
+    if (inherit) {
+        return resolveTheme(displaySettings.theme, customThemes);
+    }
+    return resolveTheme(displaySettings.contentTheme || 'dark', customThemes);
 }
 
 const THEME_COLOR_KEYS: (keyof ThemeColors)[] = [

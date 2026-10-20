@@ -24,9 +24,9 @@ pub fn parse_view_count(view_count_str: &str) -> i64 {
 }
 
 /// Whether a video of this length counts as a YouTube Short (vertical, <= 60s) for the
-/// `hideShortsInSearch` filter — see commands::youtube::metadata::fetch_video_details's search-
-/// results filtering. Computed on demand rather than persisted anywhere (the `videos` table's own
-/// former `video_type` column was retired as dead weight — nothing in the shipped UI ever read it
+/// hideShortsInSearch filter  see commands::youtube::metadata::fetch_video_details's search-
+/// results filtering. Computed on demand rather than persisted anywhere (the ideos table's own
+/// former ideo_type column was retired as dead weight  nothing in the shipped UI ever read it
 /// back for a saved video), since this is the only place the classification is actually needed.
 pub fn is_short_length(length_seconds: Option<i32>) -> bool {
     matches!(length_seconds, Some(l) if l > 0 && l <= 60)
@@ -79,7 +79,7 @@ pub struct Video {
     pub has_transcript: Option<bool>,
     #[serde(rename = "hasSummary")]
     pub has_summary: Option<bool>,
-    // Warp Drive taxonomy designator, in storage encoding (e.g. "θψUAP_GERB_PND") — None/empty
+    // Warp Drive taxonomy designator, in storage encoding (e.g. "??UAP_GERB_PND")  None/empty
     // means unassigned ("Universe"). See db::update_video_wdbs / commands::update_wdbs.
     pub wdbs: Option<String>,
 }
@@ -107,10 +107,10 @@ fn relative_date_re() -> &'static Regex {
     })
 }
 
-/// Normalizes a `published_at` value from YouTube into a proper ISO-8601 datetime string.
+/// Normalizes a published_at value from YouTube into a proper ISO-8601 datetime string.
 ///
 /// Handles:
-/// - Already-valid dates (ISO 8601, RFC 3339, simple YYYY-MM-DD) — returned as-is
+/// - Already-valid dates (ISO 8601, RFC 3339, simple YYYY-MM-DD)  returned as-is
 /// - Relative dates from web scraping: "1 month ago", "Streamed 2 years ago", etc.
 ///   Approximates months as 30 days and years as 365 days.
 /// - Falls back to the raw string if nothing matches
@@ -156,6 +156,13 @@ pub struct DisplaySettings {
     pub theme: String,
     pub video_list_mode: String,
     pub navigation_orientation: String,
+    pub content_theme_inherit: Option<bool>,
+    pub content_theme_calendar_enabled: Option<bool>,
+    pub content_theme_notes_enabled: Option<bool>,
+    pub content_theme_logs_enabled: Option<bool>,
+    pub content_theme: Option<String>,
+    pub blockquote_accent_enabled: Option<bool>,
+    pub blockquote_accent_color: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,4 +183,4 @@ pub struct DbDetails {
     pub workbook_count: i64,
     pub log_count: i64,
     pub log_entry_count: i64,
-}
+}

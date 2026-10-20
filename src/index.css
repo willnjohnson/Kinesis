@@ -532,8 +532,8 @@ mark {
 /* Quotes get the theme's accent. Rules and list markers stay neutral: they use the theme's border and
    muted text colours, so they sit quietly in the text like the rest of the page. */
 .prose blockquote {
-    border-left: 4px solid var(--k-accent) !important;
-    background-color: color-mix(in srgb, var(--k-accent) 8%, transparent);
+    border-left: 4px solid var(--k-blockquote-accent, var(--k-accent)) !important;
+    background-color: color-mix(in srgb, var(--k-blockquote-accent, var(--k-accent)) 8%, transparent);
     border-radius: 0 0.5rem 0.5rem 0;
     padding: 0.25rem 1rem !important;
     font-style: italic;
@@ -592,6 +592,11 @@ mark {
     overflow: hidden;
     background-color: color-mix(in srgb, var(--k-callout) 5%, transparent);
 }
+
+.k-callout-title{
+    text-transform: none !important;
+}
+
 .prose blockquote.k-callout.k-callout-fold > .k-callout-title {
     margin: 0;
     padding: 0.45rem 0.75rem;
@@ -759,3 +764,81 @@ html.k-switching *::-webkit-scrollbar-button { background: transparent !importan
 /* A Terms chip's click, jumping to that term's link in the AI Summary (Sidebar.tsx). Purple so it
    reads as distinct from Ctrl+F's own yellow/blue, since both can in principle be visible at once. */
 ::highlight(term-jump) { background-color: rgba(168, 85, 247, 0.55); color: #ffffff; }
+
+/* Content Theme (Calendar, Notes, Logs scoped theming) */
+.k-content-theme {
+    background-color: var(--k-bg) !important;
+    color: var(--k-text-white) !important;
+    --tw-prose-body: var(--k-text-white);
+    --tw-prose-headings: var(--k-text-white);
+    --tw-prose-lead: var(--k-text-aaaaaa);
+    --tw-prose-links: var(--k-accent);
+    --tw-prose-bold: var(--k-text-white);
+    --tw-prose-counters: var(--k-text-aaaaaa);
+    --tw-prose-bullets: var(--k-text-aaaaaa);
+    --tw-prose-hr: var(--k-border-303030);
+    --tw-prose-quotes: var(--k-text-white);
+    --tw-prose-quote-borders: var(--k-blockquote-accent, var(--k-accent));
+    --tw-prose-captions: var(--k-text-aaaaaa);
+    --tw-prose-code: var(--k-text-white);
+    --tw-prose-pre-code: var(--k-text-white);
+    --tw-prose-pre-bg: var(--k-bg-121212);
+    --tw-prose-th-borders: var(--k-border-444);
+    --tw-prose-td-borders: var(--k-border-444);
+    --tw-prose-invert-body: var(--k-text-white);
+    --tw-prose-invert-headings: var(--k-text-white);
+    --tw-prose-invert-lead: var(--k-text-aaaaaa);
+    --tw-prose-invert-links: var(--k-accent);
+    --tw-prose-invert-bold: var(--k-text-white);
+    --tw-prose-invert-counters: var(--k-text-aaaaaa);
+    --tw-prose-invert-bullets: var(--k-text-aaaaaa);
+    --tw-prose-invert-hr: var(--k-border-303030);
+    --tw-prose-invert-quotes: var(--k-text-white);
+    --tw-prose-invert-quote-borders: var(--k-blockquote-accent, var(--k-accent));
+    --tw-prose-invert-captions: var(--k-text-aaaaaa);
+    --tw-prose-invert-code: var(--k-text-white);
+    --tw-prose-invert-pre-code: var(--k-text-white);
+    --tw-prose-invert-pre-bg: var(--k-bg-121212);
+    --tw-prose-invert-th-borders: var(--k-border-444);
+    --tw-prose-invert-td-borders: var(--k-border-444);
+    border-radius: 5px;
+}
+
+.k-content-theme .text-gray-100 {
+    color: var(--k-text-white) !important;
+}
+
+.k-content-theme .text-white { color: var(--k-text-white) !important; }
+.k-content-theme .text-gray-200 { color: var(--k-text-gray-200) !important; }
+.k-content-theme .text-gray-300 { color: var(--k-text-gray-300) !important; }
+.k-content-theme .text-gray-400 { color: var(--k-text-gray-400) !important; }
+.k-content-theme .text-gray-500 { color: var(--k-text-gray-500) !important; }
+.k-content-theme .text-gray-600 { color: var(--k-text-gray-600) !important; }
+.k-content-theme .text-gray-700 { color: var(--k-text-gray-700) !important; }
+.k-content-theme .text-gray-800 { color: var(--k-text-gray-800) !important; }
+.k-content-theme .text-gray-900 { color: var(--k-text-gray-900) !important; }
+
+.k-content-theme .prose { color: var(--k-text-white) !important; }
+.k-content-theme .prose h1,
+.k-content-theme .prose h2,
+.k-content-theme .prose h3,
+.k-content-theme .prose h4,
+.k-content-theme .prose h5,
+.k-content-theme .prose h6 { color: var(--k-text-white) !important; }
+.k-content-theme .prose p { color: var(--k-text-white) !important; }
+.k-content-theme .prose strong,
+.k-content-theme .prose b { color: var(--k-text-white) !important; }
+.k-content-theme .prose em,
+.k-content-theme .prose i { color: var(--k-text-white) !important; }
+.k-content-theme .prose a { color: var(--k-accent) !important; }
+.k-content-theme .prose code { color: var(--k-text-white) !important; }
+.k-content-theme .prose pre { color: var(--k-text-white) !important; }
+.k-content-theme .prose ul,
+.k-content-theme .prose ol { color: var(--k-text-white) !important; }
+.k-content-theme .prose li { color: var(--k-text-white) !important; }
+.k-content-theme .prose blockquote { color: var(--k-text-white) !important; }
+.k-content-theme .prose blockquote p { color: var(--k-text-white) !important; }
+
+.k-content-theme ::placeholder {
+    color: var(--k-text-aaaaaa) !important;
+}

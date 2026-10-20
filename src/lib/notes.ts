@@ -99,13 +99,15 @@ export function buildCitation(quote: string, videoTitle: string, videoId: string
 /** A moment in a video and the thought written about it ("Cite Moment"): a citation like buildCitation's, the thought as
  *  the quote (its paragraphs kept apart) and the moment as its source. With nothing written, the video's link on a line
  *  of its own, which a note shows as the video with its time after it (NotesView's VideoReference). The link's words
- *  are the title alone: the time is in its address, and is drawn from there. */
-export function buildMomentNote(videoTitle: string, videoId: string, at: number, thought = ''): string {
+ *  are the title alone: the time is in its address, and is drawn from there.
+ *  `citeAs`: 'thought' (default) prefixes the attribution with "on" ("— on [link]"); 'quote' omits it ("— [link]"). */
+export function buildMomentNote(videoTitle: string, videoId: string, at: number, thought = '', citeAs: 'thought' | 'quote' = 'thought'): string {
     const link = buildVideoLink(videoTitle || videoId, videoId, Math.floor(at));
     if (!thought.trim()) return link;
     // Blank lines between paragraphs stay, as one empty quote line each.
     const lines = thought.trim().split(/\r?\n/).map(l => l.trim()).filter((l, i, all) => l || all[i - 1]).map(l => (l ? `> ${l}` : '>'));
-    return [...lines, '>', `> — ${THOUGHT_MARK} ${link}`].join('\n');
+    const attribution = citeAs === 'quote' ? `> — ${link}` : `> — ${THOUGHT_MARK} ${link}`;
+    return [...lines, '>', attribution].join('\n');
 }
 
 /** The word between the dash and the link in a thought's source line ("— on [Talk](…)"): what tells the reader's own

@@ -17,7 +17,7 @@ use rusqlite::{params, Connection, OptionalExtension, Result};
 const MAX_WORD_START: usize = 50_000;
 
 /// Punctuation the SQL strips from every word.
-const STRIPPED: [char; 11] = ['.', ',', '!', '?', ';', ':', '"', '\'', '-', '(', ')'];
+const STRIPPED: [char; 9] = [',', '!', '?', ';', '"', '\'', '(', ')', '/'];
 
 /// The tokens for `transcript`: distinct, lowercased, punctuation-stripped words that aren't stop
 /// words, space-separated in the order they first appear. `None` when there's nothing to store,
@@ -26,7 +26,24 @@ pub fn transcript_tokens(transcript: &str, stop_words: &HashSet<String>) -> Opti
     if transcript == "N/A" {
         return None;
     }
-    let mut text = transcript.replace(['\n', '\r', '\t'], " ");
+    // Mirror the SQL normalization chain (Kinesis 0.5.6), including θψ/ζξ transposition.
+    let mut text = transcript.to_string();
+    // whitespace
+    for c in ['\n', '\r', '\t', '\u{00A0}'] { text = text.replace(c, " "); }
+    // curly quotes
+    text = text.replace('\u{2018}', "'").replace('\u{2019}', "'").replace('\u{201C}', "\"").replace('\u{201D}', "\"");
+    // bracket/music markers
+    for m in ["kinesis://", "[music]", "[snorts]", "[gender]", "[ __ ]", "[__]", "[_]", "[", "]"] { text = text.replace(m, " "); }
+    // url percent encoding
+    for m in ["%20", "%28", "%29"] { text = text.replace(m, " "); }
+    // sentence-ending period removal
+    for m in [". ", ".\"", ".'", ".)"] { text = text.replace(m, " "); }
+    // transpose
+    text = text.replace('.', "ζξ").replace(':', "θψ");
+    // url scheme / tld obliteration
+    for m in ["httpsθψ//", "httpθψ//", "ζξcom", "ζξorg", "ζξnet", "ζξio", "ζξedu", "ζξgov"] { text = text.replace(m, " "); }
+    // space collapse
+    for _ in 0..4 { text = text.replace("  ", " "); }
     // The SQL squeezes runs of spaces with eight passes of REPLACE('  ', ' '); doing the same keeps
     // word positions identical even in the odd text that still has a run left after them.
     for _ in 0..8 {

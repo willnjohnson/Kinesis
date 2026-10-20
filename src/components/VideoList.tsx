@@ -1,4 +1,4 @@
-import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users, Sparkles, FileText, ListVideo, PanelRightOpen, ExternalLink, Link2, Quote, Download } from 'lucide-react';
+import { Save, Trash2, Bookmark, ArrowDown, ArrowUp, Calendar, Users, Sparkles, FileText, ListVideo, PanelRightOpen, ExternalLink, Link2, Quote, Download, MoreVertical } from 'lucide-react';
 import { getSummary, getTranscript, openExternalUrl, type Video } from '../api';
 import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -935,8 +935,16 @@ function VideoCard({ video, compact, onSelect, onSelectWithTab, onDelete, allowD
             }}
         >
             {menu && <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={() => setMenu(null)} />}
-            <div className="relative">
-            <div className={`${compact ? 'aspect-[16/9]' : 'aspect-video'} w-full rounded-lg group-hover:rounded-b-none transition-[border-radius] duration-200 overflow-hidden bg-[#272727] relative`}>
+<div className="relative">
+                <button
+                    type="button"
+                    onClick={e => { e.stopPropagation(); if (bulkAssignMode) onBulkContextMenu?.(e.clientX, e.clientY); else setMenu({ x: e.clientX, y: e.clientY }); }}
+                    className={`absolute top-1 right-1 z-20 p-1 rounded bg-black/50 text-white opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer hover:bg-black/70 ${bulkAssignMode ? 'hidden' : ''}`}
+                    title="More actions"
+                >
+                    <MoreVertical className="w-3.5 h-3.5" />
+                </button>
+                <div className={`${compact ? 'aspect-[16/9]' : 'aspect-video'} w-full rounded-lg group-hover:rounded-b-none transition-[border-radius] duration-200 overflow-hidden bg-[#272727] relative`}>
                 {bulkAssignMode && (
                     <div className={`absolute inset-0 z-10 transition-colors ${selected ? 'bg-[color-mix(in_srgb,var(--k-accent)_25%,transparent)]' : 'bg-black/0 group-hover:bg-black/10'}`} />
                 )}

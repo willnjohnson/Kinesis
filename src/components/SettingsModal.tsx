@@ -24,6 +24,7 @@ interface Props {
     onClose: () => void;
     onStatusChange: (status: boolean) => void;
     onThemeChange?: (theme: string) => void;
+    onDisplaySettingsChange?: (settings: DisplaySettings) => void;
     onVideoListModeChange: (mode: 'grid' | 'compact') => void;
     currentVideoListMode: 'grid' | 'compact';
     onNavigationOrientationChange: (orientation: 'horizontal' | 'vertical' | 'titlebar') => void;
@@ -62,7 +63,7 @@ const TAB_CONFIG: { id: Tab; label: string; Icon: React.ElementType; badge?: str
 ];
 
 export function SettingsModal({
-    isOpen, onClose, onStatusChange, onThemeChange,
+    isOpen, onClose, onStatusChange, onThemeChange, onDisplaySettingsChange,
     onVideoListModeChange, currentVideoListMode,
     onNavigationOrientationChange, currentNavigationOrientation,
     onPluginsChange, onSyncComplete, openTo,
@@ -148,6 +149,7 @@ export function SettingsModal({
             if (updates.videoListMode) onVideoListModeChange(updates.videoListMode);
             if (updates.navigationOrientation) onNavigationOrientationChange(updates.navigationOrientation);
             if (updates.theme) onThemeChange?.(updates.theme);
+            onDisplaySettingsChange?.(newSettings);
         } catch (e) {
             console.error("Failed to apply display settings", e);
         }

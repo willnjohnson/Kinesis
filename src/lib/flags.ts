@@ -93,6 +93,9 @@ export const FLAG_DEFAULTS = {
     // always redundant. Emoji-stripping off by default: purely a style preference.
     stripQuoteblockQuotes: true,
     stripHeaderEmojis: false,
+    // Venice pre-processing (Settings > Plugins > Venice): prepends alias context to the cloud
+    // prompt when the channel biography has an alias — see src-tauri/src/venice.rs.
+    aliasAwarenessEnabled: false,
     // Glossary and biographies
     allowModificationGlossary: true,
     showQuickTags: true,

@@ -109,7 +109,7 @@ export function MiniMonth({ weekStart, today, shownIds, fits, trackNames, versio
                                 // A day with things on it has the preview (which names the date); an empty one just its date.
                                 title={byDay.has(day) ? undefined : d.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
                                 className={`relative w-7 h-7 rounded-full text-xs tabular-nums transition-colors cursor-pointer ${
-                                    isToday ? 'bg-[var(--k-accent)] text-white font-bold'
+                                    isToday ? 'bg-[var(--k-accent)] text-[var(--k-text-on-accent)] font-bold'
                                         : inMonth ? 'text-gray-200 hover:bg-[#333333]' : 'text-gray-600 hover:bg-[#333333]'
                                 }`}
                             >

@@ -12,9 +12,9 @@ import { calendarIcon, priorityOf } from '../../lib/calendar-icons';
 export const MODES: { mode: CalendarAdvanceMode; label: string; hint: string }[] = [
     { mode: 'completion', label: 'One after another', hint: "The next one comes up once you've finished the last. No dates." },
     { mode: 'calendar', label: 'On a schedule', hint: 'One per scheduled day, like a class on Mon/Wed/Fri, done or not.' },
-    { mode: 'hybrid', label: 'Schedule and finish', hint: "Each one has a day, and waits for the one before it to be done. Falling behind shows as overdue." },
+    { mode: 'hybrid', label: 'Due in order', hint: "Each one has a day, and waits for the one before it to be done. Falling behind shows as overdue." },
 ];
-export const MODE_LABEL: Record<CalendarAdvanceMode, string> = { completion: 'One after another', calendar: 'On a schedule', hybrid: 'Schedule and finish' };
+export const MODE_LABEL: Record<CalendarAdvanceMode, string> = { completion: 'One after another', calendar: 'On a schedule', hybrid: 'Due in order' };
 export const WEEKDAYS = [
     { day: 1, short: 'Mon' }, { day: 2, short: 'Tue' }, { day: 3, short: 'Wed' }, { day: 4, short: 'Thu' },
     { day: 5, short: 'Fri' }, { day: 6, short: 'Sat' }, { day: 7, short: 'Sun' },

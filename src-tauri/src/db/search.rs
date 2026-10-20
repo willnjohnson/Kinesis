@@ -124,7 +124,8 @@ pub(crate) fn build_fts_query(free_text: &str) -> String {
             if !searchable(w) {
                 return None;
             }
-            Some(term(w))
+            let mapped = w.replace('.', "ζξ").replace(':', "θψ");
+            Some(term(&mapped))
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -612,7 +613,7 @@ pub fn get_similar_videos(db_path: &str, video_id: &str, limit: i64) -> Result<V
          FROM Videos AS v
          JOIN ftsVideos ON v.rowid = ftsVideos.rowid
          WHERE ftsVideos MATCH ?1 AND v.video_id != ?2
-         ORDER BY bm25(ftsVideos, 2.0, 1.5, 1.0, 0.0) ASC
+          ORDER BY bm25(ftsVideos, 4.0, 10.0, 3.0, 1.0) ASC
          LIMIT ?3"
     );
     let mut stmt = conn.prepare(&sql)?;

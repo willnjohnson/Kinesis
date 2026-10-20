@@ -443,8 +443,8 @@ export function TrackModal({ track, onClose, onSaved }: { track: CalendarTrack |
                         <label className="flex items-start gap-3 cursor-pointer" title={LOOP_INFO[mode]}>
                             <input type="checkbox" checked={loop} onChange={e => setLoop(e.target.checked)} className="mt-0.5 cursor-pointer" />
                             <span>
-                                <span className="block text-sm font-semibold text-white">Start over after the last one</span>
-                                <span className="block text-[11px] text-gray-500">For a rotation, like Push / Pull / Legs.</span>
+                                <span className="block text-sm font-semibold text-white">Start over after the last one (i.e. Round 1, 2, 3, etc.)</span>
+                                <span className="block text-[11px] text-gray-500">For a rotation, like Round 1: Push / Pull / Legs, Round 2: Push / Pull / Legs...</span>
                             </span>
                         </label>
                     </Row>

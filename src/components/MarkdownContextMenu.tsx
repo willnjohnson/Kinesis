@@ -290,9 +290,23 @@ export function MarkdownContextMenu() {
         const { start, end } = request;
         setRequest(null);
         // The click took focus off the editor; put the selection back so the action applies to it.
-        field.focus();
+        // Preserve scroll position of the nearest scrollable ancestor to prevent jumping.
+        const scrollable = (field as HTMLElement).closest('.overflow-y-auto') as HTMLElement | null;
+        const scrollTop = scrollable?.scrollTop ?? 0;
+        try {
+            field.focus({ preventScroll: true } as any);
+        } catch {
+            field.focus();
+        }
         field.setSelectionRange(start, end);
         fn(field);
+        // Restore immediately and again after next ticks to be robust
+        if (scrollable) {
+            scrollable.scrollTop = scrollTop;
+            requestAnimationFrame(() => { scrollable.scrollTop = scrollTop; });
+            setTimeout(() => { scrollable.scrollTop = scrollTop; }, 0);
+            setTimeout(() => { scrollable.scrollTop = scrollTop; }, 10);
+        }
     };
 
     // The row that opened the panel, for the panel's own rows (they act on the same field).

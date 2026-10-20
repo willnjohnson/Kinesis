@@ -180,16 +180,28 @@ export function CommandPalette({ open, onClose, commands, onOpenVideo, onOpenDri
             }
         }
         let cmds: PaletteCommand[];
+        let themeCmds: PaletteCommand[] = [];
         if (tokens.length) {
-            const found = best(commands, tokens, c => [c.label, `${c.hint ?? ''} ${c.keywords ?? ''}`], LIMITS.commands);
+            // Themes aren't capped like other commands: typing "theme" should list every available theme.
+            const searchable = commands.filter(c => c.group !== 'Themes');
+            const found = best(searchable, tokens, c => [c.label, `${c.hint ?? ''} ${c.keywords ?? ''}`], LIMITS.commands);
             // Each heading once, its entries together (best-first within it, headings in the order they first turn up).
             const groups = [...new Set(found.map(c => c.group ?? 'Actions'))];
             cmds = groups.flatMap(g => found.filter(c => (c.group ?? 'Actions') === g));
+            themeCmds = commands
+                .filter(c => c.group === 'Themes')
+                .map(c => ({ c, s: score(tokens, c.label, `${c.hint ?? ''} ${c.keywords ?? ''}`) }))
+                .filter(x => x.s >= 0)
+                .sort((a, b) => b.s - a.s)
+                .map(x => x.c);
         } else {
             cmds = commands.filter(c => (c.group ?? 'Actions') === 'Actions');
         }
         for (const c of cmds) {
             out.push({ key: `cmd:${c.id}`, group: c.group ?? 'Actions', label: c.label, sub: c.hint, icon: c.icon, run: c.run });
+        }
+        for (const c of themeCmds) {
+            out.push({ key: `cmd:${c.id}`, group: c.group ?? 'Themes', label: c.label, sub: c.hint, icon: c.icon, run: c.run });
         }
         if (tokens.length === 0) return out;
         for (const n of best(drives, tokens, n => [n.alias ?? driveSegmentLabel(decodeWdbs(n.path)), `${decodeWdbs(n.path)} ${n.segment}`], LIMITS.drives)) {

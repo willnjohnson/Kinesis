@@ -3,14 +3,15 @@ import ReactMarkdown from 'react-markdown';
 import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import {
-    ArrowDown, ArrowUp, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, LayoutTemplate, Library, MessageCircleQuestionMark, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, Search, Trash2, Type, User, Users, Video as VideoIcon, X,
+    ArrowDown, ArrowUp, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, LayoutTemplate, Library, MessageCircleQuestionMark, MoreVertical, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, Search, Trash2, Type, User, Users, Video as VideoIcon, X,
 } from 'lucide-react';
 import {
     addCalendarNoteEntry, addNoteToWorkbook, calendarToday, createNote, deleteNote, getNote, getVideoCard, getWdbsRoots, listCalendarTracks, listNotes, listWorkbooks,
     NOTES_CHANGED_EVENT, removeNoteFromWorkbook, WORKBOOKS_CHANGED_EVENT, type Workbook,
     setNoteShared, trashDiscard, trashRestore, updateNote,
-    type CalendarTrackSummary, type Note, type WdbsRoot,
+    type CalendarTrackSummary, type Note, type WdbsRoot, type DisplaySettings,
 } from '../api';
+import { getThemeCssVariables, resolveContentTheme, type Theme } from '../lib/themes';
 import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { ALL_TERMS, driveCovers } from '../lib/glossary';
@@ -44,7 +45,8 @@ import { MarkdownLink } from './MarkdownLink';
 import { MENTIONS_ATTR } from './MentionGhost';
 import type { NotificationContent } from './Notification';
 import { TrashChip } from './TrashChip';
-import { errorText, WorkbooksPanel } from './WorkbooksPanel';
+import { WorkbooksPanel } from './WorkbooksPanel';
+import { errorText } from '../lib/error-text';
 import { Segmented } from './ui/Segmented';
 
 /** The page width (px) under which the note's tools are drawn as icons alone. */
@@ -52,6 +54,9 @@ const COMPACT_TOOLS_BELOW = 660;
 
 /** Where the reader's Write / Read choice is kept (localStorage). */
 const MODE_KEY = 'kinesis.notes.mode';
+
+/** The Drive filter value that shows notes filed under no Drive (an empty string is "All Drives"). */
+const UNASSIGNED = '__unassigned__';
 
 /** What's being written: the open note's fields as they are on screen (saved shortly after typing stops). */
 interface Draft {
@@ -176,7 +181,7 @@ function Quote({ node, className, children, 'data-fold': fold }: { node?: unknow
     let sourceAt = -1;
     for (let i = parts.length - 1; i >= 0; i--) if (isValidElement(parts[i])) { sourceAt = i; break; }
     const words = parts.filter((_, i) => i !== sourceAt);
-    const tone = source.own ? '#6b7280' : 'var(--k-accent)';
+    const tone = source.own ? '#6b7280' : 'var(--k-blockquote-accent, var(--k-accent))';
     // A quote attributed to someone by name (no video to open): the attribution is plain text, not a button.
     if (!source.videoId) {
         return (
@@ -184,7 +189,7 @@ function Quote({ node, className, children, 'data-fold': fold }: { node?: unknow
                 className="not-prose my-4 flex items-start gap-3 border-l-4 rounded-r-lg px-4 py-[0.6rem]"
                 style={{ borderLeftColor: tone, backgroundColor: `color-mix(in srgb, ${tone} 8%, transparent)` }}
             >
-                <QuoteIcon aria-label="Quoted" className="w-6 h-6 mt-0.5 shrink-0 text-[var(--k-accent)] fill-current" />
+                <QuoteIcon aria-label="Quoted" className="w-6 h-6 mt-0.5 shrink-0 text-[var(--k-blockquote-accent,var(--k-accent))] fill-current" />
                 <div className="min-w-0 flex-1">
                     <div className={`prose dark:prose-invert prose-sm max-w-none text-gray-100 [&_p]:my-1 italic`}>{words}</div>
                     <span className="mt-2 block text-[12px] text-gray-400">— {source.attribution}</span>
@@ -192,6 +197,7 @@ function Quote({ node, className, children, 'data-fold': fold }: { node?: unknow
             </div>
         );
     }
+    const videoId = source.videoId;
     return (
         // The shape of a quote and of a callout (index.css's .prose blockquote): a straight bar of color down the left, that
         // color's tint behind, and round corners on the right alone. The reader's own thought about a moment is told
@@ -203,12 +209,12 @@ function Quote({ node, className, children, 'data-fold': fold }: { node?: unknow
         >
             {source.own
                 ? <Feather aria-label="Your thought" className="w-6 h-6 mt-0.5 shrink-0 text-gray-500" />
-                : <QuoteIcon aria-label="Quoted" className="w-6 h-6 mt-0.5 shrink-0 text-[var(--k-accent)] fill-current" />}
+                : <QuoteIcon aria-label="Quoted" className="w-6 h-6 mt-0.5 shrink-0 text-[var(--k-blockquote-accent,var(--k-accent))] fill-current" />}
             <div className="min-w-0 flex-1">
                 <div className={`prose dark:prose-invert prose-sm max-w-none text-gray-100 [&_p]:my-1 ${source.own ? '' : 'italic'}`}>{words}</div>
                 <button
                     type="button"
-                    onClick={() => openInternalLink('video', source.videoId, source.at)}
+                    onClick={() => openInternalLink('video', videoId, source.at)}
                     className="mt-2 flex items-center gap-2 min-w-0 max-w-full text-[12px] text-gray-400 hover:text-white transition-colors cursor-pointer"
                     title={`${source.own ? 'Your thought on this video. ' : ''}${source.at !== undefined ? `Open the video at ${formatClock(Math.floor(source.at))}` : 'Open the video'}`}
                 >
@@ -517,7 +523,7 @@ const BOOK_KEY = 'kinesis.notes.workbook';
  * workspace; editing it needs allowEditSharedNotes). The note open here is the active one, which the sidebar's cite
  * commands write into (lib/notes.ts).
  */
-export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNotify, onOpenTrash, reloadSignal }: {
+export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNotify, onOpenTrash, reloadSignal, displaySettings, customThemes }: {
     /** The header search bar's text: plain words (looked for in titles and text), or `title_search:` and words (titles only). */
     searchQuery: string;
     /** Whether the list of notes is showing (App's toggle, beside the search bar). */
@@ -529,7 +535,24 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     onOpenTrash: () => void;
     /** Bumped when a note comes back from the Trash. */
     reloadSignal?: number;
+    displaySettings?: DisplaySettings | null;
+    customThemes?: Theme[];
 }) {
+    const contentTheme = useMemo(
+        () => resolveContentTheme(displaySettings, customThemes ?? []),
+        [displaySettings, customThemes],
+    );
+    const contentThemeStyle = useMemo(
+        () => displaySettings?.contentThemeNotesEnabled
+            ? ({
+                ...getThemeCssVariables(contentTheme, displaySettings.blockquoteAccentEnabled ? displaySettings.blockquoteAccentColor : null),
+                colorScheme: contentTheme.scheme,
+                backgroundColor: 'var(--k-bg)',
+                color: 'var(--k-text-white)',
+            } as React.CSSProperties)
+            : undefined,
+        [displaySettings, contentTheme],
+    );
     const { flags } = useFlags();
     const { labels } = useWorkspace();
     const [notes, setNotes] = useState<Note[] | null>(null);
@@ -821,25 +844,47 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     }, [mode]);
 
     // ── Actions ──
-    // A new note: blank, or started from a template (its title and text, with {{date}} filled in as today).
-    const newNote = async (template?: NoteTemplate) => {
-        flush();
-        try {
-            const today = calendarToday();
-            const n = await createNote({
-                shared: false,
-                title: template ? fillTemplate(template.title, today) : '',
-                body: template ? fillTemplate(template.body, today) : '',
-                drives: driveFilter ? [driveFilter] : [],
-            });
-            setNotes(list => [n, ...(list ?? [])]);
-            onOpenNote(n.id);
-            setMode('write');
-            window.setTimeout(() => titleRef.current?.focus(), 50);
-        } catch (e) {
-            onNotify({ message: `Couldn't make a note: ${String(e)}`, type: 'error' });
-        }
-    };
+     // A new note: blank, or started from a template (its title and text use {{monthName}}, {{year}}, {{season}} which are supported).
+     const newNote = async (template?: NoteTemplate) => {
+         flush();
+         try {
+             // If a template is provided, check if there's already an untouched note for this template
+             if (template) {
+                 // Get the current notes list, or load it if necessary
+                 let notesList: Note[] | null = notes;
+                 if (notesList === null) {
+                     notesList = await listNotes().catch(() => null);
+                 }
+                 if (notesList) {
+                     // Look for a note that is an untouched instance of this template
+                     const matchingNote = notesList.find(note => {
+                         return isUntouchedTemplate(note.title, note.body, [template]);
+                     });
+                     if (matchingNote) {
+                         // Jump to the existing note
+                         onOpenNote(matchingNote.id);
+                         setMode('write'); // or 'read'? We'll set to write so the user can edit it.
+                         // Note: the note opening will set the draft and mode accordingly.
+                         return;
+                     }
+                 }
+             }
+             // Otherwise, create a new note as before
+             const today = calendarToday();
+             const n = await createNote({
+                 shared: false,
+                 title: template ? fillTemplate(template.title, today) : '',
+                 body: template ? fillTemplate(template.body, today) : '',
+                 drives: driveFilter && driveFilter !== UNASSIGNED ? [driveFilter] : [],
+             });
+             setNotes(list => [n, ...(list ?? [])]);
+             onOpenNote(n.id);
+             setMode('write');
+             window.setTimeout(() => titleRef.current?.focus(), 50);
+         } catch (e) {
+             onNotify({ message: `Couldn't make a note: ${String(e)}`, type: 'error' });
+         }
+     };
 
     // Templates: the workspace's own (the app's come with it), the menu beside New Note, and the name being typed
     // for one made from the open note.
@@ -1049,7 +1094,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
         return (notes ?? [])
             // The open note as it's being written (its title can change before it's saved).
             .map(n => (draft && n.id === draft.id ? { ...n, title: draft.title, body: draft.body, drives: draft.drives, shared: draft.shared } : n))
-            .filter(n => !driveFilter || n.drives.some(d => driveCovers(driveFilter, d)))
+            .filter(n => driveFilter === '' ? true : driveFilter === UNASSIGNED ? n.drives.length === 0 : n.drives.some(d => driveCovers(driveFilter, d)))
             .filter(n => !q || normalizeText(titlesOnly ? n.title : `${n.title}\n${n.body}`).includes(q))
             .sort(sorter<Note>(sort, noteDisplayTitle));
     }, [notes, draft, driveFilter, searchQuery, sort]);
@@ -1170,7 +1215,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                     className="w-full flex items-center justify-between gap-2 bg-[#121212] border border-[#333] hover:border-[#505050] rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer"
                                     title={`Show the notes filed under one ${labels.aliasDriveName} (and the ones beneath it)`}
                                 >
-                                    <span className={`truncate ${driveFilter ? 'text-white' : 'text-gray-400'}`}>{driveFilter ? driveLabel(driveFilter) : `All ${labels.aliasDriveName}s`}</span>
+                                    <span className={`truncate ${driveFilter ? 'text-white' : 'text-gray-400'}`}>{driveFilter === '' ? `All ${labels.aliasDriveName}s` : driveFilter === UNASSIGNED ? `No ${labels.aliasDriveName}s` : driveLabel(driveFilter)}</span>
                                     <ChevronDown className={`w-4 h-4 shrink-0 text-gray-500 transition-transform ${open ? 'rotate-180' : ''}`} />
                                 </button>
                             )}
@@ -1183,6 +1228,13 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                         className={`w-full pl-[26px] pr-4 py-2 text-left hover:bg-[#222222] transition-colors cursor-pointer ${driveFilter === '' ? 'text-[var(--k-accent)]' : 'text-gray-200'}`}
                                     >
                                         All {labels.aliasDriveName}s
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setDriveFilter(UNASSIGNED); close(); }}
+                                        className={`w-full pl-[26px] pr-4 py-2 text-left hover:bg-[#222222] transition-colors cursor-pointer ${driveFilter === UNASSIGNED ? 'text-[var(--k-accent)]' : 'text-gray-200'}`}
+                                    >
+                                        No {labels.aliasDriveName}s
                                     </button>
                                     <div className="my-1 border-t border-[#272727]" />
                                     <DriveTreeList roots={roots} isOn={p => p === driveFilter} onPick={p => { setDriveFilter(p); close(); }} checkboxes={false} />
@@ -1220,6 +1272,13 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                     <span className={`truncate text-sm font-semibold ${n.title.trim() || n.body.trim() ? 'text-gray-100' : 'text-gray-500'}`}>{noteDisplayTitle(n)}</span>
                                     <Mark className="w-3 h-3 shrink-0 text-gray-500" aria-label={n.shared ? 'Shared' : 'Personal'} />
                                     <span className="ml-auto shrink-0 text-[10px] text-gray-500">{whenLabel(n.updatedAt)}</span>
+                                    <button
+                                        onClick={e => { e.stopPropagation(); wantTracks(); setNoteMenu({ x: e.clientX, y: e.clientY, note: n }); }}
+                                        className="p-1 rounded text-gray-500 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                        title="More actions"
+                                    >
+                                        <MoreVertical className="w-3.5 h-3.5" />
+                                    </button>
                                 </div>
                                 {noteSnippet(n) && <p className="text-[12px] text-gray-500 truncate">{noteSnippet(n)}</p>}
                             </div>
@@ -1303,7 +1362,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
             )}
 
             {/* The open note, as a page: the page scrolls, and a workbook's pager stays under it, at the foot of the pane. */}
-            <div id="notes-page" className="flex-1 min-w-0 h-full flex flex-col">
+            <div id="notes-page" className={`flex-1 min-w-0 h-full flex flex-col ${contentThemeStyle ? 'k-content-theme' : ''}`} style={contentThemeStyle}>
             <div ref={notePageRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden custom-scrollbar pb-10">
                 {!draft ? (
                     <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 px-6">
@@ -1336,9 +1395,9 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                 <div className="flex-1 min-w-0 min-h-[30px] flex flex-wrap items-center gap-2">
                                 {showDrives && draft.drives.map(d => (
                                     <span key={d} className="flex items-center gap-1 px-2 py-0.5 rounded-md border border-[#333] text-[11px] font-mono text-gray-300">
-                                        {driveLabel(d)}
+                                        {d}
                                         {canEdit && (
-                                            <button onClick={() => setDraft(x => x && { ...x, drives: x.drives.filter(y => y !== d) })} className="text-gray-500 hover:text-white cursor-pointer" title={`Take it out of ${driveLabel(d)}`}>
+                                            <button onClick={() => setDraft(x => x && { ...x, drives: x.drives.filter(y => y !== d) })} className="text-gray-500 hover:text-white cursor-pointer" title={`Take it out of ${d}`}>
                                                 <X className="w-3 h-3" />
                                             </button>
                                         )}
@@ -1549,16 +1608,18 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
 
             <BottomBar>
                 <div className="flex items-center gap-6 flex-1 min-w-0 text-[11px] font-semibold text-gray-400">
-                    <span className="shrink-0 whitespace-nowrap">
-                        <span className="text-white">{listed.length}</span>
-                        {listed.length !== (notes?.length ?? 0) ? ` of ${notes?.length ?? 0}` : ''} note{(notes?.length ?? 0) === 1 ? '' : 's'}
-                    </span>
-                    {draft && (
-                        <span className="min-w-0 truncate">
-                            <span className="text-white">{wordCount(draft.body)}</span> words
-                            {' · '}<span className="text-white">{citationCount(draft.body)}</span> citation{citationCount(draft.body) === 1 ? '' : 's'}
+                    <div className={`flex items-center gap-6 min-w-0 ${panelOpen ? 'w-72 shrink-0' : ''}`}>
+                        <span className="shrink-0 whitespace-nowrap">
+                            <span className="text-white">{listed.length}</span>
+                            {listed.length !== (notes?.length ?? 0) ? ` of ${notes?.length ?? 0}` : ''} note{(notes?.length ?? 0) === 1 ? '' : 's'}
                         </span>
-                    )}
+                        {draft && (
+                            <span className={`flex items-center gap-4 whitespace-nowrap ${panelOpen ? 'ml-auto' : ''}`}>
+                                <span><span className="text-white">{wordCount(draft.body)}</span> words</span>
+                                <span><span className="text-white">{citationCount(draft.body)}</span> citation{citationCount(draft.body) === 1 ? '' : 's'}</span>
+                            </span>
+                        )}
+                    </div>
                     <div className="ml-auto flex items-stretch self-stretch gap-4 shrink-0">
                         {/* The order of the list beside the page, notes or workbooks: drawn as the Library's sort buttons
                             are (VideoList.tsx), a name beside each icon where the bar has the room. */}

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { openCalendarNote } from '../lib/notes';
-import { Archive, ArchiveRestore, CalendarDays, Check, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, ListTodo, NotebookPen, Pencil, SignalHigh, Pin, PinOff, Play, Plus, RotateCcw, Trash2, Undo2 } from 'lucide-react';
-import { addCalendarEntry, addCalendarNoteEntry, addCalendarWorkbook, deleteCalendarTrack, getVideoById, listCalendarDays, listCalendarTracks, removeCalendarEntry, CALENDAR_CHANGED_EVENT, setCalendarCompletion, setCalendarProgress, setCalendarEntryLayout, addCalendarFolder, startCalendarTrackOver, undoCalendarTrackStartOver, updateCalendarEntry, setCalendarTrackArchived, calendarToday, type CalendarDayItem, type CalendarEntry, type CalendarTrack, type CalendarTrackSummary, type Video } from '../api';
+import { Archive, ArchiveRestore, CalendarDays, Check, ChevronLeft, ChevronRight, Download, Eye, EyeOff, FileText, ListTodo, NotebookPen, Pencil, SignalHigh, Pin, PinOff, Play, Plus, RotateCcw, Trash2, Undo2, MoreVertical } from 'lucide-react';
+import { addCalendarEntry, addCalendarNoteEntry, addCalendarWorkbook, deleteCalendarTrack, getVideoById, listCalendarDays, listCalendarTracks, removeCalendarEntry, CALENDAR_CHANGED_EVENT, setCalendarCompletion, setCalendarProgress, setCalendarEntryLayout, addCalendarFolder, startCalendarTrackOver, undoCalendarTrackStartOver, updateCalendarEntry, setCalendarTrackArchived, calendarToday, type CalendarDayItem, type CalendarEntry, type CalendarTrack, type CalendarTrackSummary, type Video, type DisplaySettings } from '../api';
+import { getThemeCssVariables, resolveContentTheme, type Theme } from '../lib/themes';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { useFlags } from '../hooks/useFlags';
 import { normalizeText } from '../lib/utils';
@@ -47,7 +48,7 @@ function writeStored(key: string, value: unknown) {
  * the days they were done, and what's up next for it is in the strip under the week. Clicking a track in the panel opens
  * its entries there; clicking an entry on a day offers Mark Done and Open Video.
  */
-export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searchQuery, onVideoSelect, panelOpen, onOpenPanel, onNotify }: {
+export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searchQuery, onVideoSelect, panelOpen, onOpenPanel, onNotify, displaySettings, customThemes }: {
     /** A track to open in the panel (a sidebar track chip's name); a new `at` asks again. */
     focusTrack?: { id: number; at: number } | null;
     /** A day to show (the pin menu's "due today" or "to do tomorrow"): its week opens and its items flash; a new `at` asks again. */
@@ -63,7 +64,24 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
     onOpenPanel: () => void;
     /** Shows a toast (App's notification), e.g. where an export was saved. */
     onNotify?: (n: NotificationContent) => void;
+    displaySettings?: DisplaySettings | null;
+    customThemes?: Theme[];
 }) {
+    const contentTheme = useMemo(
+        () => resolveContentTheme(displaySettings, customThemes ?? []),
+        [displaySettings, customThemes],
+    );
+    const contentThemeStyle = useMemo(
+        () => displaySettings?.contentThemeCalendarEnabled
+            ? ({
+                ...getThemeCssVariables(contentTheme, displaySettings.blockquoteAccentEnabled ? displaySettings.blockquoteAccentColor : null),
+                colorScheme: contentTheme.scheme,
+                backgroundColor: 'var(--k-bg)',
+                color: 'var(--k-text-white)',
+            } as React.CSSProperties)
+            : undefined,
+        [displaySettings, contentTheme],
+    );
     const { labels } = useWorkspace();
     const { flags } = useFlags();
     const canEdit = !flags.workspaceReadOnly;
@@ -464,6 +482,14 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                                                     {isHidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                                 </button>
                                             )}
+                                            <button
+                                                onMouseEnter={hover.onMouseLeave}
+                                                onClick={e => { e.stopPropagation(); openTrackMenu(track, e.clientX, e.clientY); }}
+                                                className="p-1 rounded text-gray-500 hover:text-white transition-all cursor-pointer opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+                                                title="More actions"
+                                            >
+                                                <MoreVertical className="w-3.5 h-3.5" />
+                                            </button>
                                         </div>
                                         )}</HoverDates>
                                     );
@@ -484,7 +510,10 @@ export function CalendarView({ focusTrack, focusDate, pinnedIds, onSetPin, searc
                 </div>
             )}
 
-            <div className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden custom-scrollbar pb-6">
+            <div
+                className={`flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden custom-scrollbar pb-6 ${contentThemeStyle ? 'k-content-theme' : ''}`}
+                style={contentThemeStyle}
+            >
                 <div className="sticky top-0 z-10 bg-[#0f0f0f] flex items-center gap-3 min-h-9 mb-4 px-1">
                     <h2 className="text-xl font-bold text-white">{labels.aliasCalendar}</h2>
                     <div className="ml-auto flex items-center gap-1">
