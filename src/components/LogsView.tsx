@@ -241,7 +241,8 @@ function PlaceholderList({ today }: { today: string }) {
             <p className="text-[11px] text-gray-500 leading-relaxed mt-2">
                 Add your own event mapping (string several together for multiple mappings), e.g.:<br/>
                 <code className="text-gray-300">{'{{@event: --10-20 = "Birthday"}}'}</code><br/>
-                <code className="text-gray-300">{'{{@event: --12-25 = "Christmas"}} {{@event: --12-26 = "Boxing Day"}} {{@event: --01-01 = "New Year"}}'}</code><br/>
+                <code className="text-gray-300">{'{{@event: --12-25 = "Christmas"}}{{@event: --12-26 = "Boxing Day"}}{{@event: --01-01 = "New Year"}}'}</code><br/>
+                <code className="text-gray-300">{'{{@event: --12-25 = "Christmas", --12-26 = "Boxing Day", --01-01 = "New Year"}}'}</code><br/>
                 <code className="text-gray-300">{'{{@event: --04-01 = "Renew Business License"}}'}</code>
             </p>
         </>

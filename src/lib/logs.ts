@@ -305,7 +305,15 @@ function formatNumber(n: number): string {
  */
 export function fillPlaceholders(text: string, iso: string): string {
     const [, m, d] = iso.split('-').map(Number) as any;
-    text = text.replace(/\{\{@event:\s*--(\d{2})-(\d{2})\s*=\s*"([^"]*)"\}\}/g, (_w, mm, dd, name) => (Number(mm) === m && Number(dd) === d) ? name : '');
+    text = text.replace(/\{\{@event:([^}]*)\}\}/g, (_w, body: string) => {
+        const pairs = body.match(/--(\d{2})-(\d{2})\s*=\s*"([^"]*)"/g) ?? [];
+        for (const p of pairs) {
+            const mm = p.match(/--(\d{2})-(\d{2})/)!;
+            const name = p.match(/=\s*"([^"]*)"/)![1];
+            if (Number(mm[1]) === m && Number(mm[2]) === d) return name;
+        }
+        return '';
+    });
     const strings: Record<string, string> = { ...placeholderValues(iso) };
     strings.monthShort = strings.monthNameShort; // older templates
     strings.fiscalQuarter = strings.fiscalUSQuarter; // its first name
