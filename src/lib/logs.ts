@@ -67,7 +67,7 @@ function getWeekOfMonth(y: number, m: number, d: number): number {
 /** The placeholders a log's text can use, in the order they're listed where they're explained. */
 export const PLACEHOLDER_KEYS = [
     'weekday', 'weekdayShort', 'day', 'month', 'monthName', 'monthNameShort', 'year', 'yearShort',
-    'dayOfYear', 'weekOfYear', 'weekOfMonth', 'season', 'fiscalUSQuarter', 'totalDays', 'daysInMonth',
+    'dayOfYear', 'weekOfYear', 'weekOfMonth', 'season', 'fiscalUSQuarter', 'fiscalUSYear', 'fiscalUSYearShort', 'observanceUSFederal', 'observanceChristian', 'totalDays', 'daysInMonth',
 ] as const;
 export type PlaceholderKey = typeof PLACEHOLDER_KEYS[number];
 
@@ -98,6 +98,82 @@ function numericValues(iso: string): Record<NumericKey, number> {
     };
 }
 
+/** The U.S. federal fiscal year named for the calendar year it ends in (Oct-Sep). */
+function getFiscalUSYear(y: number, m: number): number {
+    return m < US_FISCAL_YEAR_START_MONTH ? y : y + 1;
+}
+
+/** Standard U.S. federal holidays, observed on the nearest weekday when they fall on a weekend. */
+function getFederalUSObservance(y: number, m: number, d: number): string {
+    const iso = (yy: number, mm: number, dd: number) => `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    const observed = (yy: number, mm: number, dd: number) => {
+        const date = new Date(yy, mm - 1, dd);
+        const dow = date.getDay();
+        if (dow === 6) { date.setDate(date.getDate() - 1); } // Sat -> Fri
+        else if (dow === 0) { date.setDate(date.getDate() + 1); } // Sun -> Mon
+        return iso(date.getFullYear(), date.getMonth() + 1, date.getDate());
+    };
+    const nthWeekday = (yy: number, mm: number, weekday: number, n: number) => {
+        const first = new Date(yy, mm - 1, 1);
+        let day = 1 + ((weekday - first.getDay() + 7) % 7);
+        day += (n - 1) * 7;
+        return day;
+    };
+    const lastWeekday = (yy: number, mm: number, weekday: number) => {
+        const last = new Date(yy, mm, 0).getDate();
+        let day = last - ((new Date(yy, mm - 1, last).getDay() - weekday + 7) % 7);
+        return day;
+    };
+    const target = iso(y, m, d);
+    const checks: [string, string][] = [];
+    checks.push(['New Year\'s Day', observed(y, 1, 1)]);
+    checks.push(['Martin Luther King Jr. Day', iso(y, 1, nthWeekday(y, 1, 1, 3))]);
+    checks.push(['Washington\'s Birthday', iso(y, 2, nthWeekday(y, 2, 1, 3))]);
+    checks.push(['Memorial Day', iso(y, 5, lastWeekday(y, 5, 1))]);
+    checks.push(['Juneteenth National Independence Day', observed(y, 6, 19)]);
+    checks.push(['Independence Day', observed(y, 7, 4)]);
+    checks.push(['Labor Day', iso(y, 9, nthWeekday(y, 9, 1, 1))]);
+    checks.push(['Columbus Day', iso(y, 10, nthWeekday(y, 10, 1, 2))]);
+    checks.push(['Veterans Day', observed(y, 11, 11)]);
+    checks.push(['Thanksgiving Day', iso(y, 11, nthWeekday(y, 11, 4, 4))]);
+    checks.push(['Christmas Day', observed(y, 12, 25)]);
+    for (const [name, date] of checks) if (date === target) return name;
+    return '';
+}
+
+/** Christian holidays (Western), including movable feasts based on Easter. */
+function getChristianObservance(y: number, m: number, d: number): string {
+    const iso = (yy: number, mm: number, dd: number) => `${yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    const target = iso(y, m, d);
+    // Easter Sunday (Anonymous Gregorian algorithm)
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100;
+    const dd = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25);
+    const g = Math.floor((b - f + 1) / 3);
+    const h = (19 * a + b - dd - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4;
+    const l = (32 + 2 * e + 2 * i - h - k) % 7;
+    const mm = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * mm + 114) / 31);
+    const day = ((h + l - 7 * mm + 114) % 31) + 1;
+    const easter = new Date(y, month - 1, day);
+    const addDays = (base: Date, n: number) => { const r = new Date(base); r.setDate(r.getDate() + n); return r; };
+    const fmt = (dt: Date) => iso(dt.getFullYear(), dt.getMonth() + 1, dt.getDate());
+    const checks: [string, string][] = [
+        ['Epiphany', iso(y, 1, 6)],
+        ['Ash Wednesday', fmt(addDays(easter, -46))],
+        ['Palm Sunday', fmt(addDays(easter, -7))],
+        ['Good Friday', fmt(addDays(easter, -2))],
+        ['Easter Sunday', fmt(easter)],
+        ['Ascension Day', fmt(addDays(easter, 39))],
+        ['Pentecost', fmt(addDays(easter, 49))],
+        ['All Saints\' Day', iso(y, 11, 1)],
+        ['Christmas Day', iso(y, 12, 25)],
+    ];
+    for (const [name, date] of checks) if (date === target) return name;
+    return '';
+}
+
 /** What each placeholder is on a day ("2026-10-19"): the weekday and month names are the system's language. */
 export function placeholderValues(iso: string): Record<PlaceholderKey, string> {
     const [y, m, d] = iso.split('-').map(Number);
@@ -118,6 +194,10 @@ export function placeholderValues(iso: string): Record<PlaceholderKey, string> {
         weekOfMonth: String(n.weekOfMonth),
         season: getSeason(m),
         fiscalUSQuarter: getFiscalUSQuarter(y, m),
+        fiscalUSYear: `FY${getFiscalUSYear(y, m)}`,
+        fiscalUSYearShort: `FY${String(getFiscalUSYear(y, m) % 100).padStart(2, '0')}`,
+        observanceUSFederal: getFederalUSObservance(y, m, d),
+        observanceChristian: getChristianObservance(y, m, d),
         totalDays: String(n.totalDays),
         daysInMonth: String(n.daysInMonth),
     };
@@ -224,6 +304,8 @@ function formatNumber(n: number): string {
  * math that doesn't work out) is left as typed.
  */
 export function fillPlaceholders(text: string, iso: string): string {
+    const [, m, d] = iso.split('-').map(Number) as any;
+    text = text.replace(/\{\{@event:\s*--(\d{2})-(\d{2})\s*=\s*"([^"]*)"\}\}/g, (_w, mm, dd, name) => (Number(mm) === m && Number(dd) === d) ? name : '');
     const strings: Record<string, string> = { ...placeholderValues(iso) };
     strings.monthShort = strings.monthNameShort; // older templates
     strings.fiscalQuarter = strings.fiscalUSQuarter; // its first name

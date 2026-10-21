@@ -6,6 +6,8 @@ import {
     calendarToday, createLog, LOGS_CHANGED_EVENT, deleteLog, listLogEntries, listLogs, renameLog, setLogEntryTemplate, setLogRemind, writeLogDay,
     type Log, type LogEntry, type LogEntryTemplate,
 } from '../api';
+import { getThemeCssVariables, resolveContentTheme, type Theme } from '../lib/themes';
+import type { DisplaySettings } from '../api';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { handleMarkdownContextMenu, handlePlainContextMenu } from '../lib/markdown-editor';
 import { EMPHASIS_ONLY_ATTR } from './MarkdownContextMenu';
@@ -236,6 +238,12 @@ function PlaceholderList({ today }: { today: string }) {
                 The numbers ({NUMERIC_PLACEHOLDER_KEYS.map((k, i) => <span key={k}>{i > 0 && ', '}<code className="text-gray-300">{k}</code></span>)}) also work
                 in math, e.g.: <code className="text-gray-300">{'{{1 + day % totalDays}}'}</code>.<br/>(NOTE: Use + - * / % ^ and ( ), and floor, ceil, round, abs, min, max.)
             </p>
+            <p className="text-[11px] text-gray-500 leading-relaxed mt-2">
+                Add your own event mapping (string several together for multiple mappings), e.g.:<br/>
+                <code className="text-gray-300">{'{{@event: --10-20 = "Birthday"}}'}</code><br/>
+                <code className="text-gray-300">{'{{@event: --12-25 = "Christmas"}} {{@event: --12-26 = "Boxing Day"}} {{@event: --01-01 = "New Year"}}'}</code><br/>
+                <code className="text-gray-300">{'{{@event: --04-01 = "Renew Business License"}}'}</code>
+            </p>
         </>
     );
 }
@@ -273,6 +281,7 @@ function EntryTemplateModal({ log, onClose, onSave }: {
             icon={LayoutTemplate}
             title="Entry Template"
             subtitle={log.name}
+            size="xl"
             onSubmit={e => { e.preventDefault(); onSave(draft, dateFormat, customPattern); }}
             footer={
                 <>
@@ -316,15 +325,15 @@ function EntryTemplateModal({ log, onClose, onSave }: {
                         </Select>
                         {dateFormat === 'custom' && (
                             <div className="mt-3">
-                                <input
+                                <textarea
                                     autoFocus
                                     value={customPattern}
                                     onChange={e => setCustomPattern(e.target.value)}
                                     onContextMenu={handlePlainContextMenu}
-                                    maxLength={100}
+                                    rows={6}
                                     placeholder="{{weekday}}, {{monthName}} {{day}}, {{year}}"
                                     aria-label="Custom date format"
-                                    className={INPUT}
+                                    className={INPUT + ' resize-y min-h-[6rem]'}
                                 />
                                 <p className="text-[11px] text-gray-500 leading-relaxed mt-1.5">
                                     Combine these placeholders with your own text. The format is shared by every log that uses Custom.
@@ -416,7 +425,22 @@ function EntryTemplateModal({ log, onClose, onSave }: {
  *
  * `searchQuery`: the bar's text, with a facet's name and a colon before it when one is on.
  */
-export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNotify: (n: NotificationContent) => void }) {
+export function LogsView({ searchQuery, onNotify, displaySettings, customThemes }: { searchQuery: string; onNotify: (n: NotificationContent) => void; displaySettings?: DisplaySettings | null; customThemes?: Theme[] }) {
+    const contentTheme = useMemo(
+        () => resolveContentTheme(displaySettings, customThemes ?? []),
+        [displaySettings, customThemes],
+    );
+    const contentThemeStyle = useMemo(
+        () => displaySettings?.contentThemeLogsEnabled
+            ? ({
+                ...getThemeCssVariables(contentTheme, displaySettings.blockquoteAccentEnabled ? displaySettings.blockquoteAccentColor : null),
+                colorScheme: contentTheme.scheme,
+                backgroundColor: 'var(--k-bg)',
+                color: 'var(--k-text-white)',
+            } as React.CSSProperties)
+            : undefined,
+        [displaySettings, contentTheme],
+    );
     // The section's own name is the workspace's (Logs, unless it's been called something else: Tracker, say).
     const { labels } = useWorkspace();
     const [logs, setLogs] = useState<Log[] | null>(null);
@@ -695,7 +719,7 @@ export function LogsView({ searchQuery, onNotify }: { searchQuery: string; onNot
                 </div>
             </div>
 
-            <div ref={paneRef} className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden custom-scrollbar pb-10">
+            <div ref={paneRef} className={`flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden custom-scrollbar pb-10 ${contentThemeStyle ? 'k-content-theme' : ''}`} style={contentThemeStyle}>
                 {!open ? (
                     <div className="h-full flex flex-col items-center justify-center text-center text-gray-500 px-6">
                         <NotebookText className="w-10 h-10 mb-3 text-gray-600" />
