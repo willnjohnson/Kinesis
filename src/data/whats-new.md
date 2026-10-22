@@ -1,3 +1,15 @@
+# Changelog (v0.5.6)
+
+## Improved
+- **Notes View:** 
+  - Added formatting toolbar for accessibility.
+  - Added WYSIWIG Mode so user can edit while simultaneously seeing preview. Markdown Mode remains available.
+
+- **Logs Entry Template:**
+  - Added shortcut to custom event mapping to account for **multiple** events. See example:
+  
+    `{{@event: --12-25 = "Christmas", --12-26 = "Boxing Day", --01-01 = "New Year"}}`
+
 # Changelog (v0.5.5)
 
 ## Added
@@ -117,17 +129,3 @@ Third (note: `---` separates question from answer):
 * **Orphaned Videos**: Videos YouTube no longer has are found as their thumbnails load in the Library, or when you open them. They stay in the Library for the record, and **Orphaned** in the bottom bar (next to the Trash) lists them, with a way to delete them. A video that comes back on YouTube is taken off the list.
 * **Resume Where You Left Off**: Kinesis remembers where you stopped in each saved video. Open it again and click **Resume from 23:14** on the player to pick up there. Watching past the first half minute also marks the video **In Progress** on its Calendar tracks.
 * **Continue Watching and Watched**: Two new lists in the pin menu. **Continue Watching** shows the videos you've started, with how far in you are; **Mark as Completed** moves a video to **Watched** and checks it off on its Calendar tracks. A video you watch to the end goes to Watched on its own.
-
-# Changelog (v0.5.2)
-
-## Improved
-
-* **Select and Copy Text**: Transcripts, AI Summaries, Glossary definitions and Biographies can now be **selected**. Right-click a selection to copy it as plain text or as Markdown.
-* **Easier Glossary/Biography Editing**: Edit a term from its window, preview your Markdown while editing, and get a warning before closing with unsaved changes. Pencil and delete icons are also moved closer to the entry name.
-* **@ and ^ Mentions**: In a Markdown editor, type `@` and the start of a handle, or `^` and the start of a Glossary term, to see it suggested. Press Enter/Tab to turn it into a link.
-* **Drag to Select in Bulk Assign**: Hold left click on a video and drag to select a whole block of videos at once.
-* **Safer Deleting**: Emptying the Trash and other permanent deletes now ask first.
-
-## Fixed
-
-* **Search History**: "Clear day" no longer deletes the older days' searches along with it.

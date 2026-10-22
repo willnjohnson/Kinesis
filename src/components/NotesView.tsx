@@ -1,9 +1,9 @@
-import { Children, cloneElement, createContext, isValidElement, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from 'react';
+import { Children, Fragment, cloneElement, createContext, isValidElement, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type ElementType, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
 import {
-    ArrowDown, ArrowUp, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, LayoutTemplate, Library, MessageCircleQuestionMark, MoreVertical, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, Search, Trash2, Type, User, Users, Video as VideoIcon, X,
+    ArrowDown, ArrowUp, Bold, BookA, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Code, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, Highlighter, Italic, LayoutTemplate, Library, Link as LinkIcon, Link2, List, ListChecks, ListOrdered, MessageCircleQuestionMark, Minus, MoreVertical, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, RemoveFormatting, Search, Strikethrough, Sigma, Table as TableIcon, Trash2, Type, User, Users, Video as VideoIcon, Wand2, X, Image,
 } from 'lucide-react';
 import {
     addCalendarNoteEntry, addNoteToWorkbook, calendarToday, createNote, deleteNote, getNote, getVideoCard, getWdbsRoots, listCalendarTracks, listNotes, listWorkbooks,
@@ -15,8 +15,8 @@ import { getThemeCssVariables, resolveContentTheme, type Theme } from '../lib/th
 import { useFlags } from '../hooks/useFlags';
 import { useWorkspace } from '../hooks/useWorkspace';
 import { ALL_TERMS, driveCovers } from '../lib/glossary';
-import { foldVideoLinkTimes, markdownUrlTransform, openInternalLink, parseInternalHref } from '../lib/internal-links';
-import { handleMarkdownContextMenu, handleMarkdownKeyDown, handlePlainContextMenu } from '../lib/markdown-editor';
+import { foldVideoLinkTimes, markdownUrlTransform, openInternalLink, parseInternalHref, requestLinkPicker } from '../lib/internal-links';
+import { applyMarkdownAction, applyHeading, handleMarkdownContextMenu, handleMarkdownKeyDown, handlePlainContextMenu, insertMath } from '../lib/markdown-editor';
 import {
     citationCount, joinParagraphs, NOTE_APPEND_EVENT, OPEN_WORKBOOK_EVENT, takeRequestedWorkbook, noteDisplayTitle, noteSnippet, noteSources, setActiveNoteId, THOUGHT_MARK,
     getActiveNoteId, wordCount, type NoteAppendRequest,
@@ -54,6 +54,160 @@ const COMPACT_TOOLS_BELOW = 660;
 
 /** Where the reader's Write / Read choice is kept (localStorage). */
 const MODE_KEY = 'kinesis.notes.mode';
+
+/** Which way the reader writes (Markdown Mode or WYSIWYG Mode), kept for when Edit is picked after reading. */
+const EDIT_MODE_KEY = 'kinesis.notes.editMode';
+
+// ── Floating formatting toolbar (write modes) ─────────────────────────────────
+
+/** The bar itself: measures its own width and folds the buttons that don't fit into a More (⋮) dropdown, the way
+ *  the status bar truncates when the window shrinks. Kept as its own component so the ref/measurement lives in it
+ *  and the parent (which only knows the actions) stays ref-free. */
+function ToolbarBar({ buttons, btn, sep, b, ICONS, className }: {
+    buttons: { title: string; icon: string; run: () => void }[];
+    btn: string;
+    sep: ReactNode;
+    b: (title: string, I: ElementType, onClick: () => void) => ReactNode;
+    ICONS: Record<string, ElementType>;
+    className?: string;
+}) {
+    const [cut, setCut] = useState(buttons.length);
+    const elRef = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        const el = elRef.current;
+        if (!el) return;
+        const measure = () => {
+            // Each button is roughly 32px wide incl. gap; the More button takes the same room.
+            const room = el.clientWidth;
+            const per = 32;
+            const moreSlot = 40;
+            setCut(Math.max(0, Math.min(buttons.length, Math.floor((room - moreSlot) / per))));
+        };
+        measure();
+        const ro = new ResizeObserver(measure);
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [buttons.length]);
+    const shown = buttons.slice(0, cut);
+    const hidden = buttons.slice(cut);
+    return (
+        <div
+            ref={elRef}
+            // relative + z-[2]: the backdrop blur makes this bar its own stacking layer, and without a z-index it sits
+            // under the editor below it (a positioned textarea and the z-[1] preview), so the ⋮ menu, which opens over
+            // the editor, would be painted beneath it and the clicks would land on the note. Still under the sticky
+            // header (z-10).
+            className={`relative z-[2] w-full flex items-center gap-0.5 flex-nowrap px-2 py-1.5 backdrop-blur-sm rounded-xl ${className ?? ''}`}
+            style={{
+                background: 'color-mix(in srgb, var(--k-bg, #141414) 92%, transparent)',
+                border: '1px solid color-mix(in srgb, var(--k-text-white, #fff) 8%, transparent)',
+            }}
+        >
+            {shown.map((m, i) => {
+                const I = ICONS[m.icon];
+                return (
+                    <Fragment key={m.title}>
+                        {i === 6 && sep}
+                        {i === 13 && sep}
+                        {b(m.title, I, m.run)}
+                    </Fragment>
+                );
+            })}
+            {hidden.length > 0 && (
+                <Dropdown align="right" width="w-56" dir="down" button={(open, toggle) => (
+                    <button type="button" title="More formatting" className={`${btn} ${open ? 'bg-[var(--k-text-white,#fff)]/15 text-[var(--k-text-white,#fff)]' : ''}`} onClick={toggle} aria-expanded={open}>
+                        <MoreVertical className="w-3.5 h-3.5" />
+                    </button>
+                )}>
+                    {close => hidden.map(m => {
+                        const I = ICONS[m.icon];
+                        return (
+                            <button
+                                key={m.title}
+                                type="button"
+                                title={m.title}
+                                // Keeps the textarea focused (and its selection) while the action runs, like the visible buttons.
+                                onMouseDown={e => e.preventDefault()}
+                                onClick={() => { m.run(); close(); }}
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-gray-200 hover:bg-[#272727] transition-colors cursor-pointer"
+                            >
+                                <I className="w-3.5 h-3.5 shrink-0 text-[#aaaaaa]" /> <span className="text-sm">{m.title}</span>
+                            </button>
+                        );
+                    })}
+                </Dropdown>
+            )}
+        </div>
+    );
+}
+
+/** The compact formatting toolbar that floats at the bottom of the editor in Write / Live Preview modes.
+ *  Its buttons apply Markdown actions to the textarea via the same helpers the right-click menu uses,
+ *  so undo history is preserved. It sits at the foot of the note page (above the BottomBar), so a short
+ *  note — a new one, with nothing written yet — shows it at the bottom of the notes, not in the middle.
+ *  Every action the right-click menu has is here too; when the note page is too narrow for them all the
+ *  ones that don't fit fold into the More (⋮) button, the way the status bar does when the window shrinks. */
+function WritingToolbar({ bodyRef, className, canMakeTerms }: { bodyRef: React.RefObject<HTMLTextAreaElement>; className?: string; canMakeTerms?: boolean }) {
+    const apply = (action: Parameters<typeof applyMarkdownAction>[1]) => {
+        const el = bodyRef.current;
+        if (!el) return;
+        applyMarkdownAction(el, action);
+    };
+    const heading = (level: 1 | 2 | 3 | 4 | 5 | 6) => {
+        const el = bodyRef.current;
+        if (!el) return;
+        applyHeading(el, level);
+    };
+    const linkTo = () => { const el = bodyRef.current; if (el) requestLinkPicker({ textarea: el, start: el.selectionStart, end: el.selectionEnd }); };
+    const flashcards = () => { const el = bodyRef.current; if (el) requestLinkPicker({ textarea: el, start: el.selectionStart, end: el.selectionEnd, tab: 'flashcards' }); };
+    const makeTerm = () => { const el = bodyRef.current; if (el) window.dispatchEvent(new CustomEvent(MAKE_TERM_EVENT, { detail: { textarea: el, start: el.selectionStart, end: el.selectionEnd } })); };
+    const math = (latex: string, select?: string, wrap?: 'inline' | 'block') => { const el = bodyRef.current; if (el) insertMath(el, latex, { select, wrap }); };
+
+    const btn = 'p-1.5 rounded transition-colors cursor-pointer text-[var(--k-text-white,#9ca3af)] hover:text-[var(--k-text-white,#fff)] hover:bg-[var(--k-text-white,#fff)]/10';
+    const sep = <span className="w-px h-4 mx-0.5 shrink-0 bg-[var(--k-text-white,#fff)]/10" />;
+    const b = (title: string, I: ElementType, onClick: () => void) => (
+        <button type="button" title={title} className={btn} onClick={onClick} onMouseDown={e => e.preventDefault()}><I className="w-3.5 h-3.5" /></button>
+    );
+
+    // Every button the toolbar can show, in order: a title, an icon key, and the action it runs (a Markdown action
+    // name, a heading level, or one of the named extras). The first ones are pinned; the rest fold into More when
+    // the note page is too narrow for them — measured, so it's exactly like the status bar's truncation.
+    type Entry = { title: string; icon: string; run: () => void };
+    const ICONS: Record<string, ElementType> = {
+        Bold, Italic, Strikethrough, Highlighter, Code, LinkIcon, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6,
+        List, ListOrdered, ListChecks, QuoteIcon, TableIcon, Minus, Link2, Image, RemoveFormatting, MessageCircleQuestionMark,
+        Sigma, GalleryVerticalEnd, BookA, MoreVertical,
+    };
+    const buttons: Entry[] = [
+        { title: 'Bold (Ctrl+B)', icon: 'Bold', run: () => apply('bold') },
+        { title: 'Italic (Ctrl+I)', icon: 'Italic', run: () => apply('italic') },
+        { title: 'Strikethrough', icon: 'Strikethrough', run: () => apply('strikethrough') },
+        { title: 'Highlight (Ctrl+H)', icon: 'Highlighter', run: () => apply('highlight') },
+        { title: 'Inline Code (Ctrl+E)', icon: 'Code', run: () => apply('code') },
+        { title: 'Link (Ctrl+K)', icon: 'LinkIcon', run: () => apply('link') },
+        { title: 'Heading 1', icon: 'Heading1', run: () => heading(1) },
+        { title: 'Heading 2', icon: 'Heading2', run: () => heading(2) },
+        { title: 'Heading 3', icon: 'Heading3', run: () => heading(3) },
+        { title: 'Heading 4', icon: 'Heading4', run: () => heading(4) },
+        { title: 'Heading 5', icon: 'Heading5', run: () => heading(5) },
+        { title: 'Heading 6', icon: 'Heading6', run: () => heading(6) },
+        { title: 'Bulleted list', icon: 'List', run: () => apply('bulletList') },
+        { title: 'Numbered list', icon: 'ListOrdered', run: () => apply('numberedList') },
+        { title: 'Task list (Ctrl+T)', icon: 'ListChecks', run: () => apply('taskList') },
+        { title: 'Quote / Callout', icon: 'QuoteIcon', run: () => apply('blockquote') },
+        { title: 'Table', icon: 'TableIcon', run: () => apply('table') },
+        { title: 'Horizontal rule', icon: 'Minus', run: () => apply('horizontalRule') },
+        { title: 'Link to...', icon: 'Link2', run: linkTo },
+        { title: 'Image', icon: 'Image', run: () => apply('image') },
+        { title: 'Clear formatting', icon: 'RemoveFormatting', run: () => apply('clearFormatting') },
+        { title: 'Question & Answer', icon: 'MessageCircleQuestionMark', run: () => apply('questionAnswer') },
+        { title: 'Math & Formulas', icon: 'Sigma', run: () => math('$ ... $', undefined, 'inline') },
+        { title: 'Flashcards...', icon: 'GalleryVerticalEnd', run: flashcards },
+        ...(canMakeTerms ? [{ title: 'Make Glossary Term...', icon: 'BookA', run: makeTerm }] : []),
+    ];
+
+    return <ToolbarBar buttons={buttons} btn={btn} sep={sep} b={b} ICONS={ICONS} className={className} />;
+}
 
 /** The Drive filter value that shows notes filed under no Drive (an empty string is "All Drives"). */
 const UNASSIGNED = '__unassigned__';
@@ -374,14 +528,284 @@ function NoteReading({ body }: { body: string }) {
     );
 }
 
+// ── Live Preview ─────────────────────────────────────────────────────────────
+
+/** What the empty editor says (Write and Live Preview both). */
+const NOTE_PLACEHOLDER = 'Write here. Markdown works: # headings, - lists, **bold**.\n\nCite from a video: Select words in its transcript or summary, right-click, Cite in note.\nA "Q:" line with an "A:" line under it reads as a question and its answer (right-click, Question & Answer, writes one).';
+
+/** A stretch of a note's text, from `start` up to (not including) `end`. */
+interface Span { start: number; end: number }
+
+/** The blocks of a text: runs of lines with no blank line between them (a fenced code block or a `$$` block is one
+ *  block however many blank lines it holds). What lies between two blocks is blank lines, and is never part of one,
+ *  so a block can be rewritten without touching anything around it. `base` is added to every offset. */
+function splitBlocks(text: string, base = 0): Span[] {
+    const spans: Span[] = [];
+    let offset = 0;
+    let start = -1;
+    let fence: string | null = null;
+    for (const line of text.split('\n')) {
+        const trimmed = line.trim();
+        if (fence !== null) {
+            if (fence === '$$' ? trimmed === '$$' : trimmed.startsWith(fence)) fence = null;
+        } else if (trimmed === '') {
+            if (start !== -1) { spans.push({ start: base + start, end: base + offset - 1 }); start = -1; }
+        } else {
+            if (start === -1) start = offset;
+            const open = /^(`{3,}|~{3,})(.*)$/.exec(trimmed);
+            if (open && !(open[1][0] === '`' && open[2].includes('`'))) fence = open[1];
+            else if (trimmed === '$$') fence = '$$';
+        }
+        offset += line.length + 1;
+    }
+    if (start !== -1) spans.push({ start: base + start, end: base + text.length });
+    return spans;
+}
+
+/** Whether a blank line lies in this text (a line of nothing, between two line ends). */
+const hasBlankLine = (text: string) => /\n[ \t]*\n/.test(text);
+
+/** The text of the open part, once a blank line is in it: the block the caret is in (its span, and where the caret
+ *  is in it), or, with the caret among the blank lines, an empty span there, for a new paragraph. Null while the text
+ *  is still one block with no blank line before or after it. */
+function settleRegion(value: string, caret: number): { start: number; end: number; at: number } | null {
+    const spans = splitBlocks(value);
+    if (spans.length === 0) return null;
+    if (spans.length === 1 && !hasBlankLine(value.slice(0, spans[0].start)) && !hasBlankLine(value.slice(spans[0].end))) return null;
+    const into = spans.find(s => caret >= s.start && caret <= s.end);
+    return into ? { start: into.start, end: into.end, at: caret - into.start } : { start: caret, end: caret, at: 0 };
+}
+
+/** Where in a block's Markdown a click on its drawn form was: the characters drawn before the click, matched in order
+ *  against the source (the marks that aren't drawn, like `#` and `**`, are skipped). Approximate; the end when unsure. */
+function sourceOffsetAt(host: HTMLElement, source: string): number {
+    const sel = window.getSelection();
+    if (!sel || !sel.anchorNode || !host.contains(sel.anchorNode)) return source.length;
+    const range = document.createRange();
+    range.selectNodeContents(host);
+    range.setEnd(sel.anchorNode, sel.anchorOffset);
+    const want = range.toString().replace(/\s/g, '').length;
+    if (want === 0) return 0;
+    const drawn = (host.textContent ?? '').replace(/\s/g, '');
+    let seen = 0;
+    for (let i = 0; i < source.length; i++) {
+        if (/\s/.test(source[i])) continue;
+        if (source[i] === drawn[seen] && ++seen === want) return i + 1;
+    }
+    return source.length;
+}
+
+/** One block of a note in Live Preview, drawn as it reads in Read mode. Clicking it (but not a link, a button or a
+ *  box in it, and not while words are being selected) opens it for writing. Props are kept stable so a block that
+ *  hasn't changed isn't drawn again on every keystroke elsewhere. */
+const RenderedBlock = memo(function RenderedBlock({ text, blockKey, onPick, onTask }: {
+    text: string;
+    blockKey: string;
+    onPick: (key: string, at: number) => void;
+    onTask: (key: string, line: number) => void;
+}) {
+    const hostRef = useRef<HTMLDivElement>(null);
+    const toggle = useMemo(() => (line: number) => onTask(blockKey, line), [onTask, blockKey]);
+    return (
+        <div
+            ref={hostRef}
+            className="k-selectable mb-4 cursor-text"
+            onClick={e => {
+                if ((e.target as HTMLElement).closest('a, button, input, summary')) return;
+                if (!window.getSelection()?.isCollapsed) return;
+                if (hostRef.current) onPick(blockKey, sourceOffsetAt(hostRef.current, text));
+            }}
+        >
+            <TaskToggle.Provider value={toggle}>
+                <NoteReading body={text} />
+            </TaskToggle.Provider>
+        </div>
+    );
+});
+
+/** Live Preview: the note as it reads, except the block being written, which is a textarea holding that block's
+ *  Markdown (so what you click, select and type is always what you see). Click a block to write in it; Up / Down at
+ *  the edge of one move to its neighbour; Backspace at its start (or Delete at its end) opens it together with the
+ *  neighbour so the blank lines between can be removed. The textarea is the editor's `bodyRef`, so the formatting
+ *  toolbar, the right-click menu and Link to... work on it as they do in Write. */
+function LivePreviewEditor({ body, onBody, bodyRef, canMakeTerms, onToggleTask }: {
+    body: string;
+    onBody: (value: string) => void;
+    bodyRef: React.RefObject<HTMLTextAreaElement>;
+    canMakeTerms: boolean;
+    onToggleTask: (line: number) => void;
+}) {
+    // The part of the note open for writing (null: none, everything is drawn). It follows the text as it's typed in.
+    const [region, setRegion] = useState<Span | null>(null);
+    const [epoch, setEpoch] = useState(0);
+    const focusNext = useRef<number | 'start' | 'end' | null>(null);
+    const own = useRef(body);
+    const keyDownAt = useRef(-1);
+
+    const all = splitBlocks(body);
+    // An empty note has nothing to click, so it opens at its end.
+    const here: Span | null = region ?? (all.length === 0 ? { start: body.length, end: body.length } : null);
+    const before = here ? splitBlocks(body.slice(0, here.start)) : all;
+    const after = here ? splitBlocks(body.slice(here.end), here.end) : [];
+    const regionText = here ? body.slice(here.start, here.end) : '';
+    const editing = here !== null;
+
+    const view = useRef({ before, after, body });
+    view.current = { before, after, body };
+
+    const activate = useCallback((span: Span, at: number | 'start' | 'end') => {
+        focusNext.current = at;
+        setRegion(span);
+        setEpoch(n => n + 1);
+    }, []);
+    const pick = useCallback((key: string, at: number) => {
+        const span = (key[0] === 'b' ? view.current.before : view.current.after)[Number(key.slice(1))];
+        if (span) activate(span, at);
+    }, [activate]);
+    const task = useCallback((key: string, line: number) => {
+        const span = (key[0] === 'b' ? view.current.before : view.current.after)[Number(key.slice(1))];
+        if (span) onToggleTask(view.current.body.slice(0, span.start).split('\n').length - 1 + line);
+    }, [onToggleTask]);
+
+    // The note changed from outside (a citation added, a box ticked, a reload): the open part stays open when its
+    // text is still where it was, otherwise nothing is open (offsets into the old text can't be trusted).
+    useLayoutEffect(() => {
+        if (body === own.current) return;
+        const old = own.current;
+        own.current = body;
+        if (region && body.slice(region.start, region.end) === old.slice(region.start, region.end)) return;
+        setRegion(null);
+    }, [body, region]);
+
+    // The textarea is as tall as its text; and when a part was just opened, it takes the caret.
+    useLayoutEffect(() => {
+        const el = bodyRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${el.scrollHeight}px`;
+        const at = focusNext.current;
+        if (at === null) return;
+        focusNext.current = null;
+        const pos = at === 'start' ? 0 : at === 'end' ? el.value.length : Math.min(at, el.value.length);
+        el.focus();
+        el.setSelectionRange(pos, pos);
+    }, [epoch, regionText, bodyRef]);
+    // And taller or shorter when the page changes width (the text wraps differently).
+    useEffect(() => {
+        const el = bodyRef.current;
+        const host = el?.parentElement;
+        if (!el || !host) return;
+        let width = host.clientWidth;
+        const observer = new ResizeObserver(() => {
+            if (host.clientWidth === width) return;
+            width = host.clientWidth;
+            el.style.height = 'auto';
+            el.style.height = `${el.scrollHeight}px`;
+        });
+        observer.observe(host);
+        return () => observer.disconnect();
+    }, [epoch, editing, bodyRef]);
+
+    // A blank line typed in the open part ends it: what's above is drawn as it reads, and the open part becomes the
+    // one the caret is in (a new paragraph below, or what was split off under the caret), with the caret in it.
+    const edit = (value: string, caret?: number) => {
+        if (!here) return;
+        const next = body.slice(0, here.start) + value + body.slice(here.end);
+        const split = caret === undefined ? null : settleRegion(value, caret);
+        own.current = next;
+        setRegion(split ? { start: here.start + split.start, end: here.start + split.end } : { start: here.start, end: here.start + value.length });
+        if (split) { focusNext.current = split.at; setEpoch(n => n + 1); }
+        onBody(next);
+    };
+
+    // Below the last block: a click there puts the caret at the end of the note, to write on.
+    const tail = after.length ? after[after.length - 1] : here ? null : before[before.length - 1];
+
+    return (
+        <div className="relative">
+            {before.map((s, i) => (
+                <RenderedBlock key={`b${i}`} blockKey={`b${i}`} text={body.slice(s.start, s.end)} onPick={pick} onTask={task} />
+            ))}
+            {here && (
+                <div key={`edit-${epoch}`} className="mb-4 -mx-2 px-2 py-1 rounded-md bg-[var(--k-accent)]/10">
+                    <textarea
+                        ref={bodyRef}
+                        // A video picked in Link to, from here, asks whether to link a moment in it (LinkPicker.tsx).
+                        {...{ [MENTIONS_ATTR]: '', [NOTE_EDITOR_ATTR]: '', ...(canMakeTerms ? { [NOTE_TERMS_ATTR]: '' } : {}) }}
+                        value={regionText}
+                        rows={1}
+                        onChange={e => edit(e.target.value, e.target.selectionStart)}
+                        // A [1:30] typed straight after a video link is that link's time: written into the link once
+                        // the writing is left (as Write does). It can move the text, so the open part moves with it.
+                        onBlur={() => {
+                            const folded = foldVideoLinkTimes(body);
+                            if (folded === body) return;
+                            const start = foldVideoLinkTimes(body.slice(0, here.start)).length;
+                            own.current = folded;
+                            setRegion({ start, end: start + foldVideoLinkTimes(regionText).length });
+                            onBody(folded);
+                        }}
+                        onKeyDown={e => {
+                            const el = e.currentTarget;
+                            if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && el.selectionStart === el.selectionEnd) {
+                                if (e.key === 'Backspace' && el.selectionStart === 0 && before.length > 0) {
+                                    e.preventDefault();
+                                    const prev = before[before.length - 1];
+                                    activate({ start: prev.start, end: here.end }, here.start - prev.start);
+                                    return;
+                                }
+                                if (e.key === 'Delete' && el.selectionStart === el.value.length && after.length > 0) {
+                                    e.preventDefault();
+                                    activate({ start: here.start, end: after[0].end }, el.value.length);
+                                    return;
+                                }
+                            }
+                            keyDownAt.current = el.selectionStart;
+                            handleMarkdownKeyDown(e, regionText, edit);
+                        }}
+                        // Up / Down that couldn't move the caret any further (it was at the top or the bottom) go on
+                        // to the next block.
+                        onKeyUp={e => {
+                            const el = e.currentTarget;
+                            if (e.key === 'Enter') {
+                                // An Enter the editor's own keys took (a list's, say) doesn't come through onChange: settled here.
+                                const split = settleRegion(el.value, el.selectionStart);
+                                if (split) {
+                                    focusNext.current = split.at;
+                                    setRegion({ start: here.start + split.start, end: here.start + split.end });
+                                    setEpoch(n => n + 1);
+                                }
+                                return;
+                            }
+                            if (el.selectionStart !== el.selectionEnd || el.selectionStart !== keyDownAt.current) return;
+                            if (e.key === 'ArrowUp' && before.length > 0) activate(before[before.length - 1], 'end');
+                            else if (e.key === 'ArrowDown' && after.length > 0) activate(after[0], 'start');
+                        }}
+                        onContextMenu={handleMarkdownContextMenu}
+                        placeholder={body.trim() ? undefined : NOTE_PLACEHOLDER}
+                        className="block w-full overflow-hidden resize-none bg-transparent outline-none text-[15px] leading-relaxed placeholder-gray-600"
+                        style={{ color: 'var(--k-text-white, #f3f4f6)', caretColor: 'var(--k-text-white, #fff)' }}
+                    />
+                </div>
+            )}
+            {after.map((s, i) => (
+                <RenderedBlock key={`a${i}`} blockKey={`a${i}`} text={body.slice(s.start, s.end)} onPick={pick} onTask={task} />
+            ))}
+            <div className="min-h-40 cursor-text" onClick={() => (tail ? activate(tail, 'end') : bodyRef.current?.focus())} />
+        </div>
+    );
+}
+
 // ── Small dropdowns ──────────────────────────────────────────────────────────
 
 /** A button that opens a panel under it, closed by a click outside or Esc. */
-function Dropdown({ button, children, align = 'left', width = 'w-64' }: {
+function Dropdown({ button, children, align = 'left', width = 'w-64', dir = 'down' }: {
     button: (open: boolean, toggle: () => void) => ReactNode;
     children: (close: () => void) => ReactNode;
     align?: 'left' | 'right';
     width?: string;
+    /** Which way the menu opens. 'down' (the default) is below the button; 'up' is above it. */
+    dir?: 'down' | 'up';
 }) {
     const [open, setOpen] = useState(false);
     const boxRef = useRef<HTMLDivElement>(null);
@@ -391,7 +815,7 @@ function Dropdown({ button, children, align = 'left', width = 'w-64' }: {
         <div ref={boxRef} className="relative">
             {button(open, () => setOpen(o => !o))}
             {open && (
-                <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} top-full mt-1 z-30 ${width} max-h-80 overflow-y-auto custom-scrollbar bg-[#141414] border border-[#333] rounded-xl py-1 shadow-xl text-sm`}>
+                <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${dir === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'} z-30 ${width} max-h-80 overflow-y-auto custom-scrollbar bg-[#141414] border border-[#333] rounded-xl py-1 shadow-xl text-sm`}>
                     {children(close)}
                 </div>
             )}
@@ -489,7 +913,6 @@ function AddToWorkbook({ noteId, books, compact = false, onNotify }: { noteId: s
     );
 }
 
-/** Where the Notes panel's side (notes or workbooks) and the open workbook are remembered. */
 /** How the notes and the workbooks are listed: by when they were last edited (the usual), when they were made, or by
  *  name. A date starts newest first and a name A to Z; the arrow turns either round. */
 interface ListSort { field: 'updated' | 'created' | 'title'; order: 'asc' | 'desc' }
@@ -508,6 +931,7 @@ function sorter<T extends { id: string; createdAt: string; updatedAt: string }>(
     };
 }
 
+/** Where the Notes panel's side (notes or workbooks) and the open workbook are remembered. */
 const PANEL_TAB_KEY = 'kinesis.notes.panelTab';
 const BOOK_KEY = 'kinesis.notes.workbook';
 
@@ -624,19 +1048,31 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     // Write or Read is the reader's choice, not the note's: it stays as it is from one note to the next, and is
     // remembered in this browser, so whoever left the section reading comes back to it reading. A note that can't be
     // edited is shown read whatever the choice is (`mode` below), without changing it.
-    const [chosenMode, setChosenMode] = useState<'write' | 'read'>(() => {
-        try { return localStorage.getItem(MODE_KEY) === 'read' ? 'read' : 'write'; } catch { return 'write'; }
+    const [chosenMode, setChosenMode] = useState<'write' | 'wysiwyg' | 'read'>(() => {
+        try { const v = localStorage.getItem(MODE_KEY); return v === 'read' ? 'read' : v === 'wysiwyg' ? 'wysiwyg' : 'write'; } catch { return 'write'; }
     });
-    const setMode = useCallback((m: 'write' | 'read') => {
+    // The way of writing Edit goes to: Markdown Mode ('write') or WYSIWYG Mode ('wysiwyg').
+    const [editMode, setEditMode] = useState<'write' | 'wysiwyg'>(() => {
+        try {
+            const v = localStorage.getItem(EDIT_MODE_KEY);
+            if (v === 'write' || v === 'wysiwyg') return v;
+            return localStorage.getItem(MODE_KEY) === 'wysiwyg' ? 'wysiwyg' : 'write';
+        } catch { return 'write'; }
+    });
+    const setMode = useCallback((m: 'write' | 'wysiwyg' | 'read') => {
         // Save this mode's scroll position before switching: the content re-renders
         // (textarea <-> markdown) with different heights, so the browser will lose it.
         const c = notePageRef.current;
         if (c) {
-            const key = chosenMode === 'write' ? 'write' : 'read';
+            const key = chosenMode === 'read' ? 'read' : 'write';
             scrollPositionsRef.current[key] = c.scrollTop;
         }
         setChosenMode(m);
-        try { localStorage.setItem(MODE_KEY, m); } catch { /* just not remembered */ }
+        if (m !== 'read') setEditMode(m);
+        try {
+            localStorage.setItem(MODE_KEY, m);
+            if (m !== 'read') localStorage.setItem(EDIT_MODE_KEY, m);
+        } catch { /* just not remembered */ }
     }, [chosenMode]);
     const [status, setStatus] = useState<'saved' | 'unsaved' | 'saving' | 'error'>('saved');
     const [saveError, setSaveError] = useState<string | null>(null);
@@ -712,12 +1148,16 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     // so scrolling in one and switching over keeps you where you were, and vice-versa.
     const notePageRef = useRef<HTMLDivElement>(null);
     const scrollPositionsRef = useRef<{ write: number; read: number }>({ write: 0, read: 0 });
+    // WYSIWYG: the textarea stays mounted so undo history and selection are preserved.
+    // We only hide/show it; the live preview sits on top and is pointer-events-none.
 
     const canEditNote = useCallback((shared: boolean) => !shared || flags.allowEditSharedNotes, [flags.allowEditSharedNotes]);
     const canEdit = draft !== null && canEditNote(draft.shared);
     const canEditRef = useRef(canEdit);
     canEditRef.current = canEdit;
     const mode = canEdit ? chosenMode : 'read';
+    // Both 'write' and 'wysiwyg' show the textarea; only 'read' shows the rendered view.
+    const isEditing = mode === 'write' || mode === 'wysiwyg';
     // Ctrl+F: finds in the open note, and replaces while it's being written (NoteFind.tsx).
     const find = useNoteFind({
         enabled: draft !== null,
@@ -821,7 +1261,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
 
     // The body grows with what's written; the page scrolls, not the box.
     useLayoutEffect(() => {
-        if (typingRef.current) return;
+        if (typingRef.current || mode === 'wysiwyg') return;
         const el = bodyRef.current;
         if (!el) return;
         // Force reflow to get accurate scrollHeight
@@ -837,54 +1277,53 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     useLayoutEffect(() => {
         const container = notePageRef.current;
         if (!container) return;
-        const key = mode === 'write' ? 'write' : 'read';
+        const key = mode === 'read' ? 'read' : 'write';
         requestAnimationFrame(() => {
             if (notePageRef.current) notePageRef.current.scrollTop = scrollPositionsRef.current[key];
         });
     }, [mode]);
 
     // ── Actions ──
-     // A new note: blank, or started from a template (its title and text use {{monthName}}, {{year}}, {{season}} which are supported).
-     const newNote = async (template?: NoteTemplate) => {
-         flush();
-         try {
-             // If a template is provided, check if there's already an untouched note for this template
-             if (template) {
-                 // Get the current notes list, or load it if necessary
-                 let notesList: Note[] | null = notes;
-                 if (notesList === null) {
-                     notesList = await listNotes().catch(() => null);
-                 }
-                 if (notesList) {
-                     // Look for a note that is an untouched instance of this template
-                     const matchingNote = notesList.find(note => {
-                         return isUntouchedTemplate(note.title, note.body, [template]);
-                     });
-                     if (matchingNote) {
-                         // Jump to the existing note
-                         onOpenNote(matchingNote.id);
-                         setMode('write'); // or 'read'? We'll set to write so the user can edit it.
-                         // Note: the note opening will set the draft and mode accordingly.
-                         return;
-                     }
-                 }
-             }
-             // Otherwise, create a new note as before
-             const today = calendarToday();
-             const n = await createNote({
-                 shared: false,
-                 title: template ? fillTemplate(template.title, today) : '',
-                 body: template ? fillTemplate(template.body, today) : '',
-                 drives: driveFilter && driveFilter !== UNASSIGNED ? [driveFilter] : [],
-             });
-             setNotes(list => [n, ...(list ?? [])]);
-             onOpenNote(n.id);
-             setMode('write');
-             window.setTimeout(() => titleRef.current?.focus(), 50);
-         } catch (e) {
-             onNotify({ message: `Couldn't make a note: ${String(e)}`, type: 'error' });
-         }
-     };
+    // A new note: blank, or started from a template (its title and text use {{monthName}}, {{year}}, {{season}} which are supported).
+    const newNote = async (template?: NoteTemplate) => {
+        flush();
+        try {
+            // If a template is provided, check if there's already an untouched note for this template
+            if (template) {
+                // Get the current notes list, or load it if necessary
+                let notesList: Note[] | null = notes;
+                if (notesList === null) {
+                    notesList = await listNotes().catch(() => null);
+                }
+                if (notesList) {
+                    // Look for a note that is an untouched instance of this template
+                    const matchingNote = notesList.find(note => {
+                        return isUntouchedTemplate(note.title, note.body, [template]);
+                    });
+                    if (matchingNote) {
+                        // Jump to the existing note
+                        onOpenNote(matchingNote.id);
+                        setMode(editMode);
+                        return;
+                    }
+                }
+            }
+            // Otherwise, create a new note as before
+            const today = calendarToday();
+            const n = await createNote({
+                shared: false,
+                title: template ? fillTemplate(template.title, today) : '',
+                body: template ? fillTemplate(template.body, today) : '',
+                drives: driveFilter && driveFilter !== UNASSIGNED ? [driveFilter] : [],
+            });
+            setNotes(list => [n, ...(list ?? [])]);
+            onOpenNote(n.id);
+            setMode(editMode);
+            window.setTimeout(() => titleRef.current?.focus(), 50);
+        } catch (e) {
+            onNotify({ message: `Couldn't make a note: ${String(e)}`, type: 'error' });
+        }
+    };
 
     // Templates: the workspace's own (the app's come with it), the menu beside New Note, and the name being typed
     // for one made from the open note.
@@ -1017,57 +1456,57 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
     const noteMenuItems = (note: Note): ContextMenuItem[] => {
         const usable = menuTracks.filter(t => !t.track.sourceDriveSequence && !t.track.archived);
         return [
-        { label: 'Open', icon: NotebookPen, onClick: () => onOpenNote(note.id) },
-        {
-            label: 'Add to Workbook',
-            icon: BookOpenText,
-            onClick: () => {},
-            submenu: books.length === 0
-                ? [{ label: 'No workbooks yet', disabled: true, onClick: () => {} }]
-                : books.map(b => {
-                    const has = b.noteIds.includes(note.id);
-                    return {
-                        label: b.title,
-                        icon: b.shared ? Users : User,
-                        checked: has,
+            { label: 'Open', icon: NotebookPen, onClick: () => onOpenNote(note.id) },
+            {
+                label: 'Add to Workbook',
+                icon: BookOpenText,
+                onClick: () => {},
+                submenu: books.length === 0
+                    ? [{ label: 'No workbooks yet', disabled: true, onClick: () => {} }]
+                    : books.map(b => {
+                        const has = b.noteIds.includes(note.id);
+                        return {
+                            label: b.title,
+                            icon: b.shared ? Users : User,
+                            checked: has,
+                            onClick: () => {
+                                (has ? removeNoteFromWorkbook(b.id, note.id) : addNoteToWorkbook(b.id, note.id))
+                                    .then(() => onNotify({ message: has ? `Taken out of "${b.title}"` : `Added to "${b.title}"`, type: 'success' }))
+                                    .catch(e => onNotify({ message: errorText(e), type: 'error' }));
+                            },
+                        };
+                    }),
+            },
+            // A track that follows a Drive's sequence holds only that sequence's videos, so it isn't offered. A track
+            // holds a note once: asked to again, it says so and nothing changes.
+            ...(canCalendar ? [{
+                label: `Add to ${labels.aliasCalendar}`,
+                icon: CalendarPlus,
+                onClick: () => {},
+                submenu: usable.length === 0
+                    ? [{ label: 'No tracks to add it to', disabled: true, onClick: () => {} }]
+                    : usable.map(t => ({
+                        label: t.track.name,
                         onClick: () => {
-                            (has ? removeNoteFromWorkbook(b.id, note.id) : addNoteToWorkbook(b.id, note.id))
-                                .then(() => onNotify({ message: has ? `Taken out of "${b.title}"` : `Added to "${b.title}"`, type: 'success' }))
+                            addCalendarNoteEntry(t.track.id, note.id)
+                                .then(() => onNotify({ message: `Added to "${t.track.name}"`, type: 'success' }))
                                 .catch(e => onNotify({ message: errorText(e), type: 'error' }));
                         },
-                    };
-                }),
-        },
-        // A track that follows a Drive's sequence holds only that sequence's videos, so it isn't offered. A track
-        // holds a note once: asked to again, it says so and nothing changes.
-        ...(canCalendar ? [{
-            label: `Add to ${labels.aliasCalendar}`,
-            icon: CalendarPlus,
-            onClick: () => {},
-            submenu: usable.length === 0
-                ? [{ label: 'No tracks to add it to', disabled: true, onClick: () => {} }]
-                : usable.map(t => ({
-                    label: t.track.name,
-                    onClick: () => {
-                        addCalendarNoteEntry(t.track.id, note.id)
-                            .then(() => onNotify({ message: `Added to "${t.track.name}"`, type: 'success' }))
-                            .catch(e => onNotify({ message: errorText(e), type: 'error' }));
-                    },
-                })),
-        }] : []),
-        { label: note.shared ? 'Make Personal' : 'Share', icon: note.shared ? User : Users, divider: true, disabled: !flags.allowEditSharedNotes, onClick: () => askShare(note) },
-        { label: 'Duplicate', icon: Copy, onClick: () => void duplicate(note) },
-        { label: 'Save as a Template', icon: LayoutTemplate, disabled: !current(note).body.trim(), onClick: () => void templateFrom(note) },
-        // A Markdown file of it, saved where the reader says (lib/note-export.ts): the note as it is now.
-        {
-            label: 'Export Note as Markdown', icon: FileDown,
-            onClick: () => {
-                exportNote(current(note))
-                    .then(path => { if (path) onNotify({ message: `Saved "${noteDisplayTitle(current(note))}" to ${path}`, type: 'success' }); })
-                    .catch(e => onNotify({ message: `Couldn't export the note: ${errorText(e)}`, type: 'error' }));
+                    })),
+            }] : []),
+            { label: note.shared ? 'Make Personal' : 'Share', icon: note.shared ? User : Users, divider: true, disabled: !flags.allowEditSharedNotes, onClick: () => askShare(note) },
+            { label: 'Duplicate', icon: Copy, onClick: () => void duplicate(note) },
+            { label: 'Save as a Template', icon: LayoutTemplate, disabled: !current(note).body.trim(), onClick: () => void templateFrom(note) },
+            // A Markdown file of it, saved where the reader says (lib/note-export.ts): the note as it is now.
+            {
+                label: 'Export Note as Markdown', icon: FileDown,
+                onClick: () => {
+                    exportNote(current(note))
+                        .then(path => { if (path) onNotify({ message: `Saved "${noteDisplayTitle(current(note))}" to ${path}`, type: 'success' }); })
+                        .catch(e => onNotify({ message: `Couldn't export the note: ${errorText(e)}`, type: 'error' }));
+                },
             },
-        },
-        { label: 'Delete Note', icon: Trash2, danger: true, divider: true, disabled: !canEditNote(note.shared), onClick: () => askDelete(note) },
+            { label: 'Delete Note', icon: Trash2, danger: true, divider: true, disabled: !canEditNote(note.shared), onClick: () => askDelete(note) },
         ];
     };
 
@@ -1349,7 +1788,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                                 placeholder="Name the template"
                                                 className="flex-1 min-w-0 bg-[#121212] border border-[#333] focus:border-red-600 text-white rounded-lg px-2.5 py-1.5 text-xs outline-none placeholder-gray-600"
                                             />
-                                            <button type="button" onClick={() => void saveAsTemplate()} disabled={!templateName.trim()} className="shrink-0 px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold cursor-pointer disabled:opacity-40 disabled:cursor-default">Save</button>
+                                            <button type="button" onClick={() => void saveAsTemplate()} disabled={!templateName.trim()} className="shrink-0 px-2.5 py-1.5 rounded-lg bg-[var(--k-accent)] hover:bg-[var(--k-accent-hover)] text-[var(--k-text-on-accent)] text-xs font-bold cursor-pointer disabled:opacity-40 disabled:cursor-default">Save</button>
                                         </div>
                                     )}
                                 </div>
@@ -1372,7 +1811,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                             Open a note, or start a new one. While a video plays, right-click words in its transcript or summary to
                             cite them here, or use <span className="text-gray-300">Cite Moment</span> on the player to note the moment.
                         </p>
-                        <button onClick={() => void newNote()} className="mt-4 flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-semibold cursor-pointer">
+                        <button onClick={() => void newNote()} className="mt-4 flex items-center gap-1.5 px-3 py-2 bg-[var(--k-accent)] hover:bg-[var(--k-accent-hover)] text-[var(--k-text-on-accent)] rounded-lg text-xs font-semibold cursor-pointer">
                             <Plus className="w-4 h-4" /> New note
                         </button>
                     </div>
@@ -1385,7 +1824,7 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                 readOnly={!canEdit}
                                 onChange={e => setDraft(d => d && { ...d, title: e.target.value })}
                                 onContextMenu={handlePlainContextMenu}
-                                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); setMode('write'); window.setTimeout(() => bodyRef.current?.focus(), 0); } }}
+                                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); setMode(editMode); window.setTimeout(() => bodyRef.current?.focus(), 0); } }}
                                 placeholder="Untitled"
                                 maxLength={200}
                                 className="w-full bg-transparent outline-none text-3xl font-bold text-white placeholder-gray-600"
@@ -1446,10 +1885,12 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                         {!compactTools && (draft.shared ? 'Shared' : 'Personal')}
                                     </button>
                                     <Segmented
-                                        value={mode}
-                                        onPick={setMode}
+                                        value={mode === 'read' ? 'read' : 'edit'}
+                                        onPick={m => setMode(m === 'read' ? 'read' : editMode)}
                                         options={[
-                                            ...(canEdit ? [{ value: 'write' as const, label: compactTools ? '' : 'Write', icon: Pencil, title: 'Write: The note in Markdown' }] : []),
+                                            ...(canEdit ? [
+                                                { value: 'edit' as const, label: compactTools ? '' : 'Edit', icon: Pencil, title: 'Edit: Write the note, in Markdown Mode or WYSIWYG Mode' },
+                                            ] : []),
                                             { value: 'read' as const, label: compactTools ? '' : 'Read', icon: Eye, title: 'Read: The note as it reads, citations as cards' },
                                         ]}
                                     />
@@ -1461,6 +1902,24 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                 </div>
                             </div>
                             <div className="mt-3 border-b border-[#272727]" />
+                            {/* The formatting toolbar and the Markdown / WYSIWYG switch, in the part of the page that stays put, so they're
+                                there however far the note is scrolled. */}
+                        {isEditing && (
+                            <div className="mt-3 flex items-center gap-2">
+                                <WritingToolbar bodyRef={bodyRef} className="flex-1 min-w-0" canMakeTerms={canMakeTerms} />
+                                {/* How Edit writes: the Markdown itself, or the note drawn as it reads with the block under the caret open. */}
+                                <div className="shrink-0">
+                                    <Segmented
+                                        value={mode === 'wysiwyg' ? 'wysiwyg' : 'write'}
+                                        onPick={setMode}
+                                        options={[
+                                            { value: 'write' as const, label: compactTools ? '' : 'Markdown Mode', icon: Code, title: 'Markdown Mode: Write the Markdown itself' },
+                                            { value: 'wysiwyg' as const, label: compactTools ? '' : 'WYSIWYG Mode', icon: Wand2, title: 'WYSIWYG Mode: The note is drawn as it reads; click a block to write in it' },
+                                        ]}
+                                    />
+                                </div>
+                            </div>
+                        )}
                             {/* Ctrl+F, in the part of the page that stays put, so it's there wherever a match is: the
                                 search alone for a note being read, Find & Replace for one being written. */}
                             {find.open && (
@@ -1495,9 +1954,19 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                             )}
                         </div>
 
-                        {mode === 'write' ? (
+                        <Fragment>
+                        {mode === 'wysiwyg' ? (
+                            <LivePreviewEditor
+                                body={draft.body}
+                                onBody={body => setDraft(d => d && { ...d, body })}
+                                bodyRef={bodyRef}
+                                canMakeTerms={Boolean(canMakeTerms)}
+                                onToggleTask={toggleTask}
+                            />
+                        ) : isEditing ? (
                             <div className="relative">
-                            {find.writing && find.write.searchIndices.length > 0 && (
+                            {/* Find mirror (only in plain write mode) */}
+                            {mode === 'write' && find.writing && find.write.searchIndices.length > 0 && (
                                 <FindMirror
                                     mirrorRef={find.mirrorRef}
                                     text={draft.body}
@@ -1533,8 +2002,9 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                     handleMarkdownKeyDown(e, draft.body, v => setDraft(d => d && { ...d, body: v }));
                                 }}
                                 onContextMenu={handleMarkdownContextMenu}
-                                placeholder={'Write here. Markdown works: # headings, - lists, **bold**.\n\nCite from a video: Select words in its transcript or summary, right-click, Cite in note.\nA "Q:" line with an "A:" line under it reads as a question and its answer (right-click, Question & Answer, writes one).'}
-                                className="relative block w-full bg-transparent outline-none resize-none text-[15px] leading-relaxed text-gray-100 placeholder-gray-600"
+                                placeholder={NOTE_PLACEHOLDER}
+                                className="relative block w-full outline-none resize-none text-[15px] leading-relaxed placeholder-gray-600 bg-transparent"
+                                style={{ color: 'var(--k-text-white, #f3f4f6)', caretColor: 'var(--k-text-white, #fff)' }}
                             />
                             </div>
                         ) : (
@@ -1545,13 +2015,16 @@ export function NotesView({ searchQuery, panelOpen, openNoteId, onOpenNote, onNo
                                 </TaskToggle.Provider>
                             </div>
                         )}
+                        </Fragment>
                     </div>
                 )}
             </div>
             {/* The open workbook's pages, when the open note is one of them: Previous and Next, where this page is, and a
                 box to go to any page by its number. Outside the page's scroll, so it's always at the foot of the pane,
                 however short or long the note is. */}
-            {draft && book && book.noteIds.includes(draft.id) && (() => {
+            {/* Workbook pager: Previous / Next. Hidden in Write / Live Preview modes so it doesn't
+                crowd the editor — the user can switch to Read to use it. */}
+            {mode === 'read' && draft && book && book.noteIds.includes(draft.id) && (() => {
                 const at = book.noteIds.indexOf(draft.id);
                 const total = book.noteIds.length;
                 const go = (i: number) => onOpenNote(book.noteIds[Math.min(Math.max(i, 0), total - 1)]);

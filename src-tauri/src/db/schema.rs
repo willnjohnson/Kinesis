@@ -414,6 +414,14 @@ fn migrate_legacy_column(conn: &Connection, table: &str, to: &str) -> Result<()>
 pub fn init_db(db_path: &str) -> Result<()> {
     let conn = Connection::open(db_path)?;
 
+    // New databases only: auto_vacuum can only be chosen before the first table exists.
+    // Gated on an empty schema because init_db runs on every open, and VACUUM rewrites
+    // the whole file (transcripts and attachment blobs make that expensive).
+    let is_empty: bool = conn.query_row("SELECT COUNT(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0))? == 0;
+    if is_empty {
+        conn.execute_batch("PRAGMA auto_vacuum = FULL; VACUUM;")?;
+    }
+
     // Verify all required tables exist; if not, this is likely a corrupted/partial database
     let required_tables = ["Videos", "Settings", "Glossary", "Biographies", "SearchHistory", "CustomPrompts"];
     let mut missing_tables = Vec::new();
