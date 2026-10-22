@@ -2,8 +2,9 @@ import { Children, Fragment, cloneElement, createContext, isValidElement, memo, 
 import ReactMarkdown from 'react-markdown';
 import { CODE_HIGHLIGHT } from '../lib/code-highlight';
 import remarkGfm from 'remark-gfm';
+import { localPathToSrc } from '../lib/local-paths';
 import {
-    ArrowDown, ArrowUp, Bold, BookA, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Code, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, Highlighter, Italic, LayoutTemplate, Library, Link as LinkIcon, Link2, List, ListChecks, ListOrdered, MessageCircleQuestionMark, Minus, MoreVertical, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, RemoveFormatting, Search, Strikethrough, Sigma, Table as TableIcon, Trash2, Type, User, Users, Video as VideoIcon, Wand2, X, Image,
+    ArrowDown, ArrowUp, Bold, BookA, BookOpenText, Calendar, CalendarPlus, Check, ChevronDown, ChevronLeft, ChevronRight, Clock, Code, Copy, Eye, EyeOff, Feather, FileDown, GalleryVerticalEnd, Heading1, Heading2, Heading3, Heading4, Heading5, Heading6, Highlighter, Italic, LayoutTemplate, Library, Link as LinkIcon, Link2, List, ListChecks, ListOrdered, MessageCircleQuestionMark, Minus, MoreVertical, NotebookPen, Pencil, Play, Plus, Quote as QuoteIcon, RemoveFormatting, Search, Strikethrough, Sigma, Table as TableIcon, Trash2, Type, User, Users, Video as VideoIcon, Wand2, X, Image, HardDrive,
 } from 'lucide-react';
 import {
     addCalendarNoteEntry, addNoteToWorkbook, calendarToday, createNote, deleteNote, getNote, getVideoCard, getWdbsRoots, listCalendarTracks, listNotes, listWorkbooks,
@@ -48,6 +49,7 @@ import { TrashChip } from './TrashChip';
 import { WorkbooksPanel } from './WorkbooksPanel';
 import { errorText } from '../lib/error-text';
 import { Segmented } from './ui/Segmented';
+import { isLocalSrc } from '../lib/local-paths';
 
 /** The page width (px) under which the note's tools are drawn as icons alone. */
 const COMPACT_TOOLS_BELOW = 660;
@@ -503,8 +505,10 @@ function NoteItem({ node, className, children, ...props }: ComponentProps<'li'> 
     return <li className={className} {...props}>{live(children)}</li>;
 }
 
-/** A note as it reads: Markdown, with citations as cards and its "Q:" / "A:" lines as question-and-answer blocks. */
-function NoteReading({ body }: { body: string }) {
+/** A note as it reads: Markdown, with citations as cards and its "Q:" / "A:" lines as question-and-answer blocks.
+ *  `localBadge`: a "Local Image File" badge on the images that are files on this computer, for WYSIWYG Mode (where the note
+ *  is being written, so it's worth knowing which images only this computer has); Read leaves it off. */
+function NoteReading({ body, localBadge = false }: { body: string; localBadge?: boolean }) {
     if (!body.trim()) return <p className="text-sm text-gray-600 italic">Nothing written yet.</p>;
     return (
         <div className="leading-relaxed prose dark:prose-invert prose-sm max-w-none prose-pre:bg-black/50 prose-code:text-red-400">
@@ -519,7 +523,29 @@ function NoteReading({ body }: { body: string }) {
                     blockquote: Quote,
                     div: NoteBlock,
                     li: NoteItem,
-                    img: ({ node: _node, ...props }) => <img {...props} className="rounded-xl border border-white/10" />,
+                    // By now markdownUrlTransform has already turned a local path into Tauri's asset URL, so `src`
+                    // is checked for that form (isLocalSrc), not run through localPathToSrc again. The image has no
+                    // margin of its own (prose gives images one) so the badge sits on the image's corner. Its colors
+                    // come from the Content Theme's variables (inline, so no class remapping can turn them), with
+                    // the plain black and white as the fallback when no Content Theme is on.
+                    img: ({ node: _node, src, ...props }) => (
+                        <span className="relative inline-block my-4">
+                            <img src={src} {...props} className="block !my-0 rounded-xl border border-white/10" />
+                            {localBadge && isLocalSrc(src) && (
+                                <span
+                                    className="absolute bottom-2 right-2 px-3 py-1.5 rounded-md text-[10px] font-bold leading-none flex items-center gap-1.5 border select-none"
+                                    style={{
+                                        background: 'color-mix(in srgb, var(--k-bg, #000) 85%, transparent)',
+                                        color: 'var(--k-text-white, #fff)',
+                                        borderColor: 'color-mix(in srgb, var(--k-text-white, #fff) 15%, transparent)',
+                                    }}
+                                >
+                                    <HardDrive className="w-3 h-3" />
+                                    Local Image File
+                                </span>
+                            )}
+                        </span>
+                    ),
                 }}
             >
                 {body}
@@ -617,7 +643,7 @@ const RenderedBlock = memo(function RenderedBlock({ text, blockKey, onPick, onTa
             }}
         >
             <TaskToggle.Provider value={toggle}>
-                <NoteReading body={text} />
+                <NoteReading body={text} localBadge />
             </TaskToggle.Provider>
         </div>
     );

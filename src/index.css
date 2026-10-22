@@ -842,3 +842,17 @@ html.k-switching *::-webkit-scrollbar-button { background: transparent !importan
 .k-content-theme ::placeholder {
     color: var(--k-text-aaaaaa) !important;
 }
+
+/* The light-workspace rules for .prose (:root:not(.dark) .prose, h1, ...) are more specific than .k-content-theme's own,
+   so under a dark Content Theme in a light workspace they won: #333 and #111 text on the dark page. Said again here
+   with :root:not(.dark) in front, so the Content Theme's text color is the one that applies. */
+:root:not(.dark) .k-content-theme .prose,
+:root:not(.dark) .k-content-theme .prose h1,
+:root:not(.dark) .k-content-theme .prose h2,
+:root:not(.dark) .k-content-theme .prose h3,
+:root:not(.dark) .k-content-theme .prose strong,
+:root:not(.dark) .k-content-theme .prose code,
+:root:not(.dark) .k-content-theme .prose blockquote,
+:root:not(.dark) .k-content-theme .prose blockquote p {
+    color: var(--k-text-white) !important;
+}

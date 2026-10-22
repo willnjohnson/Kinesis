@@ -70,6 +70,11 @@ const MIN_TRANSCRIPT_PANE_PX = 340;
 // goes to the video side.
 const SIDEBAR_BASE_WIDTH = 1378;
 const SIDEBAR_SIDE_GAP = 62;
+/** The buttons laid over the video player. The video is dark (or any picture), whatever the workspace theme is, so these
+ *  stay black with white text on every theme: arbitrary values, which the theme's remapping of text-white, bg-black and
+ *  border-white doesn't reach. */
+const PLAYER_BUTTON = 'bg-[rgba(0,0,0,0.8)] hover:bg-[#000] text-[#fff] px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-[rgba(255,255,255,0.1)] cursor-pointer';
+
 /** The divider position (percent from the left) held within the 30-85 range and both panes' floors. */
 function clampSplit(percent: number, sidebarWidth: number): number {
     let lo = 30;
@@ -1385,15 +1390,15 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                 {/* Where it was left last time, as an offer (not a jump): top left, out of the way of the
                                                     hover buttons below. It goes once the video plays from anywhere else. */}
                                                 {resume.resumeAt !== null && (
-                                                    <div className="absolute top-2 left-2 flex items-center rounded-md bg-black/85 border border-white/15 text-white text-[11px] font-bold shadow-lg">
+                                                    <div className="absolute top-2 left-2 flex items-center rounded-md bg-[rgba(0,0,0,0.85)] border border-[rgba(255,255,255,0.15)] text-[#fff] text-[11px] font-bold shadow-lg">
                                                         <button
                                                             onClick={() => { const at = resume.resumeAt!; resume.dismissResume(); seekPlayer(at); }}
-                                                            className="flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 hover:bg-white/10 rounded-l-md cursor-pointer"
+                                                            className="flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 hover:bg-[rgba(255,255,255,0.1)] rounded-l-md cursor-pointer"
                                                             title="Play from where you stopped last time"
                                                         >
                                                             <Play className="w-3 h-3 fill-current" /> Resume from {formatClock(Math.floor(resume.resumeAt))}
                                                         </button>
-                                                        <button onClick={resume.dismissResume} className="px-1.5 py-1.5 border-l border-white/15 text-white/60 hover:text-white hover:bg-white/10 rounded-r-md cursor-pointer" title="Start from the beginning">
+                                                        <button onClick={resume.dismissResume} className="px-1.5 py-1.5 border-l border-[rgba(255,255,255,0.15)] opacity-60 hover:opacity-100 hover:bg-[rgba(255,255,255,0.1)] rounded-r-md cursor-pointer" title="Start from the beginning">
                                                             <X className="w-3 h-3" />
                                                         </button>
                                                     </div>
@@ -1402,7 +1407,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                 <div className={`absolute bottom-2 left-2 flex items-center gap-1.5 transition-opacity ${timedLinkCopied ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                                                     <button
                                                         onClick={() => void copyTimedLink()}
-                                                        className="bg-black/80 hover:bg-black text-white px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-white/10 cursor-pointer"
+                                                        className={PLAYER_BUTTON}
                                                         title="Copy a link to this video that starts where it's playing now, to paste into any text"
                                                     >
                                                         {timedLinkCopied ? <Check className="w-3 h-3" /> : <Link2 className="w-3 h-3" />}
@@ -1411,7 +1416,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                     {flags.viewVisible.notes && (
                                                         <button
                                                             onClick={() => void citeMoment()}
-                                                            className="bg-black/80 hover:bg-black text-white px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-white/10 cursor-pointer"
+                                                            className={PLAYER_BUTTON}
                                                             title={activeNote && canWriteNote(activeNote)
                                                                 ? `Pause here and write a thought about this moment, added to "${noteDisplayTitle(activeNote)}"`
                                                                 : 'Pause here and write a thought about this moment, in a new note'}
@@ -1424,7 +1429,7 @@ export const Sidebar = forwardRef<SidebarHandle, Props>(function Sidebar({ isOpe
                                                 <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={() => void openExternalUrl(`https://www.youtube.com/watch?v=${videoId}`)}
-                                                        className="bg-black/80 hover:bg-black text-white px-3 py-1.5 rounded-md text-[10px] font-bold flex items-center gap-1.5 border border-white/10 cursor-pointer"
+                                                        className={PLAYER_BUTTON}
                                                     >
                                                         <ExternalLink className="w-3 h-3" />
                                                         Open in YouTube

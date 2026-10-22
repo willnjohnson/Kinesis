@@ -1,6 +1,7 @@
 import { defaultUrlTransform } from 'react-markdown';
 import type { WorkspaceLabels } from './workspace';
 import { formatClock, parseClock } from './remark-timestamps';
+import { localPathToSrc } from './local-paths';
 
 /**
  * In-app links inside markdown, like `[Halving](kinesis://glossary/Halving)`. The address carries
@@ -91,9 +92,18 @@ export function findGlossaryTerms(text: string): string[] {
     return out;
 }
 
-/** react-markdown drops URLs whose scheme it doesn't know, so in-app links are let through. */
-export function markdownUrlTransform(url: string): string {
-    return url.startsWith(LINK_SCHEME) ? url : defaultUrlTransform(url);
+/** react-markdown drops URLs whose scheme it doesn't know, so in-app links are let through. An image whose address
+ *  is a path on this computer (C:\...\a.png, /home/me/a.png, file:///...) is turned into a URL the webview can
+ *  load (see lib/local-paths.ts). */
+export function markdownUrlTransform(url: string, key?: string): string {
+    if (url.startsWith(LINK_SCHEME)) return url;
+    if (key === 'src' || /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif|tiff?)$/i.test(url) || /^file:\/\//i.test(url)) {
+        const local = localPathToSrc(url);
+        if (local) return local;
+    }
+    const local = localPathToSrc(url);
+    if (local) return local;
+    return defaultUrlTransform(url);
 }
 
 // ── Opening links ────────────────────────────────────────────────────────────

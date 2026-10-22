@@ -3,12 +3,20 @@
 ## Improved
 - **Notes View:** 
   - Added formatting toolbar for accessibility.
-  - Added WYSIWIG Mode so user can edit while simultaneously seeing preview. Markdown Mode remains available.
+  - Added WYSIWIG Mode so user can edit while simultaneously seeing live preview. Markdown Mode remains available as an option.
 
 - **Logs Entry Template:**
-  - Added shortcut to custom event mapping to account for **multiple** events. See example:
+  - Added shorthand to custom event mapping to account for **multiple** events. See example:
   
     `{{@event: --12-25 = "Christmas", --12-26 = "Boxing Day", --01-01 = "New Year"}}`
+
+- **Other Minor Changes:**
+  - New databases only: auto_vacuum chosen before the first table exists.
+  - Markdown change: support local paths for images. See example:
+
+    `![Image](file:///C:/Users/Name/Pictures/Image.png)`
+    
+    `![Image](/home/name/Pictures/Image.png)`
 
 # Changelog (v0.5.5)
 

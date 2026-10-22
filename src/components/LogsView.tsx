@@ -750,22 +750,22 @@ export function LogsView({ searchQuery, onNotify, displaySettings, customThemes 
                                     if (!text || text === open.name) { box.value = open.name; return; }
                                     renameLog(open.id, text).then(loadLogs).catch(err => { box.value = open.name; failed("Couldn't rename the log", err); });
                                 }}
-                                className="flex-1 min-w-0 bg-transparent outline-none text-3xl font-bold text-white placeholder-gray-600"
+                                className="flex-1 min-w-[6rem] truncate bg-transparent outline-none text-3xl font-bold text-white placeholder-gray-600"
                             />
-                            <button onClick={toToday} className="flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-semibold text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="Bring today's row into view">
+                            <button onClick={toToday} className="shrink-0 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-semibold whitespace-nowrap text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="Bring today's row into view">
                                 <CalendarDays className="w-3.5 h-3.5" /> Today
                             </button>
                             <span className="shrink-0 flex items-center gap-0.5 text-[11px] font-semibold text-gray-500">
                                 <span className="pr-1 select-none">Go to:</span>
-                                <button onClick={() => toEnd(false)} className="px-2 py-1.5 rounded-md text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="The first row showing (the earliest day)">Top</button>
-                                <button onClick={() => toEnd(true)} className="px-2 py-1.5 rounded-md text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="The last row showing (the latest day)">Bottom</button>
+                                <button onClick={() => toEnd(false)} className="px-2 py-1.5 rounded-md whitespace-nowrap text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="The first row showing (the earliest day)">Top</button>
+                                <button onClick={() => toEnd(true)} className="px-2 py-1.5 rounded-md whitespace-nowrap text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer" title="The last row showing (the latest day)">Bottom</button>
                             </span>
                             <button
                                 onClick={() => setTemplateFor(open)}
-                                className="p-1.5 rounded-md text-gray-500 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
+                                className="shrink-0 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] font-semibold whitespace-nowrap text-gray-400 hover:text-white hover:bg-[#272727] transition-colors cursor-pointer"
                                 title="Entry template: The date format, and what each day's Entry starts as (the same every day or by weekday)"
                             >
-                                <LayoutTemplate className="w-4 h-4" />
+                                <LayoutTemplate className="w-3.5 h-3.5" /> Edit Entry Template
                             </button>
                             <button
                                 onClick={() => ring(open)}

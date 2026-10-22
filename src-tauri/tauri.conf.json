@@ -12,7 +12,11 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'self' http://localhost:* https://localhost:*; script-src 'self' 'unsafe-inline' http://localhost:* https://localhost:* https://www.youtube.com https://www.youtube-nocookie.com https://www.google.com https://youtube.com; style-src 'self' 'unsafe-inline'; font-src 'self' https:; frame-src 'self' http://localhost:* https://localhost:* https://www.youtube.com https://www.youtube-nocookie.com https://youtube.com; img-src 'self' data: https: blob:; media-src 'self' https: blob:; connect-src 'self' https: wss: http://localhost:* https://localhost:*"
+      "csp": "default-src 'self' http://localhost:* https://localhost:*; script-src 'self' 'unsafe-inline' http://localhost:* https://localhost:* https://www.youtube.com https://www.youtube-nocookie.com https://www.google.com https://youtube.com; style-src 'self' 'unsafe-inline'; font-src 'self' https:; frame-src 'self' http://localhost:* https://localhost:* https://www.youtube.com https://www.youtube-nocookie.com https://youtube.com; img-src 'self' data: https: blob: asset: http://asset.localhost:*; media-src 'self' https: blob:; connect-src 'self' https: wss: http://localhost:* https://localhost:*",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
