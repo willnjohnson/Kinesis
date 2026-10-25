@@ -63,6 +63,8 @@ export function useLibrary(
     const { labels } = useWorkspace();
     const libraryLabelRef = useRef(labels.aliasLibrary);
     libraryLabelRef.current = labels.aliasLibrary;
+    const filteredSearchVideosRef = useRef(filteredSearchVideos);
+    filteredSearchVideosRef.current = filteredSearchVideos;
     const [libraryVideos, setLibraryVideos] = useState<Video[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [librarySearch, setLibrarySearch] = useState("");
@@ -343,13 +345,14 @@ export function useLibrary(
     }, [confirmDelete, refreshSummarizedCount, setNotification, refreshLibrary]);
 
     const handleSaveAll = useCallback(async () => {
-        if (filteredSearchVideos.length === 0 || saveProgress) return;
+        const videosToSave = filteredSearchVideosRef.current;
+        if (videosToSave.length === 0 || saveProgress) return;
         const chunkSize = 10;
         let allResults: any[] = [];
         try {
-            for (let i = 0; i < filteredSearchVideos.length; i += chunkSize) {
-                const chunk = filteredSearchVideos.slice(i, i + chunkSize);
-                setSaveProgress(`Saving ${Math.min(i + chunk.length, filteredSearchVideos.length)}/${filteredSearchVideos.length}...`);
+            for (let i = 0; i < videosToSave.length; i += chunkSize) {
+                const chunk = videosToSave.slice(i, i + chunkSize);
+                setSaveProgress(`Saving ${Math.min(i + chunk.length, videosToSave.length)}/${videosToSave.length}...`);
                 const results = await bulkSaveVideos(chunk.map(v => v.id));
                 allResults.push(...results);
             }
@@ -365,7 +368,7 @@ export function useLibrary(
         } finally {
             setSaveProgress(null);
         }
-    }, [filteredSearchVideos, saveProgress, refreshLibrary, setNotification]);
+    }, [saveProgress, refreshLibrary, setNotification]);
 
     const handleSummarizeAll = useCallback(async () => {
         if (summarizeProgress || !pluginSummarizeEnabled) return;

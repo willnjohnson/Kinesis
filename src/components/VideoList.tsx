@@ -429,7 +429,10 @@ export function VideoList({
         headerIconOnlyRef.current = false;
         setHeaderIconOnly(false);
     }, [isLibrary, showBookmarkedSort, saveProgress, flags.showSortControls, flags.showFilterControls, flags.showSortControlButtons]);
-    useLayoutEffect(() => { measureHeader(); });
+
+    useLayoutEffect(() => {
+        measureHeader();
+    }, [measureHeader, isLibrary, showBookmarkedSort, saveProgress, flags.showSortControls, flags.showFilterControls, flags.showSortControlButtons]);
     useEffect(() => {
         const row = headerRowRef.current;
         if (!row) return;

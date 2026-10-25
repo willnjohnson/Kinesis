@@ -63,6 +63,11 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
     const inputRef = useRef<HTMLInputElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
 
+    const onSearchRef = useRef(onSearch);
+    onSearchRef.current = onSearch;
+    const onLiveFilterRef = useRef(onLiveFilter);
+    onLiveFilterRef.current = onLiveFilter;
+
     const isLibrary = viewMode === 'library';
     const isGlossary = viewMode === 'glossary';
     const isBiography = viewMode === 'biography';
@@ -215,7 +220,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
         }
 
         const facetsDiffer = initialFacets.length !== facets.length ||
-            initialFacets.some((f, idx) => f.type !== facets[idx]?.type);
+            initialFacets.some((f, idx) => f.type !== facets[idx]?.type || f.value !== facets[idx]?.value);
 
         if (facetsDiffer && !isFocused) {
             userActionRef.current = false;
@@ -225,6 +230,7 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
 
     useEffect(() => {
         if (!userActionRef.current) return;
+        userActionRef.current = false;
 
         // no_tags has no value of its own to carry (it's a plain yes/no filter, not "search this
         // field for X") — unlike every other facet here, it doesn't consume `query` as its value;
@@ -242,15 +248,11 @@ export function SearchBar({ onSearch, onLiveFilter, loading, viewMode = 'search'
             }).join(' ') + (facets.length === 0 ? unescapeSpecial(query) : "");
 
         if (isLibrary) {
-            onSearch(fullQuery);
-        } else if (onLiveFilter) {
-            onLiveFilter(fullQuery);
+            onSearchRef.current(fullQuery);
+        } else if (onLiveFilterRef.current) {
+            onLiveFilterRef.current(fullQuery);
         }
-        
-        // Deliberately not reset here: userActionRef must stay true so this effect keeps firing
-        // on the next user-driven facets/query change. The two sync effects above are what reset
-        // it to false, and only when an external prop update (not the user) changes query/facets.
-    }, [facets, query, isLibrary, onLiveFilter, onSearch]);
+    }, [facets, query, isLibrary]);
 
     const loadHistory = useCallback(async () => {
         const entries = await getSearchHistory(50);

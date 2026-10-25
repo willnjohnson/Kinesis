@@ -70,6 +70,8 @@ import { announceNavigation, useCloseOnNavigate } from "./lib/navigation";
 
 type ViewMode = 'search' | 'library' | 'glossary' | 'biography' | 'calendar' | 'notes' | 'logs';
 
+const EMPTY_FACETS: Facet[] = [];
+
 
 
 function App() {
@@ -161,6 +163,13 @@ function App() {
     const [navigationOrientation, setNavigationOrientation] = useState<'horizontal' | 'vertical' | 'titlebar'>('horizontal');
     const [searchSortField, setSearchSortField] = useState<SortField>('date');
     const [searchSortOrder, setSearchSortOrder] = useState<SortOrder>('desc');
+    const toggleSearchSortOrder = useCallback(() => {
+        setSearchSortOrder(prev => prev === 'desc' ? 'asc' : 'desc');
+    }, []);
+    const handleOpenApiKeySettings = useCallback(() => {
+        setSettingsTarget({ tab: 'api', apiSection: 'youtube' });
+        setShowSettings(true);
+    }, []);
     const [searchFilterKind, setSearchFilterKind] = useState<FilterType>('all');
     const [pluginSummarizeEnabled, setPluginSummarizeEnabled] = useState(false);
     const [pluginPhotosynthesisEnabled, setPluginPhotosynthesisEnabled] = useState(false);
@@ -577,15 +586,17 @@ function App() {
         void doSelectVideo(video, tab);
     }, [sidebarOpen, selectedVideo, doSelectVideo]);
 
+    const searchHandleSearch = search.handleSearch;
+    const librarySetSearch = library.setLibrarySearch;
     const handleSearch = useCallback(async (query: string) => {
         if (viewMode === 'library') {
-            library.setLibrarySearch(query);
+            librarySetSearch(query);
             return;
         }
         setSidebarOpen(false);
-        const videoResult = await search.handleSearch(query);
+        const videoResult = await searchHandleSearch(query);
         if (videoResult) handleSelectVideo(videoResult);
-    }, [viewMode, library, search, handleSelectVideo]);
+    }, [viewMode, librarySetSearch, searchHandleSearch, handleSelectVideo]);
 
     const handleLibrarySearch = useCallback((query: string) => {
         exitBulk();
@@ -1504,7 +1515,7 @@ function App() {
                                         ? getLibraryFacets(glossarySearchQuery, 'glossary')
                                         : viewMode === 'biography'
                                             ? getLibraryFacets(biographySearchQuery, 'biography')
-                                            : (viewMode === 'library' ? (library.librarySearch ? getLibraryFacets(library.librarySearch, 'library') : []) : search.activeFacets as Facet[])
+                                            : (viewMode === 'library' ? (library.librarySearch ? getLibraryFacets(library.librarySearch, 'library') : EMPTY_FACETS) : search.activeFacets as Facet[])
                                 }
                                 initialQuery={
                                     viewMode === 'logs'
@@ -1730,11 +1741,11 @@ function App() {
                                     error={search.error}
                                     loading={search.loading}
                                     idle={!search.hasSearched && !search.error}
-                                    onOpenApiKeySettings={flags.settingsVisible && flags.tabVisible.api ? () => { setSettingsTarget({ tab: 'api', apiSection: 'youtube' }); setShowSettings(true); } : undefined}
+                                    onOpenApiKeySettings={flags.settingsVisible && flags.tabVisible.api ? handleOpenApiKeySettings : undefined}
                                     sortField={searchSortField}
                                     onSortFieldChange={setSearchSortField}
                                     sortOrder={searchSortOrder}
-                                    onToggleSortOrder={() => setSearchSortOrder(prev => prev === 'desc' ? 'asc' : 'desc')}
+                                    onToggleSortOrder={toggleSearchSortOrder}
                                     filterKind={searchFilterKind}
                                     onFilterKindChange={setSearchFilterKind}
                                     scrollContainerRef={scrollContainerRef}

@@ -286,7 +286,7 @@ export function useSearch(hasApiKey: boolean) {
     }, [videos, searchQuery]);
 
     const handleInput = useCallback((val: string) => {
-        setSearchQuery(val);
+        setSearchQuery(prev => prev === val ? prev : val);
         const lowerVal = val.toLowerCase();
         
         // Handle specific prefixes (consistent with App.tsx whitelist)
@@ -294,14 +294,15 @@ export function useSearch(hasApiKey: boolean) {
         for (const prefix of prefixes) {
             if (lowerVal.includes(prefix)) {
                 const afterFacet = val.slice(val.toLowerCase().indexOf(prefix) + prefix.length);
-                setActiveFacets([{ type: prefix.slice(0, -1) as any, value: '' }]);
-                setActiveText(afterFacet);
+                const facetType = prefix.slice(0, -1) as any;
+                setActiveFacets(prev => (prev.length === 1 && prev[0].type === facetType && prev[0].value === '') ? prev : [{ type: facetType, value: '' }]);
+                setActiveText(prev => prev === afterFacet ? prev : afterFacet);
                 return;
             }
         }
         
-        setActiveFacets([]);
-        setActiveText(val);
+        setActiveFacets(prev => prev.length === 0 ? prev : []);
+        setActiveText(prev => prev === val ? prev : val);
     }, []);
 
     // Computed: is this a regular search (not handle/playlist facet)?

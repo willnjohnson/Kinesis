@@ -1,6 +1,6 @@
 [package]
 name = "kinesis"
-version = "0.5.6"
+version = "0.5.7"
 description = "A personal knowledge base for browsing videos, organizing notes, and tracking."
 authors = ["William N. Johnson"]
 license = "MIT"
